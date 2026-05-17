@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+{% block title %}{% if order %}编辑订单{% else %}新增订单{% endif %}{% endblock %}
+{% block content %}
+<h2>{% if order %}编辑订单 #{{ order.id }}{% else %}新增客户订单{% endif %}</h2>
+<form method="POST" id="order-form">
+    <div class="row mb-3">
+        <div class="col-md-4">
+            <label>客户</label>
+            <div class="searchable-select"
+                data-name="customer_id"
+                data-placeholder="请选择客户"
+                data-storage="recent_customers"
+                data-list='{{ customers_json | tojson }}'
+                {% if order %}data-selected-id="{{ order.customer.id }}" data-selected-name="{{ order.customer.name }}"{% endif %}></div>
+        </div>
+        <div class="col-md-3">
+            <label>订单日期</label>
+            <input type="date" name="order_date" class="form-control" value="{% if order %}{{ order.order_date }}{% else %}{{ today }}{% endif %}">
+        </div>
+        <div class="col-md-3">
+            <label>备注</label>
+            <input type="text" name="remark" class="form-control" value="{{ order.remark or '' }}">
+        </div>
+        <div class="col-md-2">
+            <label>开发票</label>
+            <select name="invoice_required" class="form-select">
+                <option value="0" {% if order and not order.invoice_required %}selected{% endif %}>否</option>
+                <option value="1" {% if order and order.invoice_required %}selected{% endif %}>是</option>
+            </select>
+        </div>
+    </div>
+
+    <h5>订单明细</h5>
+    <table class="table table-bordered" id="items-table">
+        <thead>
+            <tr><th>产品</th><th>数量</th><th>单价</th><th>小计</th><th>操作</th></tr>
+        </thead>
+        <tbody>
+            {% set items = order_items if order else [] %}
+            {% for i in items %}
+            <tr class="item-row">
+                <td>
+                    <div class="searchable-select"
+                         data-name="product_id[]"
+                         data-placeholder="选择产品"
+                         data-storage="recent_products"
+                         data-list='{{ products_json | tojson }}'
+                         data-selected-id="{{ i.product.id }}"
+                         data-selected-name="{{ i.product.name }}"></div>
+                </td>
+                <td><input type="number" step="any" name="quantity[]" class="form-control quantity" value="{{ i.quantity }}" required></td>
+                <td><input type="number" step="any" name="unit_price[]" class="form-control unit-price" value="{{ i.unit_price }}" required></td>
+                <td><span class="subtotal">{{ "%.2f"|format(i.subtotal) }}</span></td>
+                <td><button type="button" class="btn btn-danger btn-sm remove-row">删除</button></td>
+            </tr>
+            {% endfor %}
+            {% if items|length == 0 %}
+            <tr class="item-row">
+                <td>
+                    <div class="searchable-select"
+                         data-name="product_id[]"
+                         data-placeholder="选择产品"
+                         data-storage="recent_products"
+                         data-list='{{ products_json | tojson }}'></div>
+                </td>
+                <td><input type="number" step="any" name="quantity[]" class="form-control quantity" required></td>
+                <td><input type="number" step="any" name="unit_price[]" class="form-control unit-price" required></td>
+                <td><span class="subtotal">0.00</span></td>
+                <td><button type="button" class="btn btn-danger btn-sm remove-row">删除</button></td>
+            </tr>
+            {% endif %}
+        </tbody>
+        <tfoot>
+            <tr><td colspan="3" class="text-end fw-bold">合计金额</td>
+                <td><span id="total-amount">0.00</span></td>
+                <td></td>
+            </tr>
+        </tfoot>
+    </table>
+    <button type="button" class="btn btn-secondary" id="add-row">添加一行</button>
+    <button type="submit" class="btn btn-success float-end">保存订单</button>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ========== SearchableSelect 组件（支持初始值） ==========
+class SearchableSelect {
+    constructor(container) {
+        this.container = container;
+        this.name = container.dataset.name;
+        this.placeholder = container.dataset.placeholder || '请选择';
+        this.storageKey = container.dataset.storage;
+        this.list = JSON.parse(container.dataset.list || '[]');
+        this.recentIds = this.loadRecent();
+        this.initialId = container.dataset.selectedId || '';
+        this.initialName = container.dataset.selectedName || '';
+        this.selectedId = this.initialId || null;
+        this.render();
+    }
+    loadRecent() {
+        if (!this.storageKey) return [];
+        try { return JSON.parse(localStorage.getItem(this.storageKey) || '[]'); } catch { return []; }
+    }
+    saveRecent(id) {
+        if (!this.storageKey) return;
+        let recents = this.loadRecent();
+        recents = recents.filter(rid => rid !== id);
+        recents.unshift(id);
+        if (recents.length > 5) recents.pop();
+        localStorage.setItem(this.storageKey, JSON.stringify(recents));
+        this.recentIds = recents;
+    }
+    render() {
+        this.container.innerHTML = `
+            <input type="text" class="form-control search-input" placeholder="${this.placeholder}" autocomplete="off" value="${this.initialName}">
+            <input type="hidden" name="${this.name}" value="${this.initialId}">
+            <ul class="dropdown-menu w-100" style="max-height:200px; overflow-y:auto; display:none;"></ul>
+        `;
+        this.input = this.container.querySelector('.search-input');
+        this.hidden = this.container.querySelector('input[type="hidden"]');
+        this.dropdown = this.container.querySelector('.dropdown-menu');
+
+        this.input.addEventListener('focus', () => this.showDropdown());
+        this.input.addEventListener('input', () => this.filter());
+        this.input.addEventListener('blur', () => {
+            setTimeout(() => this.dropdown.style.display = 'none', 200);
+        });
+    }
+    getSortedList() {
+        const items = [...this.list];
+        if (this.recentIds.length) {
+            items.sort((a, b) => {
+                const aIdx = this.recentIds.indexOf(a.id);
+                const bIdx = this.recentIds.indexOf(b.id);
+                if (aIdx !== -1 && bIdx === -1) return -1;
+                if (aIdx === -1 && bIdx !== -1) return 1;
+                if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+                return 0;
+            });
+        }
+        return items;
+    }
+    filter() {
+        const keyword = this.input.value.toLowerCase();
+        const items = this.getSortedList().filter(item => item.name.toLowerCase().includes(keyword));
+        this.renderItems(items);
+    }
+    showDropdown() {
+        this.renderItems(this.getSortedList());
+        this.dropdown.style.display = 'block';
+    }
+    renderItems(items) {
+        this.dropdown.innerHTML = '';
+        if (items.length === 0) {
+            this.dropdown.innerHTML = '<li class="dropdown-item text-muted">无匹配项</li>';
+            return;
+        }
+        items.forEach(item => {
+            const li = document.createElement('li');
+            li.className = 'dropdown-item';
+            li.textContent = item.name;
+            li.onmousedown = (e) => {
+                e.preventDefault();
+                this.input.value = item.name;
+                this.hidden.value = item.id;
+                this.selectedId = item.id;
+                this.saveRecent(item.id);
+                this.dropdown.style.display = 'none';
+            };
+            this.dropdown.appendChild(li);
+        });
+    }
+}
+
+// 初始化所有搜索选择器
+document.querySelectorAll('.searchable-select').forEach(el => new SearchableSelect(el));
+
+// ========== 动态行管理 ==========
+const addRowBtn = document.getElementById('add-row');
+const tbody = document.querySelector('#items-table tbody');
+
+addRowBtn.addEventListener('click', () => {
+    const newRow = tbody.rows[0].cloneNode(true);
+    // 清空值
+    const searchSelect = newRow.querySelector('.searchable-select');
+    if (searchSelect) {
+        // 重新创建组件（清空初始值）
+        searchSelect.innerHTML = '';
+        searchSelect.removeAttribute('data-selected-id');
+        searchSelect.removeAttribute('data-selected-name');
+        new SearchableSelect(searchSelect);
+    }
+    newRow.querySelectorAll('input[type="number"]').forEach(inp => inp.value = '');
+    newRow.querySelector('.subtotal').innerText = '0.00';
+    tbody.appendChild(newRow);
+    bindRowEvents(newRow);
+    calcTotal();
+});
+
+function bindRowEvents(row) {
+    row.querySelector('.remove-row').addEventListener('click', () => {
+        if (tbody.rows.length > 1) {
+            row.remove();
+            calcTotal();
+        } else { alert('至少保留一行明细'); }
+    });
+    row.querySelector('.quantity').addEventListener('input', () => updateSubtotal(row));
+    row.querySelector('.unit-price').addEventListener('input', () => updateSubtotal(row));
+}
+
+function updateSubtotal(row) {
+    const qty = parseFloat(row.querySelector('.quantity').value) || 0;
+    const price = parseFloat(row.querySelector('.unit-price').value) || 0;
+    row.querySelector('.subtotal').innerText = (qty * price).toFixed(2);
+    calcTotal();
+}
+
+function calcTotal() {
+    let total = 0;
+    document.querySelectorAll('.subtotal').forEach(el => { total += parseFloat(el.innerText) || 0; });
+    document.getElementById('total-amount').innerText = total.toFixed(2);
+}
+
+document.querySelectorAll('.item-row').forEach(row => bindRowEvents(row));
+calcTotal();
+</script>
+{% endblock %}

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}出库单列表{% endblock %}
+{% block content %}
+<h2>出库单列表</h2>
+<table class="table table-bordered table-sm">
+    <thead>
+        <tr>
+            <th>出库单ID</th>
+            <th>客户</th>
+            <th>关联订单</th>
+            <th>日期</th>
+            <th>产品</th>
+            <th>数量</th>
+            <th>单价</th>
+            <th>小计</th>
+            <th>金额</th>
+            <th>送货方式</th>
+            <th>运单号</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for row in shipments %}
+    <tr>
+        {% if row.is_first_row %}
+        <td rowspan="{{ row.rowspan_count }}">{{ row.ship_id }}</td>
+        <td rowspan="{{ row.rowspan_count }}">{{ row.customer_name }}</td>
+        <td rowspan="{{ row.rowspan_count }}">
+            {% if row.order_id %}<a href="/orders/edit/{{ row.order_id }}">#{{ row.order_id }}</a>{% else %}-{% endif %}
+        </td>
+        <td rowspan="{{ row.rowspan_count }}">{{ row.order_date }}</td>
+        {% endif %}
+        <td>{{ row.product_name }}</td>
+        <td>{{ row.quantity }}</td>
+        <td>¥{{ "%.2f"|format(row.unit_price) }}</td>
+        <td>¥{{ "%.2f"|format(row.subtotal) }}</td>
+        {% if row.is_first_row %}
+        <td rowspan="{{ row.rowspan_count }}">¥{{ "%.2f"|format(row.total_amount) }}</td>
+        <td rowspan="{{ row.rowspan_count }}">{{ row.ship_method }}</td>
+        <td rowspan="{{ row.rowspan_count }}">{{ row.tracking_number }}</td>
+        <td rowspan="{{ row.rowspan_count }}">
+            <a href="/shipments/edit/{{ row.ship_id }}" class="btn btn-sm btn-outline-primary">编辑</a>
+            <form method="POST" action="/shipments/delete/{{ row.ship_id }}" style="display:inline" onsubmit="return confirm('确定删除吗？')">
+                <button class="btn btn-sm btn-outline-danger">删除</button>
+            </form>
+        </td>
+        {% endif %}
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

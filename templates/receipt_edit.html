@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}编辑入库单 #{{ receipt.id }}{% endblock %}
+{% block content %}
+<h2>编辑入库单 #{{ receipt.id }}</h2>
+<form method="POST">
+    <div class="row mb-3">
+        <div class="col-md-4">
+            <label>供应商</label>
+            <select name="supplier_id" class="form-select" required>
+                {% for s in suppliers %}
+                <option value="{{ s.id }}" {% if receipt.supplier.id == s.id %}selected{% endif %}>{{ s.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label>入库日期</label>
+            <input type="date" name="order_date" class="form-control" value="{{ receipt.order_date }}" required>
+        </div>
+        <div class="col-md-3">
+            <label>送货方式</label>
+            <select name="ship_method" class="form-select">
+                <option value="">请选择</option>
+                <option value="快递" {% if receipt.ship_method=='快递' %}selected{% endif %}>快递</option>
+                <option value="货拉拉" {% if receipt.ship_method=='货拉拉' %}selected{% endif %}>货拉拉</option>
+                <option value="跑腿" {% if receipt.ship_method=='跑腿' %}selected{% endif %}>跑腿</option>
+                <option value="自提" {% if receipt.ship_method=='自提' %}selected{% endif %}>自提</option>
+                <option value="其他" {% if receipt.ship_method=='其他' %}selected{% endif %}>其他</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label>运单号</label>
+            <input type="text" name="tracking_number" class="form-control" value="{{ receipt.tracking_number or '' }}">
+        </div>
+    </div>
+    <div class="row mb-3">
+        <div class="col-md-6">
+            <label>备注</label>
+            <input type="text" name="remark" class="form-control" value="{{ receipt.remark or '' }}">
+        </div>
+    </div>
+
+    <h5>入库明细</h5>
+    <table class="table table-bordered" id="items-table">
+        <thead>
+            <tr><th>产品</th><th>数量</th><th>单价</th><th>小计</th><th>操作</th></tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr class="item-row">
+                <td>
+                    <select name="product_id[]" class="form-select product-select" required>
+                        {% for p in products %}
+                        <option value="{{ p.id }}" {% if item.product.id == p.id %}selected{% endif %}>{{ p.name }}</option>
+                        {% endfor %}
+                    </select>
+                </td>
+                <td><input type="number" step="any" name="quantity[]" class="form-control quantity" value="{{ item.quantity }}" required></td>
+                <td><input type="number" step="any" name="unit_price[]" class="form-control unit-price" value="{{ item.unit_price }}" required></td>
+                <td><span class="subtotal">{{ "%.2f"|format(item.subtotal) }}</span></td>
+                <td><button type="button" class="btn btn-danger btn-sm remove-row">删除</button></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr><td colspan="3" class="text-end fw-bold">合计金额</td>
+                <td><span id="total-amount">0.00</span></td>
+                <td></td>
+            </tr>
+        </tfoot>
+    </table>
+    <button type="button" class="btn btn-secondary" id="add-row">添加一行</button>
+    <button type="submit" class="btn btn-success float-end">保存修改</button>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('add-row').addEventListener('click', function() {
+    const tbody = document.querySelector('#items-table tbody');
+    const newRow = tbody.rows[0].cloneNode(true);
+    newRow.querySelector('.product-select').value = '';
+    newRow.querySelector('.quantity').value = '';
+    newRow.querySelector('.unit-price').value = '';
+    newRow.querySelector('.subtotal').innerText = '0.00';
+    tbody.appendChild(newRow);
+    bindRowEvents(newRow);
+    calcTotal();
+});
+function bindRowEvents(row) {
+    row.querySelector('.remove-row').addEventListener('click', function() {
+        if (document.querySelectorAll('#items-table tbody tr').length > 1) {
+            row.remove();
+            calcTotal();
+        } else { alert('至少保留一行明细'); }
+    });
+    row.querySelector('.quantity').addEventListener('input', function() { updateSubtotal(row); });
+    row.querySelector('.unit-price').addEventListener('input', function() { updateSubtotal(row); });
+}
+function updateSubtotal(row) {
+    const qty = parseFloat(row.querySelector('.quantity').value) || 0;
+    const price = parseFloat(row.querySelector('.unit-price').value) || 0;
+    row.querySelector('.subtotal').innerText = (qty * price).toFixed(2);
+    calcTotal();
+}
+function calcTotal() {
+    let total = 0;
+    document.querySelectorAll('.subtotal').forEach(el => { total += parseFloat(el.innerText) || 0; });
+    document.getElementById('total-amount').innerText = total.toFixed(2);
+}
+document.querySelectorAll('.item-row').forEach(row => bindRowEvents(row));
+calcTotal();
+</script>
+{% endblock %}

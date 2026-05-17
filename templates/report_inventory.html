@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}当前库存总览{% endblock %}
+{% block content %}
+<h2>当前库存总览</h2>
+
+<!-- 负数库存警告 -->
+{% if alert_products %}
+<div class="alert alert-danger">
+    <strong>⚠ 库存异常：</strong>以下产品库存为负数，请核查！
+    <ul class="mb-0 mt-2">
+        {% for ap in alert_products %}
+        <li>{{ ap.sku }} - {{ ap.name }}（{{ ap.stock }}）</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+<table class="table table-bordered table-sm">
+    <thead>
+        <tr>
+            <th>SKU</th>
+            <th>产品名称</th>
+            <th>规格</th>
+            <th>单位</th>
+            <th>库存数量</th>
+            <th>平均成本</th>
+            <th>库存货值</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for row in rows %}
+    <tr class="{% if row.is_negative %}table-danger{% endif %}">
+        <td>{{ row.sku }}</td>
+        <td>{{ row.name }}</td>
+        <td>{{ row.spec }}</td>
+        <td>{{ row.unit }}</td>
+        <td>{{ row.stock }}</td>
+        <td>¥{{ "%.2f"|format(row.avg_cost) }}</td>
+        <td>¥{{ "%.2f"|format(row.stock_value) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+    <tfoot>
+        <tr class="table-secondary fw-bold">
+            <td colspan="6" class="text-end">库存总货值：</td>
+            <td>¥{{ "%.2f"|format(total_value) }}</td>
+        </tr>
+    </tfoot>
+</table>
+{% endblock %}

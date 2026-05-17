@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}客户订货统计{% endblock %}
+{% block content %}
+<h2>客户订货统计</h2>
+<form class="row g-3 mb-4" method="GET">
+    <div class="col-auto"><input type="date" name="start_date" value="{{ start_date }}"></div>
+    <div class="col-auto">至</div>
+    <div class="col-auto"><input type="date" name="end_date" value="{{ end_date }}"></div>
+    <div class="col-auto"><button type="submit" class="btn btn-primary">查询</button></div>
+</form>
+<table class="table table-striped">
+    <thead><tr><th>客户</th><th>产品</th><th>单位</th><th>订货总量</th><th>订货金额</th></tr></thead>
+    <tbody>
+    {% for row in rows %}
+    <tr>
+        <td>{{ row.customer }}</td>
+        <td>{{ row.product }}</td>
+        <td>{{ row.unit }}</td>
+        <td>{{ row.total_qty }}</td>
+        <td>{{ "%.2f"|format(row.total_amount) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}客户资金总览{% endblock %}
+{% block content %}
+<h2>客户资金总台账</h2>
+<p class="text-muted">实时统计每位客户的订货、发货、退款及余额</p>
+
+<table class="table table-striped table-bordered">
+    <thead class="table-dark">
+        <tr>
+            <th>客户名称</th>
+            <th>订货总金额（元）</th>
+            <th>已发货金额（元）</th>
+            <th>退款总金额（元）</th>
+            <th>客户余额（元）</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for row in rows %}
+    <tr>
+        <td>{{ row.customer.name }}</td>
+        <td>¥{{ "%.2f"|format(row.total_order) }}</td>
+        <td>¥{{ "%.2f"|format(row.total_shipped) }}</td>
+        <td>¥{{ "%.2f"|format(row.total_refund) }}</td>
+        <td><strong>¥{{ "%.2f"|format(row.balance) }}</strong></td>
+        <td>
+            <a href="/shipments?customer_id={{ row.customer.id }}" class="btn btn-sm btn-outline-primary">出库单</a>
+            <a href="/refunds?customer_id={{ row.customer.id }}" class="btn btn-sm btn-outline-warning">退款记录</a>
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

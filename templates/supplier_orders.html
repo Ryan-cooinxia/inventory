@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}供应商订购管理{% endblock %}
+{% block content %}
+<h2>供应商订单列表</h2>
+<a href="/supplier_orders/add" class="btn btn-primary mb-3">新增订单</a>
+
+<!-- 统计卡片 -->
+<div class="row mb-3">
+    <div class="col-md-4">
+        <div class="card bg-light">
+            <div class="card-body text-center">
+                <h5 class="card-title">全部产品总货值</h5>
+                <p class="card-text fs-4">¥{{ "%.2f"|format(total_order_value) }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card bg-light">
+            <div class="card-body text-center">
+                <h5 class="card-title">已收货总价值</h5>
+                <p class="card-text fs-4">¥{{ "%.2f"|format(total_received_value) }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card bg-light">
+            <div class="card-body text-center">
+                <h5 class="card-title">未到货总价值</h5>
+                <p class="card-text fs-4">¥{{ "%.2f"|format(total_unreceived_value) }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<table class="table table-bordered table-sm">
+    <thead>
+        <tr>
+            <th>序号</th>
+            <th>订单单号</th>
+            <th>供应商</th>
+            <th>日期</th>
+            <th>产品</th>
+            <th>单价</th>
+            <th>数量</th>
+            <th>小计</th>
+            <th>已收货</th>
+            <th>剩余数量</th>   <!-- 新增列 -->
+            <th>状态</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for row in orders %}
+    <tr>
+        <td>{{ row.row_no }}</td>
+        <td><code>{{ row.order_number }}</code></td>
+        <td>{{ row.supplier_name }}</td>
+        <td>{{ row.order_date }}</td>
+        <td>{{ row.product_name }}</td>
+        <td>¥{{ "%.2f"|format(row.unit_price) }}</td>
+        <td>{{ row.qty_ordered }}</td>
+        <td>¥{{ "%.2f"|format(row.subtotal) }}</td>
+        <td>{{ row.received_qty }}</td>
+        <td>{{ row.qty_ordered - row.received_qty }}</td>   <!-- 剩余数量 -->
+        <td>
+            {% if row.status_text == '未交货' %}
+            <span class="badge bg-warning text-dark">未交货</span>
+            {% elif row.status_text == '部分交货' %}
+            <span class="badge bg-info">部分交货</span>
+            {% else %}
+            <span class="badge bg-success">已完成</span>
+            {% endif %}
+        </td>
+        <td>
+            {% if not row.has_receipt %}
+            <a href="/supplier_orders/edit/{{ row.order_id }}" class="btn btn-sm btn-outline-primary">编辑</a>
+            <form method="POST" action="/supplier_orders/delete/{{ row.order_id }}" style="display:inline" onsubmit="return confirm('确定删除订单？')">
+                <button class="btn btn-sm btn-outline-danger">删除</button>
+            </form>
+            {% endif %}
+            {% if row.status != 'completed' and row.status_text != '已完成' %}
+            <a href="/supplier_orders/receive/{{ row.order_id }}" class="btn btn-sm btn-outline-success">收货</a>
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

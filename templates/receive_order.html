@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}供应商订单收货{% endblock %}
+{% block content %}
+<h2>订单 #{{ order.id }} 收货</h2>
+<p>供应商：<strong>{{ order.supplier.name }}</strong> | 订单日期：{{ order.order_date }} | 订单总额：¥{{ "%.2f"|format(order.total_amount) }}</p>
+
+<form method="POST" action="/supplier_orders/receive/{{ order.id }}">
+    <h5>收货明细</h5>
+    <table class="table table-bordered">
+        <thead>
+            <tr>
+                <th>产品</th>
+                <th>订单数量</th>
+                <th>已收货</th>
+                <th>待收货</th>
+                <th>本次收货数量</th>
+                <th>单价</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for item in items_data %}
+        <tr>
+            <td>{{ item.product.name }}</td>
+            <td>{{ item.qty_ordered }}</td>
+            <td>{{ item.received }}</td>
+            <td>{{ item.pending }}</td>
+            <td><input type="number" step="any" name="receive_qty_{{ item.product.id }}" class="form-control receive-qty" value="{{ item.pending }}" min="0" max="{{ item.pending }}" data-pending="{{ item.pending }}" required></td>
+            <td>¥{{ "%.2f"|format(item.unit_price) }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="row mb-3">
+        <div class="col-md-3">
+            <label>入库日期</label>
+            <input type="date" name="order_date" class="form-control" value="{{ today }}" required>
+        </div>
+        <div class="col-md-3">
+            <label>送货方式</label>
+            <select name="ship_method" class="form-select">
+                <option value="">请选择</option>
+                <option value="快递">快递</option>
+                <option value="货拉拉">货拉拉</option>
+                <option value="跑腿">跑腿</option>
+                <option value="自提">自提</option>
+                <option value="其他">其他</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label>运单号 / 批次号</label>
+            <input type="text" name="tracking_number" class="form-control" placeholder="快递单号或批次号">
+        </div>
+    </div>
+    <div class="row mb-3">
+        <div class="col-md-6">
+            <label>备注</label>
+            <input type="text" name="remark" class="form-control">
+        </div>
+    </div>
+    <button type="submit" class="btn btn-success">确认收货（生成入库单）</button>
+    <a href="/supplier_orders" class="btn btn-secondary">返回订单列表</a>
+</form>
+{% endblock %}

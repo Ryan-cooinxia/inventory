@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}供应商管理{% endblock %}
+{% block content %}
+<h2>供应商列表</h2>
+<form class="row g-3 mb-4" method="POST" action="/suppliers">
+    <div class="col-md-4"><input name="name" class="form-control" placeholder="供应商名称" required></div>
+    <div class="col-md-3"><input name="contact" class="form-control" placeholder="联系人（选填）"></div>
+    <div class="col-md-2"><input name="phone" class="form-control" placeholder="电话（选填）"></div>
+    <div class="col-md-2"><button type="submit" class="btn btn-primary">添加供应商</button></div>
+</form>
+<table class="table table-bordered">
+    <thead>
+        <tr><th>ID</th><th>名称</th><th>联系人</th><th>电话</th><th>操作</th></tr>
+    </thead>
+    <tbody>
+    {% for s in suppliers %}
+    <tr id="row-{{ s.id }}">
+        <td class="view-mode">{{ s.id }}</td>
+        <td class="view-mode">{{ s.name }}</td>
+        <td class="view-mode">{{ s.contact or '' }}</td>
+        <td class="view-mode">{{ s.phone or '' }}</td>
+        <td class="view-mode">
+            <button class="btn btn-sm btn-outline-primary" onclick="editRow({{ s.id }})">编辑</button>
+            <form method="POST" action="/suppliers/delete/{{ s.id }}" style="display:inline" onsubmit="return confirm('确定删除吗？')">
+                <button type="submit" class="btn btn-sm btn-outline-danger">删除</button>
+            </form>
+        </td>
+        <td class="edit-mode" style="display:none">{{ s.id }}</td>
+        <td class="edit-mode" style="display:none"><input form="edit-form-{{ s.id }}" name="name" value="{{ s.name }}" class="form-control form-control-sm" required></td>
+        <td class="edit-mode" style="display:none"><input form="edit-form-{{ s.id }}" name="contact" value="{{ s.contact or '' }}" class="form-control form-control-sm"></td>
+        <td class="edit-mode" style="display:none"><input form="edit-form-{{ s.id }}" name="phone" value="{{ s.phone or '' }}" class="form-control form-control-sm"></td>
+        <td class="edit-mode" style="display:none">
+            <form id="edit-form-{{ s.id }}" method="POST" action="/suppliers/edit/{{ s.id }}" style="display:inline">
+                <button type="submit" class="btn btn-sm btn-success">保存</button>
+            </form>
+            <button class="btn btn-sm btn-secondary" onclick="cancelEdit({{ s.id }})">取消</button>
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% include '_pagination.html' %}
+{% endblock %}
+{% block scripts %}
+<script>
+function editRow(id) {
+    const row = document.getElementById('row-' + id);
+    row.querySelectorAll('.view-mode').forEach(el => el.style.display = 'none');
+    row.querySelectorAll('.edit-mode').forEach(el => el.style.display = '');
+}
+function cancelEdit(id) {
+    const row = document.getElementById('row-' + id);
+    row.querySelectorAll('.view-mode').forEach(el => el.style.display = '');
+    row.querySelectorAll('.edit-mode').forEach(el => el.style.display = 'none');
+}
+</script>
+{% endblock %}

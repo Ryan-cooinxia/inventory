@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+*.db
+# IDE
+.vscode/
+# 系统文件
+Thumbs.db
+.DS_Store
+# 打包生成
+dist/
+build/
+*.spec

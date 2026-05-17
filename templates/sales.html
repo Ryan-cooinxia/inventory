@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+{% block title %}新增销售出库单{% endblock %}
+{% block content %}
+<h2>新增销售出库单</h2>
+<form method="POST" id="sales-form">
+    <div class="row mb-3">
+        <div class="col-md-4">
+            <label>客户</label>
+            <div class="searchable-select" data-name="customer_id" data-placeholder="请选择客户" data-storage="recent_customers" data-list='{{ customers_json | tojson }}'></div>
+        </div>
+        <div class="col-md-3">
+            <label>出库日期</label>
+            <input type="date" name="order_date" class="form-control" required>
+        </div>
+        <div class="col-md-5">
+            <label>备注</label>
+            <input type="text" name="remark" class="form-control">
+        </div>
+    </div>
+
+    <div class="row mb-3">
+        <div class="col-md-3">
+            <label>送货方式</label>
+            <select name="ship_method" class="form-select">
+                <option value="">请选择</option>
+                <option value="快递">快递</option>
+                <option value="货拉拉">货拉拉</option>
+                <option value="跑腿">跑腿</option>
+                <option value="自提">自提</option>
+                <option value="其他">其他</option>
+            </select>
+        </div>
+        <div class="col-md-4">
+            <label>运单号 / 批次号</label>
+            <input type="text" name="tracking_number" class="form-control" placeholder="快递单号或批次号">
+        </div>
+    </div>
+
+    <h5>销售明细</h5>
+    <table class="table table-bordered" id="items-table">
+        <thead>
+            <tr><th>产品</th><th>数量</th><th>单价</th><th>小计</th><th>操作</th></tr>
+        </thead>
+        <tbody>
+            <tr class="item-row">
+                <td>
+                    <div class="searchable-select" data-name="product_id[]" data-placeholder="选择产品" data-storage="recent_products" data-list='{{ products_json | tojson }}'></div>
+                </td>
+                <td><input type="number" step="any" name="quantity[]" class="form-control quantity" required></td>
+                <td><input type="number" step="any" name="unit_price[]" class="form-control unit-price" required></td>
+                <td><span class="subtotal">0.00</span></td>
+                <td><button type="button" class="btn btn-danger btn-sm remove-row">删除</button></td>
+            </tr>
+        </tbody>
+        <tfoot>
+            <tr><td colspan="3" class="text-end fw-bold">合计金额</td>
+                <td><span id="total-amount">0.00</span></td>
+                <td></td>
+            </tr>
+        </tfoot>
+    </table>
+    <button type="button" class="btn btn-secondary" id="add-row">添加一行</button>
+    <button type="submit" class="btn btn-success float-end">保存出库单</button>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 复用同一个 SearchableSelect 类（代码与入库单完全相同）
+class SearchableSelect {
+    constructor(container, config = {}) {
+        this.container = container;
+        this.name = container.dataset.name;
+        this.placeholder = container.dataset.placeholder || '请选择';
+        this.storageKey = container.dataset.storage;
+        this.list = JSON.parse(container.dataset.list || '[]');
+        this.recentIds = this.loadRecent();
+        this.selectedId = null;
+        this.render();
+    }
+
+    loadRecent() {
+        if (!this.storageKey) return [];
+        try { return JSON.parse(localStorage.getItem(this.storageKey) || '[]'); } catch { return []; }
+    }
+
+    saveRecent(id) {
+        if (!this.storageKey) return;
+        let recents = this.loadRecent();
+        recents = recents.filter(rid => rid !== id);
+        recents.unshift(id);
+        if (recents.length > 5) recents.pop();
+        localStorage.setItem(this.storageKey, JSON.stringify(recents));
+        this.recentIds = recents;
+        this.updateDropdown();
+    }
+
+    render() {
+        this.container.innerHTML = `
+            <input type="text" class="form-control search-input" placeholder="${this.placeholder}" autocomplete="off">
+            <input type="hidden" name="${this.name}" value="">
+            <ul class="dropdown-menu w-100" style="max-height:200px; overflow-y:auto; display:none;"></ul>
+        `;
+        this.input = this.container.querySelector('.search-input');
+        this.hidden = this.container.querySelector('input[type="hidden"]');
+        this.dropdown = this.container.querySelector('.dropdown-menu');
+
+        this.input.addEventListener('focus', () => this.showDropdown());
+        this.input.addEventListener('input', () => this.filter());
+        this.input.addEventListener('blur', () => {
+            setTimeout(() => this.dropdown.style.display = 'none', 200);
+        });
+    }
+
+    getSortedList() {
+        const items = [...this.list];
+        if (this.recentIds.length) {
+            items.sort((a, b) => {
+                const aIndex = this.recentIds.indexOf(a.id);
+                const bIndex = this.recentIds.indexOf(b.id);
+                if (aIndex !== -1 && bIndex === -1) return -1;
+                if (aIndex === -1 && bIndex !== -1) return 1;
+                if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
+                return 0;
+            });
+        }
+        return items;
+    }
+
+    filter() {
+        const keyword = this.input.value.toLowerCase();
+        const items = this.getSortedList().filter(item => item.name.toLowerCase().includes(keyword));
+        this.renderDropdownItems(items);
+    }
+
+    showDropdown() {
+        const items = this.getSortedList();
+        this.renderDropdownItems(items);
+        this.dropdown.style.display = 'block';
+    }
+
+    renderDropdownItems(items) {
+        this.dropdown.innerHTML = '';
+        if (items.length === 0) {
+            this.dropdown.innerHTML = '<li class="dropdown-item text-muted">无匹配项</li>';
+            return;
+        }
+        items.forEach(item => {
+            const li = document.createElement('li');
+            li.className = 'dropdown-item';
+            li.textContent = item.name;
+            li.onmousedown = (e) => {
+                e.preventDefault();
+                this.selectItem(item);
+            };
+            this.dropdown.appendChild(li);
+        });
+    }
+
+    selectItem(item) {
+        this.input.value = item.name;
+        this.hidden.value = item.id;
+        this.selectedId = item.id;
+        this.saveRecent(item.id);
+        this.dropdown.style.display = 'none';
+    }
+}
+
+// 初始化
+document.querySelectorAll('.searchable-select').forEach(el => new SearchableSelect(el));
+
+// 动态行逻辑
+const addRowBtn = document.getElementById('add-row');
+const tbody = document.querySelector('#items-table tbody');
+
+addRowBtn.addEventListener('click', () => {
+    const newRow = tbody.rows[0].cloneNode(true);
+    newRow.querySelectorAll('input').forEach(inp => { if (inp.type !== 'hidden') inp.value = ''; });
+    newRow.querySelector('.subtotal').innerText = '0.00';
+    const newContainer = newRow.querySelector('.searchable-select');
+    new SearchableSelect(newContainer);
+    tbody.appendChild(newRow);
+    bindRowEvents(newRow);
+    calcTotal();
+});
+
+function bindRowEvents(row) {
+    row.querySelector('.remove-row').addEventListener('click', function() {
+        if (tbody.rows.length > 1) {
+            row.remove();
+            calcTotal();
+        } else {
+            alert('至少保留一行明细');
+        }
+    });
+    row.querySelector('.quantity').addEventListener('input', () => updateSubtotal(row));
+    row.querySelector('.unit-price').addEventListener('input', () => updateSubtotal(row));
+}
+
+function updateSubtotal(row) {
+    const qty = parseFloat(row.querySelector('.quantity').value) || 0;
+    const price = parseFloat(row.querySelector('.unit-price').value) || 0;
+    row.querySelector('.subtotal').innerText = (qty * price).toFixed(2);
+    calcTotal();
+}
+
+function calcTotal() {
+    let total = 0;
+    document.querySelectorAll('.subtotal').forEach(el => { total += parseFloat(el.innerText) || 0; });
+    document.getElementById('total-amount').innerText = total.toFixed(2);
+}
+
+document.querySelectorAll('.item-row').forEach(row => bindRowEvents(row));
+</script>
+{% endblock %}

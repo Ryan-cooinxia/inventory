@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}每日进出货报表{% endblock %}
+{% block content %}
+<h2>每日进出货统计</h2>
+<form class="row g-3 mb-4" method="GET">
+    <div class="col-auto">
+        <input type="date" name="start_date" value="{{ start_date }}" class="form-control">
+    </div>
+    <div class="col-auto">至</div>
+    <div class="col-auto">
+        <input type="date" name="end_date" value="{{ end_date }}" class="form-control">
+    </div>
+    <div class="col-auto">
+        <button type="submit" class="btn btn-primary">查询</button>
+    </div>
+</form>
+<canvas id="dailyChart" height="100"></canvas>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const ctx = document.getElementById('dailyChart').getContext('2d');
+new Chart(ctx, {
+    type: 'bar',
+    data: {
+        labels: {{ chart_dates | tojson }},
+        datasets: [{
+            label: '进货量',
+            data: {{ chart_purchase | tojson }},
+            backgroundColor: 'rgba(75, 192, 192, 0.6)'
+        }, {
+            label: '出货量',
+            data: {{ chart_sales | tojson }},
+            backgroundColor: 'rgba(255, 99, 132, 0.6)'
+        }]
+    },
+    options: {
+        responsive: true,
+        scales: { y: { beginAtZero: true } }
+    }
+});
+</script>
+{% endblock %}

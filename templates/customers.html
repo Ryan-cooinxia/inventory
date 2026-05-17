@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}客户管理{% endblock %}
+{% block content %}
+<h2>客户列表</h2>
+<form class="row g-3 mb-4" method="POST" action="/customers">
+    <div class="col-md-3"><input name="name" class="form-control" placeholder="客户名称" required></div>
+    <div class="col-md-2"><input name="contact" class="form-control" placeholder="联系人（选填）"></div>
+    <div class="col-md-2"><input name="phone" class="form-control" placeholder="电话（选填）"></div>
+    <div class="col-md-3"><input name="address" class="form-control" placeholder="常用地址（选填）"></div>
+    <div class="col-md-2"><button type="submit" class="btn btn-primary">添加客户</button></div>
+</form>
+
+<table class="table table-bordered">
+    <thead>
+        <tr><th>序号</th><th>名称</th><th>联系人</th><th>电话</th><th>常用地址</th><th>操作</th></tr>
+    </thead>
+    <tbody>
+    {% for c in customers %}
+    <tr id="row-{{ c.id }}">
+        <!-- 显示模式：只展示序号和字段值 -->
+        <td class="view-mode">{{ loop.index }}</td>
+        <td class="view-mode">{{ c.name }}</td>
+        <td class="view-mode">{{ c.contact or '' }}</td>
+        <td class="view-mode">{{ c.phone or '' }}</td>
+        <td class="view-mode">{{ c.address or '' }}</td>
+        <td class="view-mode">
+            <button class="btn btn-sm btn-outline-primary" onclick="editRow({{ c.id }})">编辑</button>
+            <form method="POST" action="/customers/delete/{{ c.id }}" style="display:inline" onsubmit="return confirm('确定删除吗？')">
+                <button type="submit" class="btn btn-sm btn-outline-danger">删除</button>
+            </form>
+        </td>
+        <!-- 编辑模式：显示输入框，序号仍然显示 -->
+        <td class="edit-mode" style="display:none">{{ loop.index }}</td>
+        <td class="edit-mode" style="display:none"><input form="edit-form-{{ c.id }}" name="name" value="{{ c.name }}" class="form-control form-control-sm" required></td>
+        <td class="edit-mode" style="display:none"><input form="edit-form-{{ c.id }}" name="contact" value="{{ c.contact or '' }}" class="form-control form-control-sm"></td>
+        <td class="edit-mode" style="display:none"><input form="edit-form-{{ c.id }}" name="phone" value="{{ c.phone or '' }}" class="form-control form-control-sm"></td>
+        <td class="edit-mode" style="display:none"><input form="edit-form-{{ c.id }}" name="address" value="{{ c.address or '' }}" class="form-control form-control-sm"></td>
+        <td class="edit-mode" style="display:none">
+            <form id="edit-form-{{ c.id }}" method="POST" action="/customers/edit/{{ c.id }}" style="display:inline">
+                <button type="submit" class="btn btn-sm btn-success">保存</button>
+            </form>
+            <button class="btn btn-sm btn-secondary" onclick="cancelEdit({{ c.id }})">取消</button>
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% include '_pagination.html' %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function editRow(id) {
+    const row = document.getElementById('row-' + id);
+    row.querySelectorAll('.view-mode').forEach(el => el.style.display = 'none');
+    row.querySelectorAll('.edit-mode').forEach(el => el.style.display = '');
+}
+function cancelEdit(id) {
+    const row = document.getElementById('row-' + id);
+    row.querySelectorAll('.view-mode').forEach(el => el.style.display = '');
+    row.querySelectorAll('.edit-mode').forEach(el => el.style.display = 'none');
+}
+</script>
+{% endblock %}

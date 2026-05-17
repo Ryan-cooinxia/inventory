@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}订单发货{% endblock %}
+{% block content %}
+<h2>订单 #{{ order.id }} 发货</h2>
+<p>客户：<strong>{{ order.customer.name }}</strong> | 订单日期：{{ order.order_date }} | 订单总额：¥{{ "%.2f"|format(order.total_amount) }}</p>
+
+<form method="POST" action="/orders/ship/{{ order.id }}">
+    <h5>订单产品明细</h5>
+    <table class="table table-bordered">
+        <thead>
+            <tr>
+                <th>产品</th>
+                <th>订单数量</th>
+                <th>已发货</th>
+                <th>待发货</th>
+                <th>本次发货数量</th>
+                <th>单价</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for item in items_data %}
+        <tr>
+            <td>{{ item.product.name }}</td>
+            <td>{{ item.qty_ordered }}</td>
+            <td>{{ item.shipped }}</td>
+            <td>{{ item.pending }}</td>
+            <td><input type="number" step="any" name="ship_qty_{{ item.product.id }}" class="form-control ship-qty" value="{{ item.pending }}" min="0" max="{{ item.pending }}" data-pending="{{ item.pending }}" required></td>
+            <td>¥{{ "%.2f"|format(item.unit_price) }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <!-- 额外添加产品区域（换货等） -->
+    <h5>额外添加产品（换货交付）</h5>
+    <table class="table table-bordered" id="extra-items-table">
+        <thead>
+            <tr>
+                <th>产品</th>
+                <th>数量</th>
+                <th>单价</th>
+                <th>小计</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr class="extra-item-row">
+                <td>
+                    <select name="extra_product_id[]" class="form-select extra-product-select">
+                        <option value="">选择产品</option>
+                        {% for p in products %}
+                        <option value="{{ p.id }}">{{ p.name }}</option>
+                        {% endfor %}
+                    </select>
+                </td>
+                <td><input type="number" step="any" name="extra_quantity[]" class="form-control extra-quantity" value="0" min="0"></td>
+                <td><input type="number" step="any" name="extra_unit_price[]" class="form-control extra-unit-price" value="0" min="0"></td>
+                <td><span class="extra-subtotal">0.00</span></td>
+                <td><button type="button" class="btn btn-danger btn-sm extra-remove-row">删除</button></td>
+            </tr>
+        </tbody>
+    </table>
+    <button type="button" class="btn btn-secondary" id="add-extra-row">添加一行产品</button>
+    <br><br>
+
+    <!-- 发货信息 -->
+    <div class="row mb-3">
+        <div class="col-md-3">
+            <label>出库日期</label>
+            <input type="date" name="order_date" class="form-control" value="{{ today }}" required>
+        </div>
+        <div class="col-md-3">
+            <label>送货方式</label>
+            <select name="ship_method" class="form-select">
+                <option value="">请选择</option>
+                <option value="快递">快递</option>
+                <option value="货拉拉">货拉拉</option>
+                <option value="跑腿">跑腿</option>
+                <option value="自提">自提</option>
+                <option value="其他">其他</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label>运单号 / 批次号</label>
+            <input type="text" name="tracking_number" class="form-control" placeholder="快递单号或批次号">
+        </div>
+    </div>
+    <div class="row mb-3">
+        <div class="col-md-6">
+            <label>备注</label>
+            <input type="text" name="remark" class="form-control">
+        </div>
+    </div>
+
+    <button type="submit" class="btn btn-success">确认发货（生成出库单）</button>
+    <a href="/orders" class="btn btn-secondary">返回订单列表</a>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 额外产品行管理
+const extraTbody = document.querySelector('#extra-items-table tbody');
+document.getElementById('add-extra-row').addEventListener('click', () => {
+    const newRow = extraTbody.rows[0].cloneNode(true);
+    newRow.querySelector('.extra-product-select').value = '';
+    newRow.querySelector('.extra-quantity').value = '0';
+    newRow.querySelector('.extra-unit-price').value = '0';
+    newRow.querySelector('.extra-subtotal').innerText = '0.00';
+    extraTbody.appendChild(newRow);
+    bindExtraRowEvents(newRow);
+});
+
+function bindExtraRowEvents(row) {
+    row.querySelector('.extra-remove-row').addEventListener('click', () => {
+        if (extraTbody.rows.length > 1) row.remove();
+        else alert('至少保留一行');
+    });
+    row.querySelector('.extra-quantity').addEventListener('input', () => updateExtraSubtotal(row));
+    row.querySelector('.extra-unit-price').addEventListener('input', () => updateExtraSubtotal(row));
+}
+
+function updateExtraSubtotal(row) {
+    const qty = parseFloat(row.querySelector('.extra-quantity').value) || 0;
+    const price = parseFloat(row.querySelector('.extra-unit-price').value) || 0;
+    row.querySelector('.extra-subtotal').innerText = (qty * price).toFixed(2);
+}
+document.querySelectorAll('.extra-item-row').forEach(row => bindExtraRowEvents(row));
+</script>
+{% endblock %}

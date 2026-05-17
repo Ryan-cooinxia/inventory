@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}客户订单管理{% endblock %}
+{% block content %}
+<h2>客户订单列表</h2>
+<a href="/orders/add" class="btn btn-primary mb-3">新增订单</a>
+
+<!-- 统计卡片 -->
+<div class="row mb-3">
+    <div class="col-md-4">
+        <div class="card bg-light">
+            <div class="card-body text-center">
+                <h6 class="card-title">订单总金额</h6>
+                <p class="card-text fs-5 fw-bold">¥{{ "%.2f"|format(total_order_value) }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card bg-light">
+            <div class="card-body text-center">
+                <h6 class="card-title">已发货总金额</h6>
+                <p class="card-text fs-5 fw-bold">¥{{ "%.2f"|format(total_shipped_value) }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card bg-light">
+            <div class="card-body text-center">
+                <h6 class="card-title">未发货总金额</h6>
+                <p class="card-text fs-5 fw-bold">¥{{ "%.2f"|format(total_unshipped_value) }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 订单表格 -->
+<div class="table-responsive">
+    <table class="table table-bordered table-sm align-middle" style="font-size:0.85rem;">
+        <thead class="table-light">
+            <tr>
+                <th>序号</th>
+                <th>客户</th>
+                <th>日期</th>
+                <th>产品</th>
+                <th>单价</th>
+                <th>数量</th>
+                <th>小计</th>
+                <th>已发货数量</th>
+                <th>剩余数量</th>
+                <th>已发货金额</th>
+                <th>剩余金额</th>
+                <th>状态</th>
+                <th>发票</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in orders %}
+        <tr>
+            {% if row.is_first_row %}
+            <td rowspan="{{ row.rowspan_count }}">{{ row.row_no }}</td>
+            <td rowspan="{{ row.rowspan_count }}">{{ row.customer_name }}</td>
+            <td rowspan="{{ row.rowspan_count }}">{{ row.order_date }}</td>
+            {% endif %}
+            <td>{{ row.product_name }}</td>
+            <td class="text-end">¥{{ "%.2f"|format(row.unit_price) }}</td>
+            <td class="text-center">{{ row.qty_ordered }}</td>
+            <td class="text-end">¥{{ "%.2f"|format(row.subtotal) }}</td>
+            {% if row.is_first_row %}
+            <td rowspan="{{ row.rowspan_count }}" class="text-center">{{ row.shipped_qty_total }}</td>
+            <td rowspan="{{ row.rowspan_count }}" class="text-center">{{ row.remaining_qty_total }}</td>
+            <td rowspan="{{ row.rowspan_count }}" class="text-end">¥{{ "%.2f"|format(row.shipped_amount) }}</td>
+            <td rowspan="{{ row.rowspan_count }}" class="text-end">¥{{ "%.2f"|format(row.remaining_amount) }}</td>
+            {% endif %}
+            <td>
+                {% if row.status_text == '未发货' %}
+                <span class="badge bg-warning text-dark">未发货</span>
+                {% elif row.status_text == '部分发货' %}
+                <span class="badge bg-info">部分发货</span>
+                {% elif row.status_text == '部分发货-换货' %}
+                <span class="badge bg-secondary">部分发货-换货</span>
+                {% elif row.status_text == '已完成' %}
+                <span class="badge bg-success">已完成</span>
+                {% else %}
+                <span class="badge bg-light text-dark">{{ row.status_text }}</span>
+                {% endif %}
+            </td>
+            {% if row.is_first_row %}
+            <td rowspan="{{ row.rowspan_count }}" class="text-center">{{ row.invoice_required }}</td>
+            <td rowspan="{{ row.rowspan_count }}">
+                {% if not row.has_shipment %}
+                <a href="/orders/edit/{{ row.order_id }}" class="btn btn-sm btn-outline-primary">编辑</a>
+                <form method="POST" action="/orders/delete/{{ row.order_id }}" style="display:inline" onsubmit="return confirm('确定删除订单？')">
+                    <button class="btn btn-sm btn-outline-danger">删除</button>
+                </form>
+                {% endif %}
+                {% if row.status_text != '已完成' %}
+                <a href="/orders/ship/{{ row.order_id }}" class="btn btn-sm btn-outline-success">发货</a>
+                {% endif %}
+            </td>
+            {% endif %}
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

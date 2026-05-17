@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}系统首页{% endblock %}
+{% block content %}
+<h2 class="mb-3">仓库概览（{{ today }}）</h2>
+
+<!-- 统计卡片 -->
+<div class="row mb-4">
+    <div class="col-md-3 mb-3">
+        <div class="card text-white bg-primary h-100">
+            <div class="card-body text-center">
+                <h5 class="card-title">供货商未到货总金额</h5>
+                <p class="card-text display-6">¥{{ "%.2f"|format(supplier_unreceived_total) }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3 mb-3">
+        <div class="card text-white bg-success h-100">
+            <div class="card-body text-center">
+                <h5 class="card-title">客户未发货总金额</h5>
+                <p class="card-text display-6">¥{{ "%.2f"|format(customer_unshipped_total) }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3 mb-3">
+        <div class="card text-white bg-warning h-100">
+            <div class="card-body text-center">
+                <h5 class="card-title">客户退款总额</h5>
+                <p class="card-text display-6">¥{{ "%.2f"|format(customer_refund_total) }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3 mb-3">
+        <div class="card text-white bg-danger h-100">
+            <div class="card-body text-center">
+                <h5 class="card-title">供货商退款总额</h5>
+                <p class="card-text display-6">¥{{ "%.2f"|format(supplier_refund_total) }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 库存异常提醒 -->
+{% if negative_stock_products %}
+<div class="alert alert-danger alert-dismissible fade show" role="alert">
+    <strong>⚠ 库存异常提醒：</strong>以下产品库存为负数，请及时核查！
+    <ul class="mb-0 mt-2">
+    {% for prod in negative_stock_products %}
+        <li>{{ prod.sku }} - {{ prod.name }}（{{ prod.stock }}）</li>
+    {% endfor %}
+    </ul>
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<!-- 当日入库 / 出库列表 -->
+<div class="row">
+    <div class="col-md-6">
+        <div class="card mb-3">
+            <div class="card-header fw-bold">当日入库单</div>
+            <div class="card-body p-0">
+                <table class="table table-sm table-striped mb-0">
+                    <thead>
+                        <tr><th>单号</th><th>供应商</th><th>产品</th><th>金额</th></tr>
+                    </thead>
+                    <tbody>
+                    {% for po in purchase_list %}
+                    <tr>
+                        <td>#{{ po.id }}</td>
+                        <td>{{ po.supplier }}</td>
+                        <td>{{ po.product_names }}</td>
+                        <td>¥{{ "%.2f"|format(po.total_amount) }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="4" class="text-muted">今日暂无入库</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card mb-3">
+            <div class="card-header fw-bold">当日出库单</div>
+            <div class="card-body p-0">
+                <table class="table table-sm table-striped mb-0">
+                    <thead>
+                        <tr><th>单号</th><th>客户</th><th>产品</th><th>金额</th></tr>
+                    </thead>
+                    <tbody>
+                    {% for so in sales_list %}
+                    <tr>
+                        <td>#{{ so.id }}</td>
+                        <td>{{ so.customer }}</td>
+                        <td>{{ so.product_names }}</td>
+                        <td>¥{{ "%.2f"|format(so.total_amount) }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="4" class="text-muted">今日暂无出库</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 当前库存 -->
+<div class="card">
+    <div class="card-header fw-bold">当前库存</div>
+    <div class="card-body p-0">
+        <table class="table table-sm table-bordered mb-0">
+            <thead>
+                <tr><th>SKU</th><th>产品</th><th>库存量</th><th>库存货值</th></tr>
+            </thead>
+            <tbody>
+            {% for inv in inventory_list %}
+            <tr>
+                <td>{{ inv.sku }}</td>
+                <td>{{ inv.name }}</td>
+                <td>{{ inv.stock }}</td>
+                <td>¥{{ "%.2f"|format(inv.stock_value) }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" class="text-muted">暂无库存</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}产品订购总表{% endblock %}
+{% block content %}
+<h2>产品订购总表</h2>
+<form class="row g-3 mb-3" method="GET">
+    <div class="col-auto">
+        <input type="date" name="start_date" value="{{ start_date }}" class="form-control">
+    </div>
+    <div class="col-auto">至</div>
+    <div class="col-auto">
+        <input type="date" name="end_date" value="{{ end_date }}" class="form-control">
+    </div>
+    <div class="col-auto">
+        <button type="submit" class="btn btn-primary">查询</button>
+    </div>
+</form>
+
+<table class="table table-bordered table-sm">
+    <thead>
+        <tr>
+            <th>SKU</th>
+            <th>产品名称</th>
+            <th>单位</th>
+            <th>总数量</th>
+            <th>总货值</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for row in rows %}
+    <tr>
+        <td>{{ row.sku }}</td>
+        <td>{{ row.product }}</td>
+        <td>{{ row.unit }}</td>
+        <td>{{ row.total_qty }}</td>
+        <td>¥{{ "%.2f"|format(row.total_amount) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+    <tfoot>
+        <tr class="table-secondary fw-bold">
+            <td colspan="4" class="text-end">合计总货值：</td>
+            <td>¥{{ "%.2f"|format(rows | sum(attribute='total_amount')) }}</td>
+        </tr>
+    </tfoot>
+</table>
+{% endblock %}
