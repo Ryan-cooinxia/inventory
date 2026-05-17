@@ -10,6 +10,7 @@ from models import *
 from peewee import fn, JOIN
 from blueprints.products import products_bp
 from blueprints.customers import customers_bp
+from blueprints.suppliers import suppliers_bp
 import datetime
 import csv
 import io
@@ -18,6 +19,7 @@ app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-in-production'  # 用于 flash 消息
 app.register_blueprint(products_bp)
 app.register_blueprint(customers_bp)
+app.register_blueprint(suppliers_bp)
 
 
 # ----- 数据库连接管理 -----
@@ -163,71 +165,6 @@ def index():
                            sales_list=sales_list,
                            inventory_list=inventory_list,
                            negative_stock_products=negative_stock_products)
-
-# -------------------- 基础资料管理 --------------------
-
-
-@app.route('/suppliers', methods=['GET', 'POST'])
-def manage_suppliers():
-    """供应商列表 + 添加新供应商"""
-    if request.method == 'POST':
-        name = request.form.get('name')
-        contact = request.form.get('contact', '')
-        phone = request.form.get('phone', '')
-        Supplier.create(name=name, contact=contact or None, phone=phone or None)
-        flash('供应商添加成功', 'success')
-        return redirect(url_for('manage_suppliers'))
-    suppliers = Supplier.select()
-    # GET 请求：分页查询
-    page = int(request.args.get('page', 1))
-    per_page = int(request.args.get('per_page', 20))  # 默认20条
-    if per_page not in [10, 20, 50, 100]:
-        per_page = 20
-
-    query = Supplier.select().order_by(Supplier.id.desc())
-    total = query.count()
-    total_pages = max(1, (total + per_page - 1) // per_page)
-    suppliers = query.paginate(page, per_page)
-    
-    return render_template('suppliers.html',
-                           suppliers=suppliers,
-                           page=page,
-                           per_page=per_page,
-                           total_pages=total_pages,
-                           total=total)
-# ---------- 编辑供应商 ----------
-@app.route('/suppliers/edit/<int:supplier_id>', methods=['POST'])
-def edit_supplier(supplier_id):
-    """编辑指定供应商"""
-    supplier = Supplier.get_or_none(Supplier.id == supplier_id)
-    if not supplier:
-        flash('供应商不存在', 'danger')
-        return redirect(url_for('manage_suppliers'))
-    supplier.name = request.form.get('name')
-    supplier.contact = request.form.get('contact', '') or None
-    supplier.phone = request.form.get('phone', '') or None
-    supplier.save()
-    flash('供应商修改成功', 'success')
-    return redirect(url_for('manage_suppliers'))
-
-# ---------- 删除供应商 ----------
-@app.route('/suppliers/delete/<int:supplier_id>', methods=['POST'])
-def delete_supplier(supplier_id):
-    supplier = Supplier.get_or_none(Supplier.id == supplier_id)
-    if not supplier:
-        flash('供应商不存在', 'danger')
-        return redirect(url_for('manage_suppliers'))
-
-    # 检查是否被入库单或供应商订单引用
-    has_purchase = PurchaseOrder.select().where(PurchaseOrder.supplier == supplier).exists()
-    has_orders = SupplierOrder.select().where(SupplierOrder.supplier == supplier).exists()
-    if has_purchase or has_orders:
-        flash('该供应商已有业务记录，无法删除。', 'danger')
-        return redirect(url_for('manage_suppliers'))
-
-    supplier.delete_instance()
-    flash('供应商已删除', 'success')
-    return redirect(url_for('manage_suppliers'))
 
 # ================== 入库单管理 ==================
 @app.route('/purchase/add', methods=['GET', 'POST'])
