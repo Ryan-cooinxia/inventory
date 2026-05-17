@@ -213,3 +213,131 @@ def report_supplier_products():
                            per_page=per_page,
                            total_pages=total_pages,
                            total=total)
+
+@reports_bp.route('/report/sales_profit')
+def report_sales_profit():
+    start_date = request.args.get('start_date', '2000-01-01')
+    end_date = request.args.get('end_date', datetime.date.today().strftime('%Y-%m-%d'))
+
+    # 1. 计算每个产品的加权平均成本（全局，所有时间）
+    product_cost = {}
+    cost_query = (PurchaseOrderItem
+                  .select(PurchaseOrderItem.product,
+                          fn.SUM(PurchaseOrderItem.subtotal).alias('total_cost'),
+                          fn.SUM(PurchaseOrderItem.quantity).alias('total_qty'))
+                  .group_by(PurchaseOrderItem.product))
+    for row in cost_query:
+        if row.total_qty and row.total_qty > 0:
+            product_cost[row.product_id] = row.total_cost / row.total_qty
+        else:
+            product_cost[row.product_id] = 0.0
+
+    # 2. 查询选定时间段内的销售明细（按产品汇总）
+    sales_query = (SalesOrderItem
+                   .select(SalesOrderItem.product,
+                           fn.SUM(SalesOrderItem.quantity).alias('sold_qty'),
+                           fn.SUM(SalesOrderItem.subtotal).alias('revenue'))
+                   .join(SalesOrder)
+                   .where(SalesOrder.order_date.between(start_date, end_date))
+                   .group_by(SalesOrderItem.product)
+                   .order_by(fn.SUM(SalesOrderItem.subtotal).desc()))
+
+    rows = []
+    total_profit = 0.0
+    for item in sales_query:
+        pid = item.product_id
+        product = item.product
+        sold_qty = item.sold_qty or 0
+        revenue = item.revenue or 0.0
+        avg_cost = product_cost.get(pid, 0.0)
+        cost_total = avg_cost * sold_qty
+        profit = revenue - cost_total
+        margin = (profit / revenue * 100) if revenue > 0 else 0.0
+        total_profit += profit
+
+        rows.append({
+            'sku': product.sku or '',
+            'name': product.name,
+            'unit': product.unit,
+            'sold_qty': sold_qty,
+            'avg_cost': avg_cost,
+            'revenue': revenue,
+            'profit': profit,
+            'margin': round(margin, 2)
+        })
+
+    return render_template('report_sales_profit.html',
+                           rows=rows,
+                           total_profit=total_profit,
+                           start_date=start_date,
+                           end_date=end_date)
+
+@reports_bp.route('/report/inventory_trend')
+def report_inventory_trend():
+    # 默认显示最近30天
+    end_date = request.args.get('end_date', datetime.date.today())
+    start_date = request.args.get('start_date',
+                                  datetime.date.today() - datetime.timedelta(days=29))
+    if isinstance(start_date, str):
+        start_date = datetime.datetime.strptime(start_date, '%Y-%m-%d').date()
+    if isinstance(end_date, str):
+        end_date = datetime.datetime.strptime(end_date, '%Y-%m-%d').date()
+
+    # 1. 计算起始日期之前的总结存（作为初始值）
+    initial_stock = 0.0
+    products = Product.select()
+    for p in products:
+        total_in = (PurchaseOrderItem
+                    .select(fn.SUM(PurchaseOrderItem.quantity))
+                    .join(PurchaseOrder)
+                    .where((PurchaseOrderItem.product == p) & (PurchaseOrder.order_date < start_date))
+                    .scalar()) or 0
+        total_out = (SalesOrderItem
+                     .select(fn.SUM(SalesOrderItem.quantity))
+                     .join(SalesOrder)
+                     .where((SalesOrderItem.product == p) & (SalesOrder.order_date < start_date))
+                     .scalar()) or 0
+        initial_stock += (total_in - total_out)
+
+    # 2. 计算日期范围内每天的净变化，然后累计得到每日库存
+    # 按天汇总入库数量
+    daily_in = (PurchaseOrder
+                .select(PurchaseOrder.order_date,
+                        fn.SUM(PurchaseOrderItem.quantity).alias('qty'))
+                .join(PurchaseOrderItem)
+                .where(PurchaseOrder.order_date.between(start_date, end_date))
+                .group_by(PurchaseOrder.order_date)
+                .order_by(PurchaseOrder.order_date))
+
+    daily_out = (SalesOrder
+                 .select(SalesOrder.order_date,
+                         fn.SUM(SalesOrderItem.quantity).alias('qty'))
+                 .join(SalesOrderItem)
+                 .where(SalesOrder.order_date.between(start_date, end_date))
+                 .group_by(SalesOrder.order_date)
+                 .order_by(SalesOrder.order_date))
+
+    # 转为字典
+    in_dict = {row.order_date: row.qty for row in daily_in}
+    out_dict = {row.order_date: row.qty for row in daily_out}
+
+    # 构建日期序列
+    date_range = [start_date + datetime.timedelta(days=i)
+                  for i in range((end_date - start_date).days + 1)]
+
+    chart_labels = []
+    chart_data = []
+    current_stock = initial_stock
+    for d in date_range:
+        net_change = in_dict.get(d, 0) - out_dict.get(d, 0)
+        current_stock += net_change
+        chart_labels.append(d.strftime('%m-%d'))
+        chart_data.append(round(current_stock, 2))
+
+    return render_template('report_inventory_trend.html',
+                           start_date=start_date,
+                           end_date=end_date,
+                           chart_labels=chart_labels,
+                           chart_data=chart_data,
+                           initial_stock=initial_stock,
+                           current_stock=current_stock)

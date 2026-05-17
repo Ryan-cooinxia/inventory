@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}库存趋势图{% endblock %}
+{% block content %}
+<h2>库存趋势图</h2>
+<form class="row g-3 mb-3" method="GET">
+    <div class="col-auto">
+        <input type="date" name="start_date" value="{{ start_date }}" class="form-control">
+    </div>
+    <div class="col-auto">至</div>
+    <div class="col-auto">
+        <input type="date" name="end_date" value="{{ end_date }}" class="form-control">
+    </div>
+    <div class="col-auto">
+        <button type="submit" class="btn btn-primary">查询</button>
+    </div>
+</form>
+
+<div class="alert alert-info">
+    初始库存（{{ start_date }}前）：<strong>{{ initial_stock }}</strong> 件 |
+    当前库存（{{ end_date }}）：<strong>{{ current_stock }}</strong> 件
+</div>
+
+<canvas id="inventoryChart" height="100"></canvas>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const ctx = document.getElementById('inventoryChart').getContext('2d');
+new Chart(ctx, {
+    type: 'line',
+    data: {
+        labels: {{ chart_labels | tojson }},
+        datasets: [{
+            label: '总库存数量',
+            data: {{ chart_data | tojson }},
+            borderColor: 'rgba(75, 192, 192, 1)',
+            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+            borderWidth: 2,
+            pointRadius: 3,
+            tension: 0.3
+        }]
+    },
+    options: {
+        responsive: true,
+        scales: {
+            y: { beginAtZero: false }
+        }
+    }
+});
+</script>
+{% endblock %}

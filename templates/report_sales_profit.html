@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}销售毛利报表{% endblock %}
+{% block content %}
+<h2>销售毛利报表</h2>
+<form class="row g-3 mb-3" method="GET">
+    <div class="col-auto">
+        <input type="date" name="start_date" value="{{ start_date }}" class="form-control">
+    </div>
+    <div class="col-auto">至</div>
+    <div class="col-auto">
+        <input type="date" name="end_date" value="{{ end_date }}" class="form-control">
+    </div>
+    <div class="col-auto">
+        <button type="submit" class="btn btn-primary">查询</button>
+    </div>
+</form>
+
+<table class="table table-bordered table-sm">
+    <thead>
+        <tr>
+            <th>SKU</th>
+            <th>产品名称</th>
+            <th>单位</th>
+            <th>销售数量</th>
+            <th>平均成本</th>
+            <th>销售收入</th>
+            <th>毛利</th>
+            <th>毛利率</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for row in rows %}
+    <tr>
+        <td>{{ row.sku }}</td>
+        <td>{{ row.name }}</td>
+        <td>{{ row.unit }}</td>
+        <td>{{ row.sold_qty }}</td>
+        <td>¥{{ "%.2f"|format(row.avg_cost) }}</td>
+        <td>¥{{ "%.2f"|format(row.revenue) }}</td>
+        <td>¥{{ "%.2f"|format(row.profit) }}</td>
+        <td>{{ row.margin }}%</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+    <tfoot>
+        <tr class="table-secondary fw-bold">
+            <td colspan="6" class="text-end">总毛利：</td>
+            <td>¥{{ "%.2f"|format(total_profit) }}</td>
+            <td></td>
+        </tr>
+    </tfoot>
+</table>
+{% endblock %}
