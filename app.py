@@ -29,6 +29,7 @@ from blueprints.refunds import refunds_bp
 from blueprints.finance import finance_bp
 from blueprints.data_io import data_io_bp
 from blueprints.utils import utils_bp
+from blueprints.tools import tools_bp
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-in-production'
@@ -47,6 +48,7 @@ app.register_blueprint(refunds_bp)
 app.register_blueprint(finance_bp)
 app.register_blueprint(data_io_bp)
 app.register_blueprint(utils_bp)
+app.register_blueprint(tools_bp)
 
 # 数据库连接管理
 @app.before_request

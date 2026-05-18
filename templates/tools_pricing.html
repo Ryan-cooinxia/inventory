@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}定价工具箱{% endblock %}
+{% block content %}
+<h2>定价工具箱</h2>
+
+<div class="row mb-3">
+    <div class="col-md-6">
+        <button class="btn btn-outline-primary w-100" id="btn-price-calc" onclick="showCalc('price')">售价计算器</button>
+    </div>
+    <div class="col-md-6">
+        <button class="btn btn-outline-primary w-100" id="btn-cost-calc" onclick="showCalc('cost')">成本反推器</button>
+    </div>
+</div>
+
+<!-- 售价计算器 -->
+<div id="price-calculator">
+    <div class="card">
+        <div class="card-header fw-bold">售价计算器（人民币 → 卢布建议售价）</div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label>产品成本（¥）</label>
+                    <input type="number" step="0.01" id="p_cost" class="form-control" value="100">
+                </div>
+                <div class="col-md-6">
+                    <label>国内运费（¥）</label>
+                    <input type="number" step="0.01" id="p_domestic_freight" class="form-control" value="10">
+                </div>
+                <div class="col-md-6">
+                    <label>国际运费（¥）</label>
+                    <input type="number" step="0.01" id="p_intl_freight" class="form-control" value="30">
+                </div>
+                <div class="col-md-6">
+                    <label>其他费用（¥）</label>
+                    <input type="number" step="0.01" id="p_other_fee" class="form-control" value="0">
+                </div>
+                <div class="col-md-6">
+                    <label>平台佣金率（%）</label>
+                    <input type="number" step="0.01" id="p_commission" class="form-control" value="15">
+                </div>
+                <div class="col-md-6">
+                    <label>汇率（1人民币 = ? 卢布）</label>
+                    <input type="number" step="0.01" id="p_rate" class="form-control" value="12.5">
+                </div>
+                <div class="col-md-6">
+                    <label>预期利润率（%）</label>
+                    <input type="number" step="0.01" id="p_margin" class="form-control" value="20">
+                </div>
+                <div class="col-md-6">
+                    <label>国内快递费（¥，可选）</label>
+                    <input type="number" step="0.01" id="p_domestic_express" class="form-control" value="0">
+                </div>
+            </div>
+            <button class="btn btn-primary mt-3" onclick="calcPrice()">计算建议售价</button>
+            <hr>
+            <div id="priceResult" class="mt-2"></div>
+        </div>
+    </div>
+</div>
+
+<!-- 成本反推器 -->
+<div id="cost-calculator" style="display:none;">
+    <div class="card">
+        <div class="card-header fw-bold">成本反推器（根据同行售价反推进货成本）</div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label>同行售价（卢布）</label>
+                    <input type="number" step="0.01" id="c_selling_price" class="form-control" value="2000">
+                </div>
+                <div class="col-md-6">
+                    <label>平台佣金率（%）</label>
+                    <input type="number" step="0.01" id="c_commission" class="form-control" value="15">
+                </div>
+                <div class="col-md-6">
+                    <label>汇率（1人民币 = ? 卢布）</label>
+                    <input type="number" step="0.01" id="c_rate" class="form-control" value="12.5">
+                </div>
+                <div class="col-md-6">
+                    <label>国内运费（¥）</label>
+                    <input type="number" step="0.01" id="c_domestic_freight" class="form-control" value="10">
+                </div>
+                <div class="col-md-6">
+                    <label>国际运费（¥）</label>
+                    <input type="number" step="0.01" id="c_intl_freight" class="form-control" value="30">
+                </div>
+                <div class="col-md-6">
+                    <label>其他费用（¥）</label>
+                    <input type="number" step="0.01" id="c_other_fee" class="form-control" value="0">
+                </div>
+                <div class="col-md-6">
+                    <label>预期利润率（%）</label>
+                    <input type="number" step="0.01" id="c_margin" class="form-control" value="20">
+                </div>
+            </div>
+            <button class="btn btn-primary mt-3" onclick="calcCost()">计算最高进货成本</button>
+            <hr>
+            <div id="costResult" class="mt-2"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 切换计算器
+function showCalc(type) {
+    document.getElementById('price-calculator').style.display = (type === 'price') ? 'block' : 'none';
+    document.getElementById('cost-calculator').style.display = (type === 'cost') ? 'block' : 'none';
+    document.getElementById('btn-price-calc').classList.toggle('active', type === 'price');
+    document.getElementById('btn-cost-calc').classList.toggle('active', type === 'cost');
+}
+
+// 售价计算
+function calcPrice() {
+    const cost = parseFloat(document.getElementById('p_cost').value) || 0;
+    const domestic = parseFloat(document.getElementById('p_domestic_freight').value) || 0;
+    const intl = parseFloat(document.getElementById('p_intl_freight').value) || 0;
+    const other = parseFloat(document.getElementById('p_other_fee').value) || 0;
+    const express = parseFloat(document.getElementById('p_domestic_express').value) || 0;
+    const commission = parseFloat(document.getElementById('p_commission').value) || 0;
+    const rate = parseFloat(document.getElementById('p_rate').value) || 1;
+    const margin = parseFloat(document.getElementById('p_margin').value) || 0;
+
+    const totalCostCNY = cost + domestic + intl + other + express;
+    // 利润 = 总成本 * 利润率
+    const profitCNY = totalCostCNY * (margin / 100);
+    // 目标收入（人民币）= 总成本 + 利润
+    const targetRevenueCNY = totalCostCNY + profitCNY;
+    // 考虑佣金：实际到手收入 = 售价 * (1 - 佣金率)
+    // 因此 售价(人民币) = 目标收入 / (1 - 佣金率)
+    const commissionRate = commission / 100;
+    let priceCNY = targetRevenueCNY / (1 - commissionRate);
+    const priceRUB = priceCNY * rate;
+
+    const resultHTML = `
+        <table class="table table-sm table-bordered">
+            <tr><td>总成本（¥）</td><td>${totalCostCNY.toFixed(2)}</td></tr>
+            <tr><td>预期利润（¥）</td><td>${profitCNY.toFixed(2)}</td></tr>
+            <tr><td>目标收入（¥）</td><td>${targetRevenueCNY.toFixed(2)}</td></tr>
+            <tr><td>建议售价（¥）</td><td><strong>${priceCNY.toFixed(2)}</strong></td></tr>
+            <tr><td>建议售价（卢布）</td><td><strong>${priceRUB.toFixed(2)}</strong></td></tr>
+        </table>
+    `;
+    document.getElementById('priceResult').innerHTML = resultHTML;
+}
+
+// 成本反推
+function calcCost() {
+    const sellingPriceRUB = parseFloat(document.getElementById('c_selling_price').value) || 0;
+    const commission = parseFloat(document.getElementById('c_commission').value) || 0;
+    const rate = parseFloat(document.getElementById('c_rate').value) || 1;
+    const domestic = parseFloat(document.getElementById('c_domestic_freight').value) || 0;
+    const intl = parseFloat(document.getElementById('c_intl_freight').value) || 0;
+    const other = parseFloat(document.getElementById('c_other_fee').value) || 0;
+    const margin = parseFloat(document.getElementById('c_margin').value) || 0;
+
+    // 售价转换为人民币
+    const sellingPriceCNY = sellingPriceRUB / rate;
+    // 扣除佣金后的实际收入
+    const revenueCNY = sellingPriceCNY * (1 - commission / 100);
+    // 预期利润 = 进货成本 * 利润率
+    // 实际收入 = 进货成本 + 其他费用 + 利润
+    // 即 revenueCNY = cost + (domestic+intl+other) + cost * (margin/100)
+    // revenueCNY = cost * (1 + margin/100) + fixedFee
+    const fixedFee = domestic + intl + other;
+    const costCNY = (revenueCNY - fixedFee) / (1 + margin / 100);
+    const profitCNY = costCNY * (margin / 100);
+
+    const resultHTML = `
+        <table class="table table-sm table-bordered">
+            <tr><td>同行售价（卢布）</td><td>${sellingPriceRUB.toFixed(2)}</td></tr>
+            <tr><td>折合人民币售价</td><td>${sellingPriceCNY.toFixed(2)}</td></tr>
+            <tr><td>扣除佣金后收入（¥）</td><td>${revenueCNY.toFixed(2)}</td></tr>
+            <tr><td>其他费用合计（¥）</td><td>${fixedFee.toFixed(2)}</td></tr>
+            <tr><td>最高可接受进货成本（¥）</td><td><strong>${costCNY.toFixed(2)}</strong></td></tr>
+            <tr><td>对应利润（¥）</td><td>${profitCNY.toFixed(2)}</td></tr>
+        </table>
+    `;
+    document.getElementById('costResult').innerHTML = resultHTML;
+}
+</script>
+{% endblock %}
