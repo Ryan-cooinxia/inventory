@@ -31,7 +31,6 @@
         </tbody>
     </table>
 
-    <!-- 额外添加产品区域（换货等） -->
     <h5>额外添加产品（换货交付）</h5>
     <table class="table table-bordered" id="extra-items-table">
         <thead>
@@ -46,12 +45,11 @@
         <tbody>
             <tr class="extra-item-row">
                 <td>
-                    <select name="extra_product_id[]" class="form-select extra-product-select">
-                        <option value="">选择产品</option>
-                        {% for p in products %}
-                        <option value="{{ p.id }}">{{ p.name }}</option>
-                        {% endfor %}
-                    </select>
+                    <div class="searchable-select"
+                         data-name="extra_product_id[]"
+                         data-placeholder="搜索或选择产品"
+                         data-storage="recent_products"
+                         data-list='{{ products_json | tojson }}'></div>
                 </td>
                 <td><input type="number" step="any" name="extra_quantity[]" class="form-control extra-quantity" value="0" min="0"></td>
                 <td><input type="number" step="any" name="extra_unit_price[]" class="form-control extra-unit-price" value="0" min="0"></td>
@@ -63,7 +61,6 @@
     <button type="button" class="btn btn-secondary" id="add-extra-row">添加一行产品</button>
     <br><br>
 
-    <!-- 发货信息 -->
     <div class="row mb-3">
         <div class="col-md-3">
             <label>出库日期</label>
@@ -99,11 +96,106 @@
 
 {% block scripts %}
 <script>
+// ========== SearchableSelect 组件 ==========
+class SearchableSelect {
+    constructor(container) {
+        this.container = container;
+        this.name = container.dataset.name;
+        this.placeholder = container.dataset.placeholder || '请选择';
+        this.storageKey = container.dataset.storage;
+        this.list = JSON.parse(container.dataset.list || '[]');
+        this.recentIds = this.loadRecent();
+        this.selectedId = null;
+        this.render();
+    }
+    loadRecent() {
+        if (!this.storageKey) return [];
+        try { return JSON.parse(localStorage.getItem(this.storageKey) || '[]'); } catch { return []; }
+    }
+    saveRecent(id) {
+        if (!this.storageKey) return;
+        let recents = this.loadRecent();
+        recents = recents.filter(rid => rid !== id);
+        recents.unshift(id);
+        if (recents.length > 5) recents.pop();
+        localStorage.setItem(this.storageKey, JSON.stringify(recents));
+        this.recentIds = recents;
+    }
+    render() {
+        this.container.innerHTML = `
+            <input type="text" class="form-control search-input" placeholder="${this.placeholder}" autocomplete="off">
+            <input type="hidden" name="${this.name}" value="">
+            <ul class="dropdown-menu w-100" style="max-height:200px; overflow-y:auto; display:none;"></ul>
+        `;
+        this.input = this.container.querySelector('.search-input');
+        this.hidden = this.container.querySelector('input[type="hidden"]');
+        this.dropdown = this.container.querySelector('.dropdown-menu');
+        this.input.addEventListener('focus', () => this.showDropdown());
+        this.input.addEventListener('input', () => this.filter());
+        this.input.addEventListener('blur', () => {
+            setTimeout(() => this.dropdown.style.display = 'none', 200);
+        });
+    }
+    getSortedList() {
+        const items = [...this.list];
+        if (this.recentIds.length) {
+            items.sort((a, b) => {
+                const aIdx = this.recentIds.indexOf(a.id);
+                const bIdx = this.recentIds.indexOf(b.id);
+                if (aIdx !== -1 && bIdx === -1) return -1;
+                if (aIdx === -1 && bIdx !== -1) return 1;
+                if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+                return 0;
+            });
+        }
+        return items;
+    }
+    filter() {
+        const keyword = this.input.value.toLowerCase();
+        const items = this.getSortedList().filter(item => item.name.toLowerCase().includes(keyword));
+        this.renderItems(items);
+    }
+    showDropdown() {
+        this.renderItems(this.getSortedList());
+        this.dropdown.style.display = 'block';
+    }
+    renderItems(items) {
+        this.dropdown.innerHTML = '';
+        if (items.length === 0) {
+            this.dropdown.innerHTML = '<li class="dropdown-item text-muted">无匹配项</li>';
+            return;
+        }
+        items.forEach(item => {
+            const li = document.createElement('li');
+            li.className = 'dropdown-item';
+            li.textContent = item.name;
+            li.onmousedown = (e) => {
+                e.preventDefault();
+                this.input.value = item.name;
+                this.hidden.value = item.id;
+                this.selectedId = item.id;
+                this.saveRecent(item.id);
+                this.dropdown.style.display = 'none';
+            };
+            this.dropdown.appendChild(li);
+        });
+    }
+}
+
+// 初始化已有组件
+document.querySelectorAll('.searchable-select').forEach(el => new SearchableSelect(el));
+
 // 额外产品行管理
 const extraTbody = document.querySelector('#extra-items-table tbody');
 document.getElementById('add-extra-row').addEventListener('click', () => {
     const newRow = extraTbody.rows[0].cloneNode(true);
-    newRow.querySelector('.extra-product-select').value = '';
+    const searchSelect = newRow.querySelector('.searchable-select');
+    if (searchSelect) {
+        searchSelect.innerHTML = '';
+        searchSelect.removeAttribute('data-selected-id');
+        searchSelect.removeAttribute('data-selected-name');
+        new SearchableSelect(searchSelect);
+    }
     newRow.querySelector('.extra-quantity').value = '0';
     newRow.querySelector('.extra-unit-price').value = '0';
     newRow.querySelector('.extra-subtotal').innerText = '0.00';
@@ -119,7 +211,6 @@ function bindExtraRowEvents(row) {
     row.querySelector('.extra-quantity').addEventListener('input', () => updateExtraSubtotal(row));
     row.querySelector('.extra-unit-price').addEventListener('input', () => updateExtraSubtotal(row));
 }
-
 function updateExtraSubtotal(row) {
     const qty = parseFloat(row.querySelector('.extra-quantity').value) || 0;
     const price = parseFloat(row.querySelector('.extra-unit-price').value) || 0;
