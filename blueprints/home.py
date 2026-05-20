@@ -1,4 +1,6 @@
+# blueprints/home.py
 from flask import Blueprint, render_template
+from flask_login import login_required, current_user      # 新增
 from models import *
 from peewee import fn
 import datetime
@@ -6,43 +8,47 @@ import datetime
 home_bp = Blueprint('home', __name__)
 
 @home_bp.route('/')
+@login_required                                           # 新增
 def index():
     today = datetime.date.today()
 
-    # 供货商订单总额
+    # 所有查询均添加 .where(模型.user == current_user)
     supplier_order_total = (SupplierOrder
                             .select(fn.SUM(SupplierOrder.total_amount))
+                            .where(SupplierOrder.user == current_user)
                             .scalar()) or 0
-    # 供货商已收货金额（关联了供应商订单的入库单总额）
+
     supplier_received_amount = (PurchaseOrder
                                 .select(fn.SUM(PurchaseOrder.total_amount))
-                                .where(PurchaseOrder.supplier_order.is_null(False))
+                                .where(PurchaseOrder.supplier_order.is_null(False) &
+                                       (PurchaseOrder.user == current_user))
                                 .scalar()) or 0
     supplier_unreceived_total = max(supplier_order_total - supplier_received_amount, 0)
 
-    # 客户订单总额
     customer_order_total = (CustomerOrder
                             .select(fn.SUM(CustomerOrder.total_amount))
+                            .where(CustomerOrder.user == current_user)
                             .scalar()) or 0
-    # 客户已发货金额（关联了客户订单的出库单总额）
+
     customer_shipped_amount = (SalesOrder
                                .select(fn.SUM(SalesOrder.total_amount))
-                               .where(SalesOrder.customer_order.is_null(False))
+                               .where(SalesOrder.customer_order.is_null(False) &
+                                      (SalesOrder.user == current_user))
                                .scalar()) or 0
     customer_unshipped_total = max(customer_order_total - customer_shipped_amount, 0)
 
-    # 客户退款总额
     customer_refund_total = (CustomerRefund
                              .select(fn.SUM(CustomerRefund.amount))
+                             .where(CustomerRefund.user == current_user)
                              .scalar()) or 0
 
-    # 供货商退款总额（暂无）
     supplier_refund_total = 0.0
 
-    # 当日入库单列表
+    # 当日入库
     today_purchase_orders = (PurchaseOrder
                              .select()
-                             .where(PurchaseOrder.order_date == today)
+                             .where(PurchaseOrder.order_date == today,
+                                    PurchaseOrder.user == current_user)
                              .order_by(PurchaseOrder.id.desc()))
     purchase_list = []
     for po in today_purchase_orders:
@@ -56,10 +62,11 @@ def index():
             'order_date': po.order_date
         })
 
-    # 当日出库单列表
+    # 当日出库
     today_sales_orders = (SalesOrder
                           .select()
-                          .where(SalesOrder.order_date == today)
+                          .where(SalesOrder.order_date == today,
+                                 SalesOrder.user == current_user)
                           .order_by(SalesOrder.id.desc()))
     sales_list = []
     for so in today_sales_orders:
@@ -73,33 +80,32 @@ def index():
             'order_date': so.order_date
         })
 
-    # 当前库存（有库存的产品 + 负数库存收集）
-    products = Product.select()
+    # 库存（仅当前用户的产品）
+    products = Product.select().where(Product.user == current_user)
     inventory_list = []
     negative_stock_products = []
     for p in products:
         total_in = (PurchaseOrderItem
                     .select(fn.SUM(PurchaseOrderItem.quantity))
-                    .where(PurchaseOrderItem.product == p)
+                    .join(PurchaseOrder)
+                    .where((PurchaseOrderItem.product == p) & (PurchaseOrder.user == current_user))
                     .scalar()) or 0
         total_out = (SalesOrderItem
                      .select(fn.SUM(SalesOrderItem.quantity))
-                     .where(SalesOrderItem.product == p)
+                     .join(SalesOrder)
+                     .where((SalesOrderItem.product == p) & (SalesOrder.user == current_user))
                      .scalar()) or 0
         stock = total_in - total_out
 
         if stock < 0:
-            negative_stock_products.append({
-                'sku': p.sku or '',
-                'name': p.name,
-                'stock': stock
-            })
+            negative_stock_products.append({'sku': p.sku or '', 'name': p.name, 'stock': stock})
 
         if stock > 0:
             purchase_data = (PurchaseOrderItem
                              .select(fn.SUM(PurchaseOrderItem.subtotal).alias('total_cost'),
                                      fn.SUM(PurchaseOrderItem.quantity).alias('total_qty'))
-                             .where(PurchaseOrderItem.product == p)
+                             .join(PurchaseOrder)
+                             .where((PurchaseOrderItem.product == p) & (PurchaseOrder.user == current_user))
                              .first())
             if purchase_data and purchase_data.total_qty and purchase_data.total_qty > 0:
                 avg_cost = purchase_data.total_cost / purchase_data.total_qty

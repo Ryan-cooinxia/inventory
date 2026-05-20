@@ -1,5 +1,6 @@
 # blueprints/reports.py
 from flask import Blueprint, render_template, request
+from flask_login import login_required, current_user
 from models import (
     Product, PurchaseOrder, PurchaseOrderItem,
     SalesOrder, SalesOrderItem,
@@ -11,33 +12,31 @@ import datetime
 
 reports_bp = Blueprint('reports', __name__)
 
-
 @reports_bp.route('/report/daily')
+@login_required
 def report_daily():
-    """每日进货/出货量统计"""
     end_date = request.args.get('end_date', datetime.date.today())
     start_date = request.args.get('start_date', datetime.date.today() - datetime.timedelta(days=6))
-
     if isinstance(start_date, str):
         start_date = datetime.datetime.strptime(start_date, '%Y-%m-%d').date()
     if isinstance(end_date, str):
         end_date = datetime.datetime.strptime(end_date, '%Y-%m-%d').date()
 
-    # 按天汇总进货量
     purchase_by_day = (PurchaseOrder
                        .select(PurchaseOrder.order_date,
                                fn.SUM(PurchaseOrderItem.quantity).alias('total_qty'))
                        .join(PurchaseOrderItem)
-                       .where(PurchaseOrder.order_date.between(start_date, end_date))
+                       .where((PurchaseOrder.order_date.between(start_date, end_date)) &
+                              (PurchaseOrder.user == current_user))
                        .group_by(PurchaseOrder.order_date)
                        .order_by(PurchaseOrder.order_date))
 
-    # 按天汇总出货量
     sales_by_day = (SalesOrder
                     .select(SalesOrder.order_date,
                             fn.SUM(SalesOrderItem.quantity).alias('total_qty'))
                     .join(SalesOrderItem)
-                    .where(SalesOrder.order_date.between(start_date, end_date))
+                    .where((SalesOrder.order_date.between(start_date, end_date)) &
+                           (SalesOrder.user == current_user))
                     .group_by(SalesOrder.order_date)
                     .order_by(SalesOrder.order_date))
 
@@ -50,16 +49,15 @@ def report_daily():
     chart_sales = [sales_dict.get(d, 0) for d in date_range]
 
     return render_template('report_daily.html',
-                           start_date=start_date,
-                           end_date=end_date,
+                           start_date=start_date, end_date=end_date,
                            chart_dates=chart_dates,
                            chart_purchase=chart_purchase,
                            chart_sales=chart_sales)
 
 
 @reports_bp.route('/report/customer')
+@login_required
 def report_customer():
-    """客户订货统计：按客户+产品汇总订货量及金额"""
     start_date = request.args.get('start_date', '2000-01-01')
     end_date = request.args.get('end_date', datetime.date.today())
 
@@ -68,7 +66,8 @@ def report_customer():
                      fn.SUM(CustomerOrderItem.quantity).alias('total_qty'),
                      fn.SUM(CustomerOrderItem.subtotal).alias('total_amount'))
              .join(CustomerOrder)
-             .where(CustomerOrder.order_date.between(start_date, end_date))
+             .where((CustomerOrder.order_date.between(start_date, end_date)) &
+                    (CustomerOrder.user == current_user))
              .group_by(CustomerOrder.customer, CustomerOrderItem.product)
              .order_by(CustomerOrder.customer.name, CustomerOrderItem.product.name))
 
@@ -83,14 +82,13 @@ def report_customer():
         })
 
     return render_template('report_customer.html',
-                           start_date=start_date,
-                           end_date=end_date,
+                           start_date=start_date, end_date=end_date,
                            rows=rows)
 
 
 @reports_bp.route('/report/supplier')
+@login_required
 def report_supplier():
-    """产品订购总表：按产品汇总供应商订单的订购总量和总金额"""
     start_date = request.args.get('start_date', '2000-01-01')
     end_date = request.args.get('end_date', datetime.date.today().strftime('%Y-%m-%d'))
 
@@ -99,7 +97,8 @@ def report_supplier():
                      fn.SUM(SupplierOrderItem.quantity).alias('total_qty'),
                      fn.SUM(SupplierOrderItem.subtotal).alias('total_amount'))
              .join(SupplierOrder)
-             .where(SupplierOrder.order_date.between(start_date, end_date))
+             .where((SupplierOrder.order_date.between(start_date, end_date)) &
+                    (SupplierOrder.user == current_user))
              .group_by(SupplierOrderItem.product)
              .order_by(fn.SUM(SupplierOrderItem.subtotal).desc()))
 
@@ -114,15 +113,14 @@ def report_supplier():
         })
 
     return render_template('report_supplier.html',
-                           start_date=start_date,
-                           end_date=end_date,
+                           start_date=start_date, end_date=end_date,
                            rows=rows)
 
 
 @reports_bp.route('/report/inventory')
+@login_required
 def report_inventory():
-    """当前库存总览"""
-    products = Product.select()
+    products = Product.select().where(Product.user == current_user)
     rows = []
     total_value = 0.0
     alert_products = []
@@ -130,11 +128,15 @@ def report_inventory():
     for p in products:
         total_in = (PurchaseOrderItem
                     .select(fn.SUM(PurchaseOrderItem.quantity))
-                    .where(PurchaseOrderItem.product == p)
+                    .join(PurchaseOrder)
+                    .where((PurchaseOrderItem.product == p) &
+                           (PurchaseOrder.user == current_user))
                     .scalar()) or 0
         total_out = (SalesOrderItem
                      .select(fn.SUM(SalesOrderItem.quantity))
-                     .where(SalesOrderItem.product == p)
+                     .join(SalesOrder)
+                     .where((SalesOrderItem.product == p) &
+                            (SalesOrder.user == current_user))
                      .scalar()) or 0
         stock = total_in - total_out
 
@@ -145,7 +147,9 @@ def report_inventory():
             purchase_data = (PurchaseOrderItem
                              .select(fn.SUM(PurchaseOrderItem.subtotal).alias('total_cost'),
                                      fn.SUM(PurchaseOrderItem.quantity).alias('total_qty'))
-                             .where(PurchaseOrderItem.product == p)
+                             .join(PurchaseOrder)
+                             .where((PurchaseOrderItem.product == p) &
+                                    (PurchaseOrder.user == current_user))
                              .first())
             if purchase_data and purchase_data.total_qty and purchase_data.total_qty > 0:
                 avg_cost = purchase_data.total_cost / purchase_data.total_qty
@@ -172,59 +176,20 @@ def report_inventory():
                            alert_products=alert_products)
 
 
-@reports_bp.route('/report/supplier_products')
-def report_supplier_products():
-    """供应商订单总表（按产品）"""
-    start_date = request.args.get('start_date', '2000-01-01')
-    end_date = request.args.get('end_date', datetime.date.today().strftime('%Y-%m-%d'))
-
-    query = (SupplierOrderItem
-             .select(SupplierOrderItem.product,
-                     fn.SUM(SupplierOrderItem.quantity).alias('total_qty'),
-                     fn.SUM(SupplierOrderItem.subtotal).alias('total_amount'))
-             .join(SupplierOrder)
-             .where(SupplierOrder.order_date.between(start_date, end_date))
-             .group_by(SupplierOrderItem.product)
-             .order_by(fn.SUM(SupplierOrderItem.subtotal).desc()))
-
-    # 分页
-    page = int(request.args.get('page', 1))
-    per_page = int(request.args.get('per_page', 20))
-    if per_page not in [10, 20, 50, 100]:
-        per_page = 20
-    total = query.count()
-    total_pages = max(1, (total + per_page - 1) // per_page)
-    items = query.paginate(page, per_page)
-
-    rows = []
-    for item in items:
-        rows.append({
-            'product_name': item.product.name,
-            'sku': item.product.sku or '',
-            'total_qty': item.total_qty,
-            'total_amount': item.total_amount
-        })
-
-    return render_template('report_supplier_products.html',
-                           rows=rows,
-                           start_date=start_date,
-                           end_date=end_date,
-                           page=page,
-                           per_page=per_page,
-                           total_pages=total_pages,
-                           total=total)
-
 @reports_bp.route('/report/sales_profit')
+@login_required
 def report_sales_profit():
     start_date = request.args.get('start_date', '2000-01-01')
     end_date = request.args.get('end_date', datetime.date.today().strftime('%Y-%m-%d'))
 
-    # 1. 计算每个产品的加权平均成本（全局，所有时间）
+    # 加权平均成本（基于当前用户的所有采购）
     product_cost = {}
     cost_query = (PurchaseOrderItem
                   .select(PurchaseOrderItem.product,
                           fn.SUM(PurchaseOrderItem.subtotal).alias('total_cost'),
                           fn.SUM(PurchaseOrderItem.quantity).alias('total_qty'))
+                  .join(PurchaseOrder)
+                  .where(PurchaseOrder.user == current_user)
                   .group_by(PurchaseOrderItem.product))
     for row in cost_query:
         if row.total_qty and row.total_qty > 0:
@@ -232,13 +197,14 @@ def report_sales_profit():
         else:
             product_cost[row.product_id] = 0.0
 
-    # 2. 查询选定时间段内的销售明细（按产品汇总）
+    # 选定时间段的销售
     sales_query = (SalesOrderItem
                    .select(SalesOrderItem.product,
                            fn.SUM(SalesOrderItem.quantity).alias('sold_qty'),
                            fn.SUM(SalesOrderItem.subtotal).alias('revenue'))
                    .join(SalesOrder)
-                   .where(SalesOrder.order_date.between(start_date, end_date))
+                   .where((SalesOrder.order_date.between(start_date, end_date)) &
+                          (SalesOrder.user == current_user))
                    .group_by(SalesOrderItem.product)
                    .order_by(fn.SUM(SalesOrderItem.subtotal).desc()))
 
@@ -272,9 +238,10 @@ def report_sales_profit():
                            start_date=start_date,
                            end_date=end_date)
 
+
 @reports_bp.route('/report/inventory_trend')
+@login_required
 def report_inventory_trend():
-    # 默认显示最近30天
     end_date = request.args.get('end_date', datetime.date.today())
     start_date = request.args.get('start_date',
                                   datetime.date.today() - datetime.timedelta(days=29))
@@ -283,29 +250,33 @@ def report_inventory_trend():
     if isinstance(end_date, str):
         end_date = datetime.datetime.strptime(end_date, '%Y-%m-%d').date()
 
-    # 1. 计算起始日期之前的总结存（作为初始值）
+    # 初始库存（start_date之前）
     initial_stock = 0.0
-    products = Product.select()
+    products = Product.select().where(Product.user == current_user)
     for p in products:
         total_in = (PurchaseOrderItem
                     .select(fn.SUM(PurchaseOrderItem.quantity))
                     .join(PurchaseOrder)
-                    .where((PurchaseOrderItem.product == p) & (PurchaseOrder.order_date < start_date))
+                    .where((PurchaseOrderItem.product == p) &
+                           (PurchaseOrder.order_date < start_date) &
+                           (PurchaseOrder.user == current_user))
                     .scalar()) or 0
         total_out = (SalesOrderItem
                      .select(fn.SUM(SalesOrderItem.quantity))
                      .join(SalesOrder)
-                     .where((SalesOrderItem.product == p) & (SalesOrder.order_date < start_date))
+                     .where((SalesOrderItem.product == p) &
+                            (SalesOrder.order_date < start_date) &
+                            (SalesOrder.user == current_user))
                      .scalar()) or 0
         initial_stock += (total_in - total_out)
 
-    # 2. 计算日期范围内每天的净变化，然后累计得到每日库存
-    # 按天汇总入库数量
+    # 日期范围内的每日净变化
     daily_in = (PurchaseOrder
                 .select(PurchaseOrder.order_date,
                         fn.SUM(PurchaseOrderItem.quantity).alias('qty'))
                 .join(PurchaseOrderItem)
-                .where(PurchaseOrder.order_date.between(start_date, end_date))
+                .where((PurchaseOrder.order_date.between(start_date, end_date)) &
+                       (PurchaseOrder.user == current_user))
                 .group_by(PurchaseOrder.order_date)
                 .order_by(PurchaseOrder.order_date))
 
@@ -313,18 +284,15 @@ def report_inventory_trend():
                  .select(SalesOrder.order_date,
                          fn.SUM(SalesOrderItem.quantity).alias('qty'))
                  .join(SalesOrderItem)
-                 .where(SalesOrder.order_date.between(start_date, end_date))
+                 .where((SalesOrder.order_date.between(start_date, end_date)) &
+                        (SalesOrder.user == current_user))
                  .group_by(SalesOrder.order_date)
                  .order_by(SalesOrder.order_date))
 
-    # 转为字典
     in_dict = {row.order_date: row.qty for row in daily_in}
     out_dict = {row.order_date: row.qty for row in daily_out}
 
-    # 构建日期序列
-    date_range = [start_date + datetime.timedelta(days=i)
-                  for i in range((end_date - start_date).days + 1)]
-
+    date_range = [start_date + datetime.timedelta(days=i) for i in range((end_date - start_date).days + 1)]
     chart_labels = []
     chart_data = []
     current_stock = initial_stock
@@ -335,8 +303,7 @@ def report_inventory_trend():
         chart_data.append(round(current_stock, 2))
 
     return render_template('report_inventory_trend.html',
-                           start_date=start_date,
-                           end_date=end_date,
+                           start_date=start_date, end_date=end_date,
                            chart_labels=chart_labels,
                            chart_data=chart_data,
                            initial_stock=initial_stock,

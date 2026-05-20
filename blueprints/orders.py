@@ -1,19 +1,22 @@
 # blueprints/orders.py
 from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask_login import login_required, current_user
 from models import (
     Customer, CustomerOrder, CustomerOrderItem,
     SalesOrder, SalesOrderItem, Product
 )
 from peewee import fn
 from helpers import check_stock_before_ship
+from log_utils import log_action
 import datetime
 
 orders_bp = Blueprint('orders', __name__)
 
 
 @orders_bp.route('/orders')
+@login_required
 def list_orders():
-    orders = CustomerOrder.select().order_by(CustomerOrder.order_date.desc())
+    orders = CustomerOrder.select().where(CustomerOrder.user == current_user).order_by(CustomerOrder.order_date.desc())
     rows = []
     row_index = 0
     total_order_value = 0.0
@@ -23,15 +26,13 @@ def list_orders():
         items = list(order.items)
         order_product_ids = {item.product.id for item in items}
 
-        # 已发货总金额
         shipped_amount = (SalesOrder
                           .select(fn.SUM(SalesOrder.total_amount))
-                          .where(SalesOrder.customer_order == order)
+                          .where((SalesOrder.customer_order == order) & (SalesOrder.user == current_user))
                           .scalar()) or 0.0
         total_shipped_value += shipped_amount
         total_order_value += order.total_amount
 
-        # 已发货总数量（按产品汇总）
         shipped_qty_total = 0.0
         shipped_qty_map = {}
         for item in items:
@@ -39,34 +40,28 @@ def list_orders():
                        .select(fn.SUM(SalesOrderItem.quantity))
                        .join(SalesOrder)
                        .where((SalesOrder.customer_order == order) &
-                              (SalesOrderItem.product == item.product))
+                              (SalesOrderItem.product == item.product) &
+                              (SalesOrder.user == current_user))
                        .scalar()) or 0
             shipped_qty_map[item.product.id] = shipped
             shipped_qty_total += shipped
 
-        # 订单总数量
         order_qty_total = sum(item.quantity for item in items)
-        remaining_qty_total = order_qty_total - shipped_qty_total
-        if remaining_qty_total < 0:
-            remaining_qty_total = 0.0
+        remaining_qty_total = max(order_qty_total - shipped_qty_total, 0)
 
-        # 剩余金额
-        remaining_amount = order.total_amount - shipped_amount
-        if remaining_amount < 0:
-            remaining_amount = 0.0
+        remaining_amount = max(order.total_amount - shipped_amount, 0)
 
-        # 判断换货
         has_swap = False
         if shipped_amount > 0:
             extra_items = (SalesOrderItem
                            .select()
                            .join(SalesOrder)
-                           .where(SalesOrder.customer_order == order)
-                           .where(SalesOrderItem.product.not_in(order_product_ids))
+                           .where((SalesOrder.customer_order == order) &
+                                  (SalesOrder.user == current_user) &
+                                  SalesOrderItem.product.not_in(order_product_ids))
                            .exists())
             has_swap = extra_items
 
-        # 订单状态文本
         if shipped_amount >= order.total_amount:
             status_text = '已完成'
         elif shipped_amount > 0:
@@ -125,7 +120,6 @@ def list_orders():
             })
 
     total_unshipped_value = total_order_value - total_shipped_value
-
     return render_template('orders.html',
                            orders=rows,
                            total_order_value=total_order_value,
@@ -134,7 +128,13 @@ def list_orders():
 
 
 @orders_bp.route('/orders/add', methods=['GET', 'POST'])
+@login_required
 def add_order():
+    customers = Customer.select().where(Customer.user == current_user)
+    customers_data = [{'id': c.id, 'name': c.name} for c in customers]
+    products = Product.select().where(Product.user == current_user)
+    products_data = [{'id': p.id, 'name': p.name} for p in products]
+
     if request.method == 'POST':
         customer_id = request.form.get('customer_id')
         order_date = request.form.get('order_date')
@@ -156,10 +156,6 @@ def add_order():
 
         if not items:
             flash('请至少填写一条明细', 'danger')
-            customers = Customer.select()
-            products = Product.select()
-            customers_data = [{'id': c.id, 'name': c.name} for c in customers]
-            products_data = [{'id': p.id, 'name': p.name} for p in products]
             return render_template('order_form.html',
                                    customers=customers,
                                    products=products,
@@ -175,7 +171,8 @@ def add_order():
             order_date=order_date or datetime.date.today(),
             total_amount=total_amount,
             invoice_required=invoice_required,
-            remark=remark or None
+            remark=remark or None,
+            user=current_user
         )
         for item in items:
             CustomerOrderItem.create(order=order,
@@ -183,14 +180,14 @@ def add_order():
                                      quantity=item['quantity'],
                                      unit_price=item['unit_price'],
                                      subtotal=item['subtotal'])
+
+        # 记录操作日志
+        log_action(current_user, 'create', 'CustomerOrder', order.id,
+                   f'创建客户订单，金额：{total_amount:.2f}', request.remote_addr)
+
         flash(f'订单创建成功，总金额：{total_amount:.2f}', 'success')
         return redirect(url_for('orders.list_orders'))
 
-    # GET
-    customers = Customer.select()
-    customers_data = [{'id': c.id, 'name': c.name} for c in customers]
-    products = Product.select()
-    products_data = [{'id': p.id, 'name': p.name} for p in products]
     return render_template('order_form.html',
                            customers=customers,
                            products=products,
@@ -202,10 +199,11 @@ def add_order():
 
 
 @orders_bp.route('/orders/edit/<int:order_id>', methods=['GET', 'POST'])
+@login_required
 def edit_order(order_id):
-    order = CustomerOrder.get_or_none(CustomerOrder.id == order_id)
+    order = CustomerOrder.get_or_none((CustomerOrder.id == order_id) & (CustomerOrder.user == current_user))
     if not order:
-        flash('订单不存在', 'danger')
+        flash('订单不存在或无权访问', 'danger')
         return redirect(url_for('orders.list_orders'))
 
     if request.method == 'POST':
@@ -214,7 +212,6 @@ def edit_order(order_id):
         order.remark = request.form.get('remark', '') or None
         order.invoice_required = (request.form.get('invoice_required') == '1')
 
-        # 删除旧明细，重建
         CustomerOrderItem.delete().where(CustomerOrderItem.order == order).execute()
         product_ids = request.form.getlist('product_id[]')
         quantities = request.form.getlist('quantity[]')
@@ -235,13 +232,17 @@ def edit_order(order_id):
                                      quantity=item['quantity'],
                                      unit_price=item['unit_price'],
                                      subtotal=item['subtotal'])
+
+        # 记录操作日志
+        log_action(current_user, 'update', 'CustomerOrder', order.id,
+                   f'修改客户订单 #{order.id}', request.remote_addr)
+
         flash('订单修改成功', 'success')
         return redirect(url_for('orders.list_orders'))
 
-    # GET
-    customers = Customer.select()
+    customers = Customer.select().where(Customer.user == current_user)
     customers_data = [{'id': c.id, 'name': c.name} for c in customers]
-    products = Product.select()
+    products = Product.select().where(Product.user == current_user)
     products_data = [{'id': p.id, 'name': p.name} for p in products]
     order_items = list(CustomerOrderItem.select().where(CustomerOrderItem.order == order))
     return render_template('order_form.html',
@@ -255,38 +256,45 @@ def edit_order(order_id):
 
 
 @orders_bp.route('/orders/delete/<int:order_id>', methods=['POST'])
+@login_required
 def delete_order(order_id):
-    order = CustomerOrder.get_or_none(CustomerOrder.id == order_id)
+    order = CustomerOrder.get_or_none((CustomerOrder.id == order_id) & (CustomerOrder.user == current_user))
     if not order:
-        flash('订单不存在', 'danger')
+        flash('订单不存在或无权访问', 'danger')
         return redirect(url_for('orders.list_orders'))
 
-    if SalesOrder.select().where(SalesOrder.customer_order == order).exists():
+    if SalesOrder.select().where((SalesOrder.customer_order == order) & (SalesOrder.user == current_user)).exists():
         flash('该订单已有发货记录，无法删除。如需关闭，请使用“强制完成”功能。', 'danger')
         return redirect(url_for('orders.list_orders'))
 
     CustomerOrderItem.delete().where(CustomerOrderItem.order == order).execute()
     order.delete_instance()
+
+    # 记录操作日志
+    log_action(current_user, 'delete', 'CustomerOrder', order_id,
+               f'删除客户订单 #{order_id}', request.remote_addr)
+
     flash('订单已删除', 'success')
     return redirect(url_for('orders.list_orders'))
 
 
 @orders_bp.route('/orders/ship/<int:order_id>', methods=['GET'])
+@login_required
 def ship_order_form(order_id):
-    order = CustomerOrder.get_or_none(CustomerOrder.id == order_id)
+    order = CustomerOrder.get_or_none((CustomerOrder.id == order_id) & (CustomerOrder.user == current_user))
     if not order:
-        flash('订单不存在', 'danger')
+        flash('订单不存在或无权访问', 'danger')
         return redirect(url_for('orders.list_orders'))
 
     order_items = list(CustomerOrderItem.select().where(CustomerOrderItem.order == order))
-
     shipped_qty_map = {}
     for item in order_items:
         shipped = (SalesOrderItem
                    .select(fn.SUM(SalesOrderItem.quantity))
                    .join(SalesOrder)
                    .where((SalesOrder.customer_order == order) &
-                          (SalesOrderItem.product == item.product))
+                          (SalesOrderItem.product == item.product) &
+                          (SalesOrder.user == current_user))
                    .scalar()) or 0
         shipped_qty_map[item.product.id] = shipped
 
@@ -304,7 +312,7 @@ def ship_order_form(order_id):
             'unit_price': item.unit_price
         })
 
-    products = Product.select()
+    products = Product.select().where(Product.user == current_user)
     products_data = [{'id': p.id, 'name': p.name} for p in products]
 
     return render_template('ship_order.html',
@@ -316,13 +324,13 @@ def ship_order_form(order_id):
 
 
 @orders_bp.route('/orders/ship/<int:order_id>', methods=['POST'])
+@login_required
 def create_shipment(order_id):
-    order = CustomerOrder.get_or_none(CustomerOrder.id == order_id)
+    order = CustomerOrder.get_or_none((CustomerOrder.id == order_id) & (CustomerOrder.user == current_user))
     if not order:
-        flash('订单不存在', 'danger')
+        flash('订单不存在或无权访问', 'danger')
         return redirect(url_for('orders.list_orders'))
 
-    # 收集本次发货数量（原始订单明细）
     ship_quantities = {}
     for item in order.items:
         field_name = f'ship_qty_{item.product.id}'
@@ -338,7 +346,8 @@ def create_shipment(order_id):
                    .select(fn.SUM(SalesOrderItem.quantity))
                    .join(SalesOrder)
                    .where((SalesOrder.customer_order == order) &
-                          (SalesOrderItem.product == item.product))
+                          (SalesOrderItem.product == item.product) &
+                          (SalesOrder.user == current_user))
                    .scalar()) or 0
         max_qty = item.quantity - shipped
         if qty > max_qty:
@@ -350,7 +359,6 @@ def create_shipment(order_id):
                 'subtotal': qty * item.unit_price
             }
 
-    # 处理额外添加的产品行（换货部分）
     extra_product_ids = request.form.getlist('extra_product_id[]')
     extra_quantities = request.form.getlist('extra_quantity[]')
     extra_unit_prices = request.form.getlist('extra_unit_price[]')
@@ -371,7 +379,6 @@ def create_shipment(order_id):
         flash('请至少填写发货数量或添加产品', 'danger')
         return redirect(url_for('orders.ship_order_form', order_id=order.id))
 
-    # 库存检查
     all_ship_items = []
     for pid, data in ship_quantities.items():
         all_ship_items.append({'product_id': pid, 'quantity': data['quantity']})
@@ -383,9 +390,7 @@ def create_shipment(order_id):
             flash(f'库存不足：{err}', 'danger')
         return redirect(url_for('orders.ship_order_form', order_id=order.id))
 
-    # 创建出库单
-    total_amount = sum(v['subtotal'] for v in ship_quantities.values()) + \
-                   sum(e['subtotal'] for e in extra_items)
+    total_amount = sum(v['subtotal'] for v in ship_quantities.values()) + sum(e['subtotal'] for e in extra_items)
     ship = SalesOrder.create(
         customer=order.customer,
         customer_order=order,
@@ -393,7 +398,8 @@ def create_shipment(order_id):
         total_amount=total_amount,
         remark=request.form.get('remark', '') or None,
         ship_method=request.form.get('ship_method', '') or None,
-        tracking_number=request.form.get('tracking_number', '') or None
+        tracking_number=request.form.get('tracking_number', '') or None,
+        user=current_user
     )
     for product_id, data in ship_quantities.items():
         SalesOrderItem.create(
@@ -412,14 +418,14 @@ def create_shipment(order_id):
             subtotal=extra['subtotal']
         )
 
-    # 更新订单状态
     all_shipped = True
     for item in order.items:
         shipped = (SalesOrderItem
                    .select(fn.SUM(SalesOrderItem.quantity))
                    .join(SalesOrder)
                    .where((SalesOrder.customer_order == order) &
-                          (SalesOrderItem.product == item.product))
+                          (SalesOrderItem.product == item.product) &
+                          (SalesOrder.user == current_user))
                    .scalar()) or 0
         if shipped < item.quantity:
             all_shipped = False
@@ -430,15 +436,25 @@ def create_shipment(order_id):
         order.status = 'pending'
     order.save()
 
+    # 记录操作日志
+    log_action(current_user, 'ship', 'CustomerOrder', order.id,
+               f'订单 #{order.id} 发货，金额：{total_amount:.2f}', request.remote_addr)
+
     flash(f'出库单生成成功，本次发货金额 ¥{total_amount:.2f}', 'success')
     return redirect(url_for('orders.list_orders'))
 
 
 @orders_bp.route('/orders/force_complete/<int:order_id>', methods=['POST'])
+@login_required
 def force_complete_order(order_id):
-    order = CustomerOrder.get_or_none(CustomerOrder.id == order_id)
+    order = CustomerOrder.get_or_none((CustomerOrder.id == order_id) & (CustomerOrder.user == current_user))
     if order:
         order.status = 'shipped'
         order.save()
+
+        # 记录操作日志
+        log_action(current_user, 'complete', 'CustomerOrder', order.id,
+                   f'订单 #{order.id} 强制完成', request.remote_addr)
+
         flash('订单已标记为完成', 'success')
     return redirect(url_for('orders.list_orders'))

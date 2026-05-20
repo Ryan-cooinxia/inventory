@@ -1,5 +1,6 @@
 # blueprints/supplier_orders.py
 from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask_login import login_required, current_user
 from models import (
     Supplier, SupplierOrder, SupplierOrderItem,
     PurchaseOrder, PurchaseOrderItem, Product
@@ -11,28 +12,28 @@ supplier_orders_bp = Blueprint('supplier_orders', __name__)
 
 
 @supplier_orders_bp.route('/supplier_orders')
+@login_required
 def list_supplier_orders():
-    orders = SupplierOrder.select().order_by(SupplierOrder.order_date.desc())
+    orders = SupplierOrder.select().where(SupplierOrder.user == current_user).order_by(SupplierOrder.order_date.desc())
     rows = []
     row_index = 0
     total_order_value = 0.0
     total_received_value = 0.0
 
     for order in orders:
-        # 计算已收货数量映射
         received_map = {}
         for item in order.items:
             received = (PurchaseOrderItem
                         .select(fn.SUM(PurchaseOrderItem.quantity))
                         .join(PurchaseOrder)
-                        .where(
-                            (PurchaseOrder.supplier_order == order) &
-                            (PurchaseOrderItem.product == item.product)
-                        ).scalar()) or 0
+                        .where((PurchaseOrder.supplier_order == order) &
+                               (PurchaseOrderItem.product == item.product) &
+                               (PurchaseOrder.user == current_user))
+                        .scalar()) or 0
             received_map[item.product.id] = received
 
-        # 检查是否存在已收货记录（用于控制编辑/删除按钮）
-        has_receipt = PurchaseOrder.select().where(PurchaseOrder.supplier_order == order).exists()
+        has_receipt = PurchaseOrder.select().where((PurchaseOrder.supplier_order == order) &
+                                                   (PurchaseOrder.user == current_user)).exists()
 
         items = list(order.items)
         total_lines = len(items) if items else 1
@@ -45,7 +46,6 @@ def list_supplier_orders():
             received_qty = received_map.get(product.id, 0)
             pending_qty = qty_ordered - received_qty
 
-            # 中文状态
             if received_qty == 0:
                 status_text = '未交货'
             elif received_qty < qty_ordered:
@@ -99,7 +99,6 @@ def list_supplier_orders():
             })
 
     total_unreceived_value = total_order_value - total_received_value
-
     return render_template('supplier_orders.html',
                            orders=rows,
                            total_order_value=total_order_value,
@@ -108,7 +107,13 @@ def list_supplier_orders():
 
 
 @supplier_orders_bp.route('/supplier_orders/add', methods=['GET', 'POST'])
+@login_required
 def add_supplier_order():
+    suppliers = Supplier.select().where(Supplier.user == current_user)
+    suppliers_data = [{'id': s.id, 'name': s.name} for s in suppliers]
+    products = Product.select().where(Product.user == current_user)
+    products_data = [{'id': p.id, 'name': p.name} for p in products]
+
     if request.method == 'POST':
         supplier_id = request.form.get('supplier_id')
         order_date = request.form.get('order_date')
@@ -129,10 +134,6 @@ def add_supplier_order():
 
         if not items:
             flash('请至少填写一条明细', 'danger')
-            suppliers = Supplier.select()
-            products = Product.select()
-            suppliers_data = [{'id': s.id, 'name': s.name} for s in suppliers]
-            products_data = [{'id': p.id, 'name': p.name} for p in products]
             return render_template('supplier_order_form.html',
                                    suppliers=suppliers,
                                    products=products,
@@ -144,11 +145,11 @@ def add_supplier_order():
 
         total_amount = sum(item['subtotal'] for item in items)
 
-        # 自动生成订单单号：MD-YYYYMMDD-序号
         today_str = datetime.date.today().strftime('%Y%m%d')
         last_order = (SupplierOrder
                       .select()
-                      .where(SupplierOrder.order_date == datetime.date.today())
+                      .where((SupplierOrder.order_date == datetime.date.today()) &
+                             (SupplierOrder.user == current_user))
                       .order_by(SupplierOrder.id.desc())
                       .first())
         if last_order and last_order.order_number:
@@ -167,7 +168,8 @@ def add_supplier_order():
             order_date=order_date or datetime.date.today(),
             total_amount=total_amount,
             estimated_delivery=estimated_delivery,
-            remark=remark or None
+            remark=remark or None,
+            user=current_user
         )
         for item in items:
             SupplierOrderItem.create(order=order,
@@ -178,11 +180,6 @@ def add_supplier_order():
         flash(f'供应商订单创建成功，总金额：{total_amount:.2f}', 'success')
         return redirect(url_for('supplier_orders.list_supplier_orders'))
 
-    # GET
-    suppliers = Supplier.select()
-    suppliers_data = [{'id': s.id, 'name': s.name} for s in suppliers]
-    products = Product.select()
-    products_data = [{'id': p.id, 'name': p.name} for p in products]
     return render_template('supplier_order_form.html',
                            suppliers=suppliers,
                            products=products,
@@ -194,10 +191,11 @@ def add_supplier_order():
 
 
 @supplier_orders_bp.route('/supplier_orders/edit/<int:order_id>', methods=['GET', 'POST'])
+@login_required
 def edit_supplier_order(order_id):
-    order = SupplierOrder.get_or_none(SupplierOrder.id == order_id)
+    order = SupplierOrder.get_or_none((SupplierOrder.id == order_id) & (SupplierOrder.user == current_user))
     if not order:
-        flash('订单不存在', 'danger')
+        flash('订单不存在或无权访问', 'danger')
         return redirect(url_for('supplier_orders.list_supplier_orders'))
 
     if request.method == 'POST':
@@ -206,7 +204,6 @@ def edit_supplier_order(order_id):
         order.estimated_delivery = request.form.get('estimated_delivery') or None
         order.remark = request.form.get('remark', '') or None
 
-        # 删除旧明细，重建
         SupplierOrderItem.delete().where(SupplierOrderItem.order == order).execute()
         product_ids = request.form.getlist('product_id[]')
         quantities = request.form.getlist('quantity[]')
@@ -229,14 +226,12 @@ def edit_supplier_order(order_id):
         flash('订单修改成功', 'success')
         return redirect(url_for('supplier_orders.list_supplier_orders'))
 
-    # GET
-    suppliers = Supplier.select()
+    suppliers = Supplier.select().where(Supplier.user == current_user)
     suppliers_data = [{'id': s.id, 'name': s.name} for s in suppliers]
-    products = Product.select()
+    products = Product.select().where(Product.user == current_user)
     products_data = [{'id': p.id, 'name': p.name} for p in products]
     order_items = list(SupplierOrderItem.select().where(SupplierOrderItem.order == order))
 
-    # 构造显示用单号
     display_number = order.order_number or f"MD-{order.order_date.strftime('%Y%m%d')}-{order.id:04d}"
 
     return render_template('supplier_order_form.html',
@@ -252,14 +247,14 @@ def edit_supplier_order(order_id):
 
 
 @supplier_orders_bp.route('/supplier_orders/delete/<int:order_id>', methods=['POST'])
+@login_required
 def delete_supplier_order(order_id):
-    order = SupplierOrder.get_or_none(SupplierOrder.id == order_id)
+    order = SupplierOrder.get_or_none((SupplierOrder.id == order_id) & (SupplierOrder.user == current_user))
     if not order:
-        flash('订单不存在', 'danger')
+        flash('订单不存在或无权访问', 'danger')
         return redirect(url_for('supplier_orders.list_supplier_orders'))
 
-    # 删除保护
-    if PurchaseOrder.select().where(PurchaseOrder.supplier_order == order).exists():
+    if PurchaseOrder.select().where((PurchaseOrder.supplier_order == order) & (PurchaseOrder.user == current_user)).exists():
         flash('该订单已有收货记录，无法删除。', 'danger')
         return redirect(url_for('supplier_orders.list_supplier_orders'))
 
@@ -270,10 +265,11 @@ def delete_supplier_order(order_id):
 
 
 @supplier_orders_bp.route('/supplier_orders/receive/<int:order_id>', methods=['GET'])
+@login_required
 def receive_order_form(order_id):
-    order = SupplierOrder.get_or_none(SupplierOrder.id == order_id)
+    order = SupplierOrder.get_or_none((SupplierOrder.id == order_id) & (SupplierOrder.user == current_user))
     if not order:
-        flash('订单不存在', 'danger')
+        flash('订单不存在或无权访问', 'danger')
         return redirect(url_for('supplier_orders.list_supplier_orders'))
 
     order_items = list(SupplierOrderItem.select().where(SupplierOrderItem.order == order))
@@ -283,7 +279,8 @@ def receive_order_form(order_id):
                     .select(fn.SUM(PurchaseOrderItem.quantity))
                     .join(PurchaseOrder)
                     .where((PurchaseOrder.supplier_order == order) &
-                           (PurchaseOrderItem.product == item.product))
+                           (PurchaseOrderItem.product == item.product) &
+                           (PurchaseOrder.user == current_user))
                     .scalar()) or 0
         received_qty_map[item.product.id] = received
 
@@ -308,13 +305,13 @@ def receive_order_form(order_id):
 
 
 @supplier_orders_bp.route('/supplier_orders/receive/<int:order_id>', methods=['POST'])
+@login_required
 def create_receipt(order_id):
-    order = SupplierOrder.get_or_none(SupplierOrder.id == order_id)
+    order = SupplierOrder.get_or_none((SupplierOrder.id == order_id) & (SupplierOrder.user == current_user))
     if not order:
-        flash('订单不存在', 'danger')
+        flash('订单不存在或无权访问', 'danger')
         return redirect(url_for('supplier_orders.list_supplier_orders'))
 
-    # 收集本次收货数量
     receive_quantities = {}
     for item in order.items:
         field_name = f'receive_qty_{item.product.id}'
@@ -330,7 +327,8 @@ def create_receipt(order_id):
                     .select(fn.SUM(PurchaseOrderItem.quantity))
                     .join(PurchaseOrder)
                     .where((PurchaseOrder.supplier_order == order) &
-                           (PurchaseOrderItem.product == item.product))
+                           (PurchaseOrderItem.product == item.product) &
+                           (PurchaseOrder.user == current_user))
                     .scalar()) or 0
         max_qty = item.quantity - received
         if qty > max_qty:
@@ -346,7 +344,6 @@ def create_receipt(order_id):
         flash('请至少填入一种产品的大于0的收货数量', 'danger')
         return redirect(url_for('supplier_orders.receive_order_form', order_id=order.id))
 
-    # 创建入库单，自动关联供应商订单
     total_amount = sum(v['subtotal'] for v in receive_quantities.values())
     receipt = PurchaseOrder.create(
         supplier=order.supplier,
@@ -355,7 +352,8 @@ def create_receipt(order_id):
         total_amount=total_amount,
         remark=request.form.get('remark', '') or None,
         ship_method=request.form.get('ship_method', '') or None,
-        tracking_number=request.form.get('tracking_number', '') or None
+        tracking_number=request.form.get('tracking_number', '') or None,
+        user=current_user
     )
     for product_id, data in receive_quantities.items():
         PurchaseOrderItem.create(
@@ -366,14 +364,14 @@ def create_receipt(order_id):
             subtotal=data['subtotal']
         )
 
-    # 更新订单状态：检查是否全部收完
     all_received = True
     for item in order.items:
         received = (PurchaseOrderItem
                     .select(fn.SUM(PurchaseOrderItem.quantity))
                     .join(PurchaseOrder)
                     .where((PurchaseOrder.supplier_order == order) &
-                           (PurchaseOrderItem.product == item.product))
+                           (PurchaseOrderItem.product == item.product) &
+                           (PurchaseOrder.user == current_user))
                     .scalar()) or 0
         if received < item.quantity:
             all_received = False

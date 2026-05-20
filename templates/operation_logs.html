@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}操作日志{% endblock %}
+{% block content %}
+<h2>操作日志</h2>
+<table class="table table-sm table-bordered">
+    <thead>
+        <tr>
+            <th>时间</th>
+            <th>用户</th>
+            <th>操作类型</th>
+            <th>对象</th>
+            <th>描述</th>
+            <th>IP</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for log in logs %}
+    <tr>
+        <td>{{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+        <td>{{ log.user.username }}</td>
+        <td>{{ log.action_type }}</td>
+        <td>{{ log.target_type }} {% if log.target_id %}#{{ log.target_id }}{% endif %}</td>
+        <td>{{ log.description or '' }}</td>
+        <td>{{ log.ip_address or '' }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% include '_pagination.html' %}
+{% endblock %}

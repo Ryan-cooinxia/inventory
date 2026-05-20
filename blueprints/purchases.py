@@ -1,16 +1,17 @@
+# blueprints/purchases.py
 from flask import Blueprint, render_template, request, redirect, url_for, flash
-from models import *
-from peewee import fn
+from flask_login import login_required, current_user          # 新增
+from models import Supplier, Product, PurchaseOrder, PurchaseOrderItem
 import datetime
 
 purchases_bp = Blueprint('purchases', __name__)
 
 @purchases_bp.route('/purchase/add', methods=['GET', 'POST'])
+@login_required                                               # 新增
 def add_purchase():
-    # 提前查询供应商和产品，并构造 JSON 数据（搜索组件必需）
-    suppliers = Supplier.select()
+    suppliers = Supplier.select().where(Supplier.user == current_user)   # 过滤
     suppliers_data = [{'id': s.id, 'name': s.name} for s in suppliers]
-    products = Product.select()
+    products = Product.select().where(Product.user == current_user)      # 过滤
     products_data = [{'id': p.id, 'name': p.name} for p in products]
 
     if request.method == 'POST':
@@ -35,7 +36,6 @@ def add_purchase():
 
         if not items:
             flash('请至少填写一条明细', 'danger')
-            # 传入 JSON 数据，否则模板中的 tojson 过滤器会报错
             return render_template('purchase.html',
                                    suppliers=suppliers_data,
                                    products=products_data,
@@ -49,7 +49,8 @@ def add_purchase():
             total_amount=total_amount,
             remark=remark or None,
             ship_method=ship_method or None,
-            tracking_number=tracking_number or None
+            tracking_number=tracking_number or None,
+            user=current_user                                    # 新增
         )
         for item in items:
             PurchaseOrderItem.create(
@@ -62,20 +63,20 @@ def add_purchase():
         flash(f'入库单创建成功，总金额：{total_amount:.2f}', 'success')
         return redirect(url_for('purchases.add_purchase'))
 
-    # GET 请求：同样传入 JSON 数据
     return render_template('purchase.html',
                            suppliers=suppliers_data,
                            products=products_data,
                            suppliers_json=suppliers_data,
                            products_json=products_data)
 
-
 @purchases_bp.route('/receipts')
+@login_required
 def list_receipts():
     supplier_id = request.args.get('supplier_id')
-    query = PurchaseOrder.select().order_by(PurchaseOrder.order_date.desc())
+    query = PurchaseOrder.select().where(PurchaseOrder.user == current_user)   # 过滤
     if supplier_id:
         query = query.where(PurchaseOrder.supplier == int(supplier_id))
+    query = query.order_by(PurchaseOrder.order_date.desc())
 
     rows = []
     for po in query:
@@ -114,16 +115,19 @@ def list_receipts():
                 'is_first_row': True,
                 'rowspan_count': 1
             })
-
     return render_template('receipts.html', receipts=rows)
 
-
 @purchases_bp.route('/receipts/edit/<int:receipt_id>', methods=['GET', 'POST'])
+@login_required
 def edit_receipt(receipt_id):
-    receipt = PurchaseOrder.get_or_none(PurchaseOrder.id == receipt_id)
+    receipt = PurchaseOrder.get_or_none((PurchaseOrder.id == receipt_id) &
+                                        (PurchaseOrder.user == current_user))   # 校验所属
     if not receipt:
-        flash('入库单不存在', 'danger')
+        flash('入库单不存在或无权访问', 'danger')
         return redirect(url_for('purchases.list_receipts'))
+
+    suppliers = Supplier.select().where(Supplier.user == current_user)
+    products = Product.select().where(Product.user == current_user)
 
     if request.method == 'POST':
         receipt.supplier = request.form.get('supplier_id')
@@ -151,15 +155,14 @@ def edit_receipt(receipt_id):
         flash('入库单修改成功', 'success')
         return redirect(url_for('purchases.list_receipts'))
 
-    suppliers = Supplier.select()
-    products = Product.select()
     items = list(PurchaseOrderItem.select().where(PurchaseOrderItem.order == receipt))
     return render_template('receipt_edit.html', receipt=receipt, items=items, suppliers=suppliers, products=products)
 
-
 @purchases_bp.route('/receipts/delete/<int:receipt_id>', methods=['POST'])
+@login_required
 def delete_receipt(receipt_id):
-    receipt = PurchaseOrder.get_or_none(PurchaseOrder.id == receipt_id)
+    receipt = PurchaseOrder.get_or_none((PurchaseOrder.id == receipt_id) &
+                                        (PurchaseOrder.user == current_user))
     if receipt:
         if receipt.supplier_order_id:
             flash('提醒：该入库单关联供应商订单，删除后订单状态需手动调整', 'warning')

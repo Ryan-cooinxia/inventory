@@ -1,13 +1,22 @@
+# blueprints/sales.py
 from flask import Blueprint, render_template, request, redirect, url_for, flash
-from models import *
+from flask_login import login_required, current_user
+from models import Customer, Product, SalesOrder, SalesOrderItem, CustomerOrder
 from peewee import fn
 from helpers import check_stock_before_ship
 import datetime
 
 sales_bp = Blueprint('sales', __name__)
 
+
 @sales_bp.route('/sales/add', methods=['GET', 'POST'])
+@login_required
 def add_sales():
+    customers = Customer.select().where(Customer.user == current_user)
+    customers_data = [{'id': c.id, 'name': c.name} for c in customers]
+    products = Product.select().where(Product.user == current_user)
+    products_data = [{'id': p.id, 'name': p.name} for p in products]
+
     if request.method == 'POST':
         customer_id = request.form.get('customer_id')
         order_date = request.form.get('order_date')
@@ -31,16 +40,20 @@ def add_sales():
         if not items:
             flash('请至少填写一条明细', 'danger')
             return render_template('sales.html',
-                                   customers=Customer.select(),
-                                   products=Product.select())
+                                   customers=customers_data,
+                                   products=products_data,
+                                   customers_json=customers_data,
+                                   products_json=products_data)
 
         stock_ok, stock_errors = check_stock_before_ship(items)
         if not stock_ok:
             for err in stock_errors:
                 flash(f'库存不足：{err}', 'danger')
             return render_template('sales.html',
-                                   customers=Customer.select(),
-                                   products=Product.select())
+                                   customers=customers_data,
+                                   products=products_data,
+                                   customers_json=customers_data,
+                                   products_json=products_data)
 
         total_amount = sum(item['subtotal'] for item in items)
         order = SalesOrder.create(
@@ -49,7 +62,8 @@ def add_sales():
             total_amount=total_amount,
             remark=remark or None,
             ship_method=ship_method or None,
-            tracking_number=tracking_number or None
+            tracking_number=tracking_number or None,
+            user=current_user
         )
         for item in items:
             SalesOrderItem.create(
@@ -62,8 +76,6 @@ def add_sales():
         flash(f'出库单创建成功，总金额：{total_amount:.2f}', 'success')
         return redirect(url_for('sales.add_sales'))
 
-    products_data = [{'id': p.id, 'name': p.name} for p in Product.select()]
-    customers_data = [{'id': c.id, 'name': c.name} for c in Customer.select()]
     return render_template('sales.html',
                            customers=customers_data,
                            products=products_data,
@@ -72,9 +84,10 @@ def add_sales():
 
 
 @sales_bp.route('/shipments')
+@login_required
 def list_shipments():
     customer_id = request.args.get('customer_id')
-    query = SalesOrder.select().order_by(SalesOrder.order_date.desc())
+    query = SalesOrder.select().where(SalesOrder.user == current_user).order_by(SalesOrder.order_date.desc())
     if customer_id:
         query = query.where(SalesOrder.customer == int(customer_id))
 
@@ -120,10 +133,11 @@ def list_shipments():
 
 
 @sales_bp.route('/shipments/edit/<int:shipment_id>', methods=['GET', 'POST'])
+@login_required
 def edit_shipment(shipment_id):
-    shipment = SalesOrder.get_or_none(SalesOrder.id == shipment_id)
+    shipment = SalesOrder.get_or_none((SalesOrder.id == shipment_id) & (SalesOrder.user == current_user))
     if not shipment:
-        flash('出库单不存在', 'danger')
+        flash('出库单不存在或无权访问', 'danger')
         return redirect(url_for('sales.list_shipments'))
 
     if request.method == 'POST':
@@ -148,19 +162,21 @@ def edit_shipment(shipment_id):
         shipment.save()
         for item in items:
             SalesOrderItem.create(order=shipment, product=item['product_id'], quantity=item['quantity'],
-                                 unit_price=item['unit_price'], subtotal=item['subtotal'])
+                                  unit_price=item['unit_price'], subtotal=item['subtotal'])
         flash('出库单修改成功', 'success')
         return redirect(url_for('sales.list_shipments'))
 
     items = list(SalesOrderItem.select().where(SalesOrderItem.order == shipment))
-    customers = Customer.select()
-    products = Product.select()
-    return render_template('shipment_edit.html', shipment=shipment, items=items, customers=customers, products=products)
+    customers = Customer.select().where(Customer.user == current_user)
+    products = Product.select().where(Product.user == current_user)
+    return render_template('shipment_edit.html', shipment=shipment, items=items,
+                           customers=customers, products=products)
 
 
 @sales_bp.route('/shipments/delete/<int:shipment_id>', methods=['POST'])
+@login_required
 def delete_shipment(shipment_id):
-    shipment = SalesOrder.get_or_none(SalesOrder.id == shipment_id)
+    shipment = SalesOrder.get_or_none((SalesOrder.id == shipment_id) & (SalesOrder.user == current_user))
     if shipment:
         if shipment.customer_order_id:
             if not CustomerOrder.select().where(CustomerOrder.id == shipment.customer_order_id).exists():

@@ -1,11 +1,13 @@
 # blueprints/customers.py
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from models import Customer, SalesOrder, CustomerOrder, CustomerRefund
+from flask_login import login_required, current_user
 
 customers_bp = Blueprint('customers', __name__)
 
 
 @customers_bp.route('/customers', methods=['GET', 'POST'])
+@login_required
 def manage_customers():
     if request.method == 'POST':
         name = request.form.get('name')
@@ -19,8 +21,10 @@ def manage_customers():
             name=name.strip(),
             contact=contact.strip() or None,
             phone=phone.strip() or None,
-            address=address.strip() or None
+            address=address.strip() or None,
+            user=current_user
         )
+        log_action(current_user, 'create', 'Customer', customer.id, f'添加客户：{customer.name}', request.remote_addr)
         flash('客户添加成功', 'success')
         return redirect(url_for('customers.manage_customers'))
 
@@ -31,7 +35,7 @@ def manage_customers():
     if per_page not in [10, 20, 50, 100]:
         per_page = 20
 
-    query = Customer.select()
+    query = Customer.select().where(Customer.user == current_user)
     if search:
         query = query.where(Customer.name.contains(search))
     query = query.order_by(Customer.id.desc())
@@ -50,9 +54,11 @@ def manage_customers():
 
 @customers_bp.route('/customers/edit/<int:customer_id>', methods=['POST'])
 def edit_customer(customer_id):
-    customer = Customer.get_or_none(Customer.id == customer_id)
+    customer = Customer.get_or_none(
+        (Customer.id == customer_id) & (Customer.user == current_user)
+    )
     if not customer:
-        flash('客户不存在', 'danger')
+        flash('客户不存在或无权访问', 'danger')
         return redirect(url_for('customers.manage_customers'))
 
     name = request.form.get('name')
@@ -65,13 +71,16 @@ def edit_customer(customer_id):
     customer.phone = request.form.get('phone', '').strip() or None
     customer.address = request.form.get('address', '').strip() or None
     customer.save()
+    log_action(current_user, 'update', 'Customer', customer.id, f'修改客户：{customer.name}', request.remote_addr)
     flash('客户修改成功', 'success')
     return redirect(url_for('customers.manage_customers'))
 
 
 @customers_bp.route('/customers/delete/<int:customer_id>', methods=['POST'])
 def delete_customer(customer_id):
-    customer = Customer.get_or_none(Customer.id == customer_id)
+    customer = Customer.get_or_none(
+        (Customer.id == customer_id) & (Customer.user == current_user)
+    )
     if not customer:
         flash('客户不存在', 'danger')
         return redirect(url_for('customers.manage_customers'))
@@ -85,5 +94,6 @@ def delete_customer(customer_id):
         return redirect(url_for('customers.manage_customers'))
 
     customer.delete_instance()
-    flash('客户已删除', 'success')
+    log_action(current_user, 'delete', 'Customer', customer.id, f'删除客户：{customer.name}', request.remote_addr)
+    flash('客户删除成功', 'success')
     return redirect(url_for('customers.manage_customers'))

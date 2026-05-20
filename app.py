@@ -6,13 +6,17 @@
 import os
 import sys
 from flask import Flask
+from flask_login import LoginManager           # 新增
 from models import (
     db, Product, Customer, Supplier,
     PurchaseOrder, PurchaseOrderItem,
     SalesOrder, SalesOrderItem,
     CustomerOrder, CustomerOrderItem,
     SupplierOrder, SupplierOrderItem,
-    CustomerRefund, CustomerTransaction
+    CustomerRefund, CustomerTransaction,
+    ExchangeRate,
+    OperationLog,         # 新增
+    User
 )
 
 # 导入蓝图
@@ -29,10 +33,26 @@ from blueprints.refunds import refunds_bp
 from blueprints.finance import finance_bp
 from blueprints.data_io import data_io_bp
 from blueprints.utils import utils_bp
+from blueprints.exchange import exchange_bp
 from blueprints.tools import tools_bp
+from blueprints.auth import auth_bp
+from blueprints.logs import logs_bp             # 新增
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-in-production'
+
+# ---------- Flask-Login 初始化 ----------
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'auth.login'        # 未登录时重定向到登录页
+login_manager.login_message = '请先登录再访问此页面。'
+
+@login_manager.user_loader
+def load_user(user_id):
+    """从 session 中恢复用户对象"""
+    from models import User
+    return User.get_or_none(User.id == int(user_id))
+# ----------------------------------------
 
 # 注册蓝图
 app.register_blueprint(home_bp)
@@ -48,7 +68,10 @@ app.register_blueprint(refunds_bp)
 app.register_blueprint(finance_bp)
 app.register_blueprint(data_io_bp)
 app.register_blueprint(utils_bp)
+app.register_blueprint(exchange_bp)
 app.register_blueprint(tools_bp)
+app.register_blueprint(auth_bp)
+app.register_blueprint(logs_bp)             # 新增
 
 # 数据库连接管理
 @app.before_request
@@ -66,7 +89,9 @@ def init_db():
                       SalesOrder, SalesOrderItem,
                       CustomerOrder, CustomerOrderItem,
                       SupplierOrder, SupplierOrderItem,
-                      CustomerRefund, CustomerTransaction], safe=True)
+                      CustomerRefund, CustomerTransaction,
+                      ExchangeRate, User,
+                      OperationLog], safe=True)       # 新增 OperationLog 表
 
 # 打包成 exe 后，模板路径修正
 if getattr(sys, 'frozen', False):

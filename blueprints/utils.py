@@ -1,6 +1,7 @@
 # blueprints/utils.py
 from flask import Blueprint, redirect, url_for, flash
 from models import Customer
+from flask_login import login_required, current_user
 
 utils_bp = Blueprint('utils', __name__)
 

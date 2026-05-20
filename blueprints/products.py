@@ -1,12 +1,15 @@
 # blueprints/products.py
 from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask_login import login_required, current_user         # 新增
 from models import Product, PurchaseOrderItem, SalesOrderItem
 from peewee import fn
 from helpers import generate_sku
+from log_utils import log_action
 
 products_bp = Blueprint('products', __name__)
 
 @products_bp.route('/products', methods=['GET', 'POST'])
+@login_required                                              # 新增
 def manage_products():
     if request.method == 'POST':
         sku = request.form.get('sku', '')
@@ -24,13 +27,14 @@ def manage_products():
             category2=category2 if category2 else None,
             name=name,
             spec=spec if spec else None,
-            unit=unit
+            unit=unit,
+            user=current_user                                 # 新增
         )
         if not sku:
             product.sku = generate_sku(product)
-            product.save()
-        flash('产品添加成功', 'success')
-        return redirect(url_for('products.manage_products'))
+        product.save()
+        log_action(current_user, 'update', 'Product', product.id, f'修改产品：{product.name}', request.remote_addr)
+        flash('产品修改成功', 'success')
 
     search = request.args.get('search', '').strip()
     page = int(request.args.get('page', 1))
@@ -38,7 +42,7 @@ def manage_products():
     if per_page not in [10, 20, 50, 100]:
         per_page = 20
 
-    query = Product.select()
+    query = Product.select().where(Product.user == current_user)   # 过滤
     if search:
         query = query.where(Product.name.contains(search))
     query = query.order_by(Product.id.desc())
@@ -46,32 +50,38 @@ def manage_products():
     total_pages = max(1, (total + per_page - 1) // per_page)
     products = query.paginate(page, per_page)
 
-    # 历史列表查询
+    # 历史列表也需要过滤
     brands = (Product.select(Product.brand)
-              .where(Product.brand.is_null(False) & (Product.brand != ''))
+              .where(Product.brand.is_null(False) & (Product.brand != '') &
+                     (Product.user == current_user))
               .distinct().order_by(Product.brand))
     brand_list = [b.brand for b in brands]
 
     cat1s = (Product.select(Product.category1)
-             .where(Product.category1.is_null(False) & (Product.category1 != ''))
+             .where(Product.category1.is_null(False) & (Product.category1 != '') &
+                    (Product.user == current_user))
              .distinct().order_by(Product.category1))
     category1_list = [c.category1 for c in cat1s]
 
     cat2s = (Product.select(Product.category2)
-             .where(Product.category2.is_null(False) & (Product.category2 != ''))
+             .where(Product.category2.is_null(False) & (Product.category2 != '') &
+                    (Product.user == current_user))
              .distinct().order_by(Product.category2))
     category2_list = [c.category2 for c in cat2s]
 
     names = (Product.select(Product.name)
+             .where(Product.user == current_user)
              .distinct().order_by(Product.name))
     name_list = [n.name for n in names]
 
     specs = (Product.select(Product.spec)
-             .where(Product.spec.is_null(False) & (Product.spec != ''))
+             .where(Product.spec.is_null(False) & (Product.spec != '') &
+                    (Product.user == current_user))
              .distinct().order_by(Product.spec))
     spec_list = [s.spec for s in specs]
 
     units = (Product.select(Product.unit)
+             .where(Product.user == current_user)
              .distinct().order_by(Product.unit))
     unit_list = [u.unit for u in units]
 
@@ -90,10 +100,12 @@ def manage_products():
                            search=search)
 
 @products_bp.route('/products/edit/<int:product_id>', methods=['POST'])
+@login_required
 def edit_product(product_id):
-    product = Product.get_or_none(Product.id == product_id)
+    product = Product.get_or_none((Product.id == product_id) &
+                                  (Product.user == current_user))   # 校验所属
     if not product:
-        flash('产品不存在', 'danger')
+        flash('产品不存在或无权访问', 'danger')
         return redirect(url_for('products.manage_products'))
 
     product.sku = request.form.get('sku', '') or None
@@ -108,13 +120,14 @@ def edit_product(product_id):
     return redirect(url_for('products.manage_products'))
 
 @products_bp.route('/products/delete/<int:product_id>', methods=['POST'])
+@login_required
 def delete_product(product_id):
-    product = Product.get_or_none(Product.id == product_id)
+    product = Product.get_or_none((Product.id == product_id) &
+                                  (Product.user == current_user))   # 校验所属
     if not product:
-        flash('产品不存在', 'danger')
+        flash('产品不存在或无权访问', 'danger')
         return redirect(url_for('products.manage_products'))
 
-    # 删除保护
     used_in_purchase = PurchaseOrderItem.select().where(PurchaseOrderItem.product == product).exists()
     used_in_sales = SalesOrderItem.select().where(SalesOrderItem.product == product).exists()
     if used_in_purchase or used_in_sales:
@@ -122,5 +135,6 @@ def delete_product(product_id):
         return redirect(url_for('products.manage_products'))
 
     product.delete_instance()
-    flash('产品已删除', 'success')
+    log_action(current_user, 'delete', 'Product', product_id, f'删除产品：{product.name}', request.remote_addr)
+    flash('产品删除成功', 'success')
     return redirect(url_for('products.manage_products'))

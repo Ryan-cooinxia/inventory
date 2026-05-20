@@ -1,4 +1,5 @@
 from peewee import *
+from flask_login import UserMixin
 import datetime
 
 db = SqliteDatabase('data.db')
@@ -7,6 +8,14 @@ class BaseModel(Model):
     class Meta:
         database = db
 
+class User(UserMixin, BaseModel):
+    """用户表"""
+    username = CharField(unique=True)     # 登录用户名
+    password_hash = CharField()           # 密码哈希值
+    display_name = CharField(null=True)   # 显示名称（可选）
+    is_admin = BooleanField(default=False)# 是否为管理员
+    created_at = DateTimeField(default=datetime.datetime.now)
+    
 class Product(BaseModel):
     sku = CharField(max_length=50, unique=True, null=True)
     brand = CharField(max_length=50, null=True, default='DJI')
@@ -15,17 +24,20 @@ class Product(BaseModel):
     name = CharField()
     spec = CharField(null=True)
     unit = CharField()
+    user = ForeignKeyField(User, backref='products', null=True)   # 暂时允许为空，用于迁移旧数据
 
 class Customer(BaseModel):
     name = CharField()
     contact = CharField(null=True)
     phone = CharField(null=True)
     address = TextField(null=True)
+    user = ForeignKeyField(User, backref='customers', null=True)   # 暂时允许为空，用于迁移旧数据
 
 class Supplier(BaseModel):
     name = CharField()
     contact = CharField(null=True)
     phone = CharField(null=True)
+    user = ForeignKeyField(User, backref='suppliers', null=True)   # 暂时允许为空，用于迁移旧数据
 
 class SupplierOrder(BaseModel):
     supplier = ForeignKeyField(Supplier, backref='supplier_orders')
@@ -35,6 +47,7 @@ class SupplierOrder(BaseModel):
     status = CharField(default='pending')
     estimated_delivery = DateField(null=True)
     remark = TextField(null=True)
+    user = ForeignKeyField(User, backref='supplier_orders', null=True)   # 暂时允许为空，用于迁移旧数据
 
 class SupplierOrderItem(BaseModel):
     """供应商订单明细"""
@@ -43,6 +56,7 @@ class SupplierOrderItem(BaseModel):
     quantity = FloatField()
     unit_price = FloatField()
     subtotal = FloatField()
+    user = ForeignKeyField(User, backref='supplier_order_items', null=True)   # 暂时允许为空，用于迁移旧数据
     
 class PurchaseOrder(BaseModel):
     supplier = ForeignKeyField(Supplier, backref='purchase_orders')
@@ -52,6 +66,7 @@ class PurchaseOrder(BaseModel):
     supplier_order = ForeignKeyField(SupplierOrder, null=True, backref='purchase_receipts')
     ship_method = CharField(max_length=50, null=True)
     tracking_number = CharField(max_length=100, null=True)
+    user = ForeignKeyField(User, backref='purchase_orders', null=True)   # 暂时允许为空，用于迁移旧数据
 
 class PurchaseOrderItem(BaseModel):
     order = ForeignKeyField(PurchaseOrder, backref='items')
@@ -59,6 +74,7 @@ class PurchaseOrderItem(BaseModel):
     quantity = FloatField()
     unit_price = FloatField()
     subtotal = FloatField()
+    user = ForeignKeyField(User, backref='purchase_order_items', null=True)   # 暂时允许为空，用于迁移旧数据
 
 class CustomerOrder(BaseModel):
     """客户订单"""
@@ -68,6 +84,7 @@ class CustomerOrder(BaseModel):
     status = CharField(default='pending')
     remark = TextField(null=True)
     invoice_required = BooleanField(default=False)
+    user = ForeignKeyField(User, backref='customer_orders', null=True)   # 暂时允许为空，用于迁移旧数据
 
 class CustomerOrderItem(BaseModel):
     order = ForeignKeyField(CustomerOrder, backref='items')
@@ -75,6 +92,7 @@ class CustomerOrderItem(BaseModel):
     quantity = FloatField()
     unit_price = FloatField()
     subtotal = FloatField()
+    user = ForeignKeyField(User, backref='customer_order_items', null=True)   # 暂时允许为空，用于迁移旧数据
 
 class SalesOrder(BaseModel):
     """出库单（可关联到订单）"""
@@ -85,6 +103,7 @@ class SalesOrder(BaseModel):
     remark = TextField(null=True)
     ship_method = CharField(max_length=50, null=True)
     tracking_number = CharField(max_length=100, null=True)
+    user = ForeignKeyField(User, backref='sales_orders', null=True)   # 暂时允许为空，用于迁移旧数据
 
 class SalesOrderItem(BaseModel):
     order = ForeignKeyField(SalesOrder, backref='items')
@@ -92,6 +111,7 @@ class SalesOrderItem(BaseModel):
     quantity = FloatField()
     unit_price = FloatField()
     subtotal = FloatField()
+    user = ForeignKeyField(User, backref='sales_order_items', null=True)   # 暂时允许为空，用于迁移旧数据
 
 class CustomerRefund(BaseModel):
     customer = ForeignKeyField(Customer, backref='refunds')
@@ -101,6 +121,7 @@ class CustomerRefund(BaseModel):
     amount = FloatField()
     remark = TextField(null=True)
     created_at = DateTimeField(default=datetime.datetime.now)
+    user = ForeignKeyField(User, backref='refunds', null=True)   # 暂时允许为空，用于迁移旧数据
 
 class CustomerTransaction(BaseModel):
     TRANSACTION_TYPES = [
@@ -118,5 +139,22 @@ class CustomerTransaction(BaseModel):
     amount = FloatField()
     remark = TextField(null=True)
     created_at = DateTimeField(default=datetime.datetime.now)
+    user = ForeignKeyField(User, backref='transactions', null=True)   # 暂时允许为空，用于迁移旧数据
 
-# 更新 init_db 中的表列表（后面在 app.py 中修改）
+class ExchangeRate(BaseModel):
+    """汇率表"""
+    base_currency = CharField(max_length=10)       # 基础货币，如 CNY
+    target_currency = CharField(max_length=10)     # 目标货币，如 RUB
+    rate = FloatField()                            # 汇率
+    updated_at = DateTimeField(default=datetime.datetime.now)
+
+class OperationLog(BaseModel):
+    """操作日志"""
+    user = ForeignKeyField(User, backref='operation_logs')          # 操作用户
+    action_type = CharField(max_length=20)                          # 操作类型：create/update/delete
+    target_type = CharField(max_length=50)                          # 操作对象：Product/Customer/Order等
+    target_id = IntegerField(null=True)                             # 操作对象的ID
+    description = TextField(null=True)                              # 描述信息
+    ip_address = CharField(max_length=50, null=True)                # 操作者IP
+    created_at = DateTimeField(default=datetime.datetime.now)       # 操作时间
+
