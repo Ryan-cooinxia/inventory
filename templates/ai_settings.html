@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}AI 设置{% endblock %}
+{% block content %}
+<h2>AI 设置 - API Key</h2>
+<p>请填入 DeepSeek 的 API Key（可在 <a href="https://platform.deepseek.com" target="_blank">platform.deepseek.com</a> 注册获取）。</p>
+
+<form method="POST" class="mb-3">
+    <div class="mb-3">
+        <label class="form-label">API Key</label>
+        <input type="password" name="api_key" class="form-control" placeholder="sk-..." required>
+    </div>
+    <input type="hidden" name="provider" value="deepseek">
+    <button type="submit" class="btn btn-primary">保存</button>
+</form>
+
+{% if key_info %}
+<div class="card">
+    <div class="card-body">
+        <h5 class="card-title">已配置的 API Key</h5>
+        <p>提供商：<strong>{{ key_info.provider }}</strong></p>
+        <p>密钥：<code>{{ key_info.masked_key }}</code></p>
+        <form method="POST" action="{{ url_for('ai_import.ai_settings_delete') }}" 
+              onsubmit="return confirm('确定删除该 API Key？');">
+            <button type="submit" class="btn btn-danger btn-sm">删除</button>
+        </form>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

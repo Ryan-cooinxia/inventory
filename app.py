@@ -14,8 +14,8 @@ from models import (
     CustomerOrder, CustomerOrderItem,
     SupplierOrder, SupplierOrderItem,
     CustomerRefund, CustomerTransaction,
-    ExchangeRate,
-    OperationLog,         # 新增
+    ExchangeRate, OperationLog,
+    UserApiKey,        # 新增
     User
 )
 
@@ -37,6 +37,7 @@ from blueprints.exchange import exchange_bp
 from blueprints.tools import tools_bp
 from blueprints.auth import auth_bp
 from blueprints.logs import logs_bp             # 新增
+from blueprints.ai_import import ai_bp
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-in-production'
@@ -71,7 +72,8 @@ app.register_blueprint(utils_bp)
 app.register_blueprint(exchange_bp)
 app.register_blueprint(tools_bp)
 app.register_blueprint(auth_bp)
-app.register_blueprint(logs_bp)             # 新增
+app.register_blueprint(logs_bp)
+app.register_blueprint(ai_bp)             # 新增
 
 # 数据库连接管理
 @app.before_request
@@ -91,7 +93,8 @@ def init_db():
                       SupplierOrder, SupplierOrderItem,
                       CustomerRefund, CustomerTransaction,
                       ExchangeRate, User,
-                      OperationLog], safe=True)       # 新增 OperationLog 表
+                      OperationLog, UserApiKey], safe=True)       # 新增 OperationLog 表
+
 
 # 打包成 exe 后，模板路径修正
 if getattr(sys, 'frozen', False):

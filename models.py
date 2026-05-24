@@ -25,6 +25,7 @@ class Product(BaseModel):
     spec = CharField(null=True)
     unit = CharField()
     user = ForeignKeyField(User, backref='products', null=True)   # 暂时允许为空，用于迁移旧数据
+    description = TextField(null=True)       # 新增：产品说明
 
 class Customer(BaseModel):
     name = CharField()
@@ -158,3 +159,7 @@ class OperationLog(BaseModel):
     ip_address = CharField(max_length=50, null=True)                # 操作者IP
     created_at = DateTimeField(default=datetime.datetime.now)       # 操作时间
 
+class UserApiKey(BaseModel):
+    user = ForeignKeyField(User, backref='api_key', unique=True)
+    api_key = CharField()           # 加密后的 API Key
+    api_provider = CharField(default='deepseek')  # deepseek / openai

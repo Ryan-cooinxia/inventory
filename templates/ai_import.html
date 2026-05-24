@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}AI智能录入{% endblock %}
+{% block content %}
+<h2>AI 智能录入</h2>
+<p>上传供应商的 PDF 或 Excel 产品清单，AI 将自动提取产品信息。</p>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <input type="file" id="fileInput" accept=".pdf,.xlsx,.xls" class="form-control mb-2">
+        <button id="uploadBtn" class="btn btn-primary">上传并解析</button>
+        <div id="uploadStatus" class="mt-2"></div>
+    </div>
+</div>
+
+<div id="resultSection" style="display:none;">
+    <h5>解析结果（可编辑）</h5>
+    <button id="importSelected" class="btn btn-success mb-2">导入选中产品</button>
+    <div class="table-responsive">
+        <table class="table table-bordered table-sm" id="productTable">
+            <thead>
+                <tr>
+                    <th><input type="checkbox" id="selectAll"></th>
+                    <th>产品名称</th><th>规格</th><th>产品说明</th><th>单位</th><th>单价</th><th>数量</th>
+                    <th>一级分类</th><th>二级分类</th><th>品牌</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let parsedProducts = [];
+
+document.getElementById('uploadBtn').addEventListener('click', async () => {
+    const file = document.getElementById('fileInput').files[0];
+    if (!file) return alert('请选择文件');
+    const formData = new FormData();
+    formData.append('file', file);
+    document.getElementById('uploadStatus').innerHTML = '<div class="spinner-border spinner-border-sm"></div> 正在解析...';
+    try {
+        const resp = await fetch('/api/ai-import/upload', { method: 'POST', body: formData });
+        const data = await resp.json();
+        if (data.error) {
+            document.getElementById('uploadStatus').innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+            return;
+        }
+        parsedProducts = data.products;
+        renderTable(parsedProducts);
+        document.getElementById('resultSection').style.display = 'block';
+        document.getElementById('uploadStatus').innerHTML = `<div class="alert alert-success">解析成功，共 ${parsedProducts.length} 个产品</div>`;
+    } catch(e) {
+        document.getElementById('uploadStatus').innerHTML = `<div class="alert alert-danger">请求失败：${e.message}</div>`;
+    }
+});
+
+function renderTable(products) {
+    const tbody = document.querySelector('#productTable tbody');
+    tbody.innerHTML = '';
+    products.forEach((p, i) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><input type="checkbox" class="rowCheck" data-index="${i}" checked></td>
+            <td><input class="form-control form-control-sm" value="${p.name || ''}"></td>
+            <td><input class="form-control form-control-sm" value="${p.spec || ''}"></td>
+            <td><input class="form-control form-control-sm" value="${p.description || ''}"></td>
+            <td><input class="form-control form-control-sm" value="${p.unit || '盒'}"></td>
+            <td><input class="form-control form-control-sm" type="number" step="any" value="${p.unit_price || ''}"></td>
+            <td><input class="form-control form-control-sm" type="number" step="any" value="${p.quantity || ''}"></td>
+            <td><input class="form-control form-control-sm" value="${p.category1 || ''}"></td>
+            <td><input class="form-control form-control-sm" value="${p.category2 || ''}"></td>
+            <td><input class="form-control form-control-sm" value="${p.brand || ''}"></td>
+        `;
+        tbody.appendChild(tr);
+    });
+    document.getElementById('selectAll').checked = true;
+}
+
+document.getElementById('selectAll').addEventListener('change', function() {
+    document.querySelectorAll('.rowCheck').forEach(cb => cb.checked = this.checked);
+});
+
+document.getElementById('importSelected').addEventListener('click', async () => {
+    const selected = [];
+    document.querySelectorAll('.rowCheck').forEach((cb) => {
+        if (cb.checked) {
+            const row = cb.closest('tr').querySelectorAll('input');
+            selected.push({
+                name: row[1].value,
+                spec: row[2].value,
+                description: row[3].value,
+                unit: row[4].value,
+                unit_price: row[5].value ? parseFloat(row[5].value) : null,
+                quantity: row[6].value ? parseFloat(row[6].value) : null,
+                category1: row[7].value,
+                category2: row[8].value,
+                brand: row[9].value,
+            });
+        }
+    });
+    if (selected.length === 0) return alert('请至少选中一个产品');
+    const resp = await fetch('/api/ai-import/confirm', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ products: selected })
+    });
+    const result = await resp.json();
+    if (result.error) {
+        alert('导入失败：' + result.error);
+    } else {
+        alert(`成功导入 ${result.count} 个产品`);
+        location.reload();
+    }
+});
+</script>
+{% endblock %}
