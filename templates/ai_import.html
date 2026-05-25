@@ -41,7 +41,7 @@ document.getElementById('uploadBtn').addEventListener('click', async () => {
     formData.append('file', file);
     document.getElementById('uploadStatus').innerHTML = '<div class="spinner-border spinner-border-sm"></div> 正在解析...';
     try {
-        const resp = await fetch('/api/ai-import/upload', { method: 'POST', body: formData });
+        const resp = await fetch('/api/ai-import/upload', { method: 'POST', body: formData,credentials: 'same-origin' });
         const data = await resp.json();
         if (data.error) {
             document.getElementById('uploadStatus').innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
@@ -104,7 +104,8 @@ document.getElementById('importSelected').addEventListener('click', async () => 
     const resp = await fetch('/api/ai-import/confirm', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ products: selected })
+        body: JSON.stringify({ products: selected }),
+        credentials: 'same-origin'
     });
     const result = await resp.json();
     if (result.error) {
