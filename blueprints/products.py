@@ -1,5 +1,5 @@
 # blueprints/products.py
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from flask_login import login_required, current_user         # 新增
 from models import Product, PurchaseOrderItem, SalesOrderItem
 from peewee import fn
@@ -138,3 +138,25 @@ def delete_product(product_id):
     log_action(current_user, 'delete', 'Product', product_id, f'删除产品：{product.name}', request.remote_addr)
     flash('产品删除成功', 'success')
     return redirect(url_for('products.manage_products'))
+
+@products_bp.route('/products/batch-delete', methods=['POST'])
+@login_required
+def batch_delete_products():
+    data = request.get_json()
+    ids = data.get('ids', [])
+    if not ids:
+        return jsonify({'error': '未选择产品'}), 400
+
+    deleted = 0
+    for pid in ids:
+        product = Product.get_or_none((Product.id == pid) & (Product.user == current_user))
+        if product:
+            # 删除保护：检查是否被引用
+            used_in_purchase = PurchaseOrderItem.select().where(PurchaseOrderItem.product == product).exists()
+            used_in_sales = SalesOrderItem.select().where(SalesOrderItem.product == product).exists()
+            if used_in_purchase or used_in_sales:
+                continue  # 跳过硬删除，可提示
+            product.delete_instance()
+            deleted += 1
+
+    return jsonify({'deleted': deleted})

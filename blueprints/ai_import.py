@@ -1,4 +1,5 @@
 # blueprints/ai_import.py
+from helpers import generate_sku
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for, flash
 from flask_login import login_required, current_user
 from models import Product, UserApiKey
@@ -102,8 +103,8 @@ def ai_import_upload():
 你是一个智能产品信息提取助手。请从以下内容中提取**所有可能的产品**，输出一个 JSON 对象：{{"products": [...]}}。
 products 数组中每个元素必须包含：
 - name (产品名称/型号，**必须**，如果没有明确名称，则从描述中归纳，不可省略)
-- spec (规格/包装，保留颜色、包装类型等)
-- description (产品说明，无则为 "")
+- spec (规格/包装，仅放简短规格，如颜色、套装类型等，不要放详细描述)
+- description (产品说明，放产品的详细描述、特点、附加信息，如果文本中没有详细描述则为空字符串 "")
 - unit (单位，默认"盒")
 - unit_price (单价数字，无则 null)
 - quantity (数量数字，无则 null)
@@ -180,16 +181,21 @@ def ai_import_confirm():
     count = 0
     for item in products:
         try:
-            Product.create(
+            # 明确字段映射，避免 description 错误写入 spec
+            product = Product.create(
                 name=item['name'],
-                spec=item.get('spec') or None,
-                description=item.get('description') or None,
+                spec=item.get('spec') or None,           # 规格单独存
+                description=item.get('description') or None,  # 说明单独存
                 unit=item.get('unit') or '盒',
                 brand=item.get('brand') or None,
                 category1=item.get('category1') or None,
                 category2=item.get('category2') or None,
                 user=current_user
             )
+            # 如果没有 SKU，自动生成（基于品牌和 ID）
+            if not product.sku:
+                product.sku = generate_sku(product)
+                product.save()
             count += 1
         except Exception:
             continue
