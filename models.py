@@ -33,6 +33,7 @@ class Customer(BaseModel):
     phone = CharField(null=True)
     address = TextField(null=True)
     user = ForeignKeyField(User, backref='customers', null=True)   # 暂时允许为空，用于迁移旧数据
+    planned_refund = FloatField(default=0.0)
 
 class Supplier(BaseModel):
     name = CharField()

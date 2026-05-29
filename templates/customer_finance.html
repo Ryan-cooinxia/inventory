@@ -10,7 +10,9 @@
             <th>客户名称</th>
             <th>订货总金额（元）</th>
             <th>已发货金额（元）</th>
-            <th>退款总金额（元）</th>
+            <th>预计退款（元）</th>
+            <th>已退款（元）</th>
+            <th>剩余未退款（元）</th>
             <th>客户余额（元）</th>
             <th>操作</th>
         </tr>
@@ -21,7 +23,9 @@
         <td>{{ row.customer.name }}</td>
         <td>¥{{ "%.2f"|format(row.total_order) }}</td>
         <td>¥{{ "%.2f"|format(row.total_shipped) }}</td>
-        <td>¥{{ "%.2f"|format(row.total_refund) }}</td>
+        <td>¥{{ "%.2f"|format(row.planned_refund) }}</td>
+        <td>¥{{ "%.2f"|format(row.actual_refund) }}</td>
+        <td>¥{{ "%.2f"|format(row.remaining_refund) }}</td>
         <td><strong>¥{{ "%.2f"|format(row.balance) }}</strong></td>
         <td>
             <a href="/shipments?customer_id={{ row.customer.id }}" class="btn btn-sm btn-outline-primary">出库单</a>

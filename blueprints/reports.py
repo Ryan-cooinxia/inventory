@@ -15,45 +15,195 @@ reports_bp = Blueprint('reports', __name__)
 @reports_bp.route('/report/daily')
 @login_required
 def report_daily():
+    """每日进出货统计（含总量、货值、按产品）"""
+    # ---------- 1. 确定日期范围 ----------
+    # 计算当前用户最早的出入库日期
+    earliest_purchase = (PurchaseOrder
+                         .select(fn.MIN(PurchaseOrder.order_date))
+                         .where(PurchaseOrder.user == current_user)
+                         .scalar())
+    earliest_sales = (SalesOrder
+                      .select(fn.MIN(SalesOrder.order_date))
+                      .where(SalesOrder.user == current_user)
+                      .scalar())
+    # 取两者中最早的日期
+    candidates = [d for d in (earliest_purchase, earliest_sales) if d is not None]
+    if candidates:
+        earliest_data_date = min(candidates)
+    else:
+        earliest_data_date = datetime.date.today()
+
+    # 默认结束日期为今天
     end_date = request.args.get('end_date', datetime.date.today())
-    start_date = request.args.get('start_date', datetime.date.today() - datetime.timedelta(days=6))
-    if isinstance(start_date, str):
-        start_date = datetime.datetime.strptime(start_date, '%Y-%m-%d').date()
     if isinstance(end_date, str):
         end_date = datetime.datetime.strptime(end_date, '%Y-%m-%d').date()
 
-    purchase_by_day = (PurchaseOrder
-                       .select(PurchaseOrder.order_date,
-                               fn.SUM(PurchaseOrderItem.quantity).alias('total_qty'))
-                       .join(PurchaseOrderItem)
-                       .where((PurchaseOrder.order_date.between(start_date, end_date)) &
-                              (PurchaseOrder.user == current_user))
-                       .group_by(PurchaseOrder.order_date)
-                       .order_by(PurchaseOrder.order_date))
+    # 默认开始日期：最早数据日或30天前，两者中较晚的（保证至少显示最近30天，但不超过最早数据日）
+    default_start = max(earliest_data_date, datetime.date.today() - datetime.timedelta(days=29))
+    start_date = request.args.get('start_date', default_start.strftime('%Y-%m-%d'))
+    if isinstance(start_date, str):
+        start_date = datetime.datetime.strptime(start_date, '%Y-%m-%d').date()
 
-    sales_by_day = (SalesOrder
-                    .select(SalesOrder.order_date,
-                            fn.SUM(SalesOrderItem.quantity).alias('total_qty'))
-                    .join(SalesOrderItem)
-                    .where((SalesOrder.order_date.between(start_date, end_date)) &
-                           (SalesOrder.user == current_user))
-                    .group_by(SalesOrder.order_date)
-                    .order_by(SalesOrder.order_date))
+    # 确保开始日期不晚于结束日期
+    if start_date > end_date:
+        start_date = end_date
 
+    # 生成日期列表（用于图表和表格）
     date_range = [start_date + datetime.timedelta(days=i) for i in range((end_date - start_date).days + 1)]
-    purchase_dict = {row.order_date: row.total_qty for row in purchase_by_day}
-    sales_dict = {row.order_date: row.total_qty for row in sales_by_day}
-
     chart_dates = [d.strftime('%m-%d') for d in date_range]
-    chart_purchase = [purchase_dict.get(d, 0) for d in date_range]
-    chart_sales = [sales_dict.get(d, 0) for d in date_range]
+
+    # ---------- 2. 总量图表数据 ----------
+    def sum_dict_by_date(query, key='total_qty'):
+        d = {}
+        for row in query:
+            d[row.order_date] = getattr(row, key)
+        return d
+
+    purchase_qty_total = (PurchaseOrder
+                          .select(PurchaseOrder.order_date,
+                                  fn.SUM(PurchaseOrderItem.quantity).alias('total_qty'))
+                          .join(PurchaseOrderItem)
+                          .where((PurchaseOrder.order_date.between(start_date, end_date)) &
+                                 (PurchaseOrder.user == current_user))
+                          .group_by(PurchaseOrder.order_date)
+                          .order_by(PurchaseOrder.order_date))
+
+    sales_qty_total = (SalesOrder
+                       .select(SalesOrder.order_date,
+                               fn.SUM(SalesOrderItem.quantity).alias('total_qty'))
+                       .join(SalesOrderItem)
+                       .where((SalesOrder.order_date.between(start_date, end_date)) &
+                              (SalesOrder.user == current_user))
+                       .group_by(SalesOrder.order_date)
+                       .order_by(SalesOrder.order_date))
+
+    purchase_amount_total = (PurchaseOrder
+                             .select(PurchaseOrder.order_date,
+                                     fn.SUM(PurchaseOrderItem.subtotal).alias('total_amount'))
+                             .join(PurchaseOrderItem)
+                             .where((PurchaseOrder.order_date.between(start_date, end_date)) &
+                                    (PurchaseOrder.user == current_user))
+                             .group_by(PurchaseOrder.order_date)
+                             .order_by(PurchaseOrder.order_date))
+
+    sales_amount_total = (SalesOrder
+                          .select(SalesOrder.order_date,
+                                  fn.SUM(SalesOrderItem.subtotal).alias('total_amount'))
+                          .join(SalesOrderItem)
+                          .where((SalesOrder.order_date.between(start_date, end_date)) &
+                                 (SalesOrder.user == current_user))
+                          .group_by(SalesOrder.order_date)
+                          .order_by(SalesOrder.order_date))
+
+    purchase_qty_dict = sum_dict_by_date(purchase_qty_total)
+    sales_qty_dict = sum_dict_by_date(sales_qty_total)
+    purchase_amount_dict = sum_dict_by_date(purchase_amount_total, key='total_amount')
+    sales_amount_dict = sum_dict_by_date(sales_amount_total, key='total_amount')
+
+    # ---------- 3. 明细数据（表格用） ----------
+    purchase_detail = list((PurchaseOrderItem
+                            .select(PurchaseOrder.order_date.alias('order_date'),
+                                    PurchaseOrderItem.product.alias('product_id'),
+                                    Product.name.alias('product_name'),
+                                    fn.SUM(PurchaseOrderItem.quantity).alias('qty'),
+                                    fn.SUM(PurchaseOrderItem.subtotal).alias('amount'))
+                            .join(PurchaseOrder)
+                            .join(Product, on=(PurchaseOrderItem.product == Product.id))
+                            .where((PurchaseOrder.order_date.between(start_date, end_date)) &
+                                   (PurchaseOrder.user == current_user))
+                            .group_by(PurchaseOrder.order_date, PurchaseOrderItem.product, Product.name)
+                            .order_by(PurchaseOrder.order_date))
+                           .dicts())
+
+    sales_detail = list((SalesOrderItem
+                         .select(SalesOrder.order_date.alias('order_date'),
+                                 SalesOrderItem.product.alias('product_id'),
+                                 Product.name.alias('product_name'),
+                                 fn.SUM(SalesOrderItem.quantity).alias('qty'),
+                                 fn.SUM(SalesOrderItem.subtotal).alias('amount'))
+                         .join(SalesOrder)
+                         .join(Product, on=(SalesOrderItem.product == Product.id))
+                         .where((SalesOrder.order_date.between(start_date, end_date)) &
+                                (SalesOrder.user == current_user))
+                         .group_by(SalesOrder.order_date, SalesOrderItem.product, Product.name)
+                         .order_by(SalesOrder.order_date))
+                        .dicts())
+
+    daily_details = {d: {} for d in date_range}
+    for row in purchase_detail:
+        d = row['order_date']
+        pid = row['product_id']
+        name = row['product_name']
+        if pid not in daily_details[d]:
+            daily_details[d][pid] = {'name': name, 'in_qty': 0, 'in_amount': 0, 'out_qty': 0, 'out_amount': 0}
+        daily_details[d][pid]['in_qty'] += row['qty']
+        daily_details[d][pid]['in_amount'] += row['amount']
+
+    for row in sales_detail:
+        d = row['order_date']
+        pid = row['product_id']
+        name = row['product_name']
+        if pid not in daily_details[d]:
+            daily_details[d][pid] = {'name': name, 'in_qty': 0, 'in_amount': 0, 'out_qty': 0, 'out_amount': 0}
+        daily_details[d][pid]['out_qty'] += row['qty']
+        daily_details[d][pid]['out_amount'] += row['amount']
+
+    detail_rows = []
+    for d in date_range:
+        for pid, data in daily_details[d].items():
+            detail_rows.append({
+                'date': d,
+                'product_name': data['name'],
+                'in_qty': data['in_qty'],
+                'in_amount': data['in_amount'],
+                'out_qty': data['out_qty'],
+                'out_amount': data['out_amount']
+            })
+
+    # ---------- 4. 按产品图表数据 ----------
+    product_data = {}
+    for row in purchase_detail:
+        name = row['product_name']
+        d = row['order_date']
+        if name not in product_data:
+            product_data[name] = {date: {'in_qty': 0, 'out_qty': 0, 'in_amount': 0, 'out_amount': 0} for date in date_range}
+        product_data[name][d]['in_qty'] += row['qty']
+        product_data[name][d]['in_amount'] += row['amount']
+
+    for row in sales_detail:
+        name = row['product_name']
+        d = row['order_date']
+        if name not in product_data:
+            product_data[name] = {date: {'in_qty': 0, 'out_qty': 0, 'in_amount': 0, 'out_amount': 0} for date in date_range}
+        product_data[name][d]['out_qty'] += row['qty']
+        product_data[name][d]['out_amount'] += row['amount']
+
+    product_list = sorted(product_data.keys())
+    product_chart_data = {}
+    for name, dates_data in product_data.items():
+        product_chart_data[name] = {
+            'labels': chart_dates,
+            'in_qty': [dates_data[d]['in_qty'] for d in date_range],
+            'out_qty': [dates_data[d]['out_qty'] for d in date_range],
+            'in_amount': [dates_data[d]['in_amount'] for d in date_range],
+            'out_amount': [dates_data[d]['out_amount'] for d in date_range]
+        }
+
+    purchase_qty_list = [purchase_qty_dict.get(d, 0) for d in date_range]
+    sales_qty_list = [sales_qty_dict.get(d, 0) for d in date_range]
+    purchase_amount_list = [purchase_amount_dict.get(d, 0) for d in date_range]
+    sales_amount_list = [sales_amount_dict.get(d, 0) for d in date_range]
 
     return render_template('report_daily.html',
                            start_date=start_date, end_date=end_date,
                            chart_dates=chart_dates,
-                           chart_purchase=chart_purchase,
-                           chart_sales=chart_sales)
-
+                           purchase_qty_list=purchase_qty_list,
+                           sales_qty_list=sales_qty_list,
+                           purchase_amount_list=purchase_amount_list,
+                           sales_amount_list=sales_amount_list,
+                           product_list=product_list,
+                           product_chart_data=product_chart_data,
+                           detail_rows=detail_rows)
 
 @reports_bp.route('/report/customer')
 @login_required

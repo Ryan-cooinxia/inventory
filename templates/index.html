@@ -5,35 +5,35 @@
 
 <!-- 统计卡片 -->
 <div class="row mb-4">
-    <div class="col-md-3 mb-3">
+    <div class="col-6 col-md-3 mb-3">
         <div class="card text-white bg-primary h-100">
-            <div class="card-body text-center">
-                <h5 class="card-title">供货商未到货总金额</h5>
-                <p class="card-text display-6">¥{{ "%.2f"|format(supplier_unreceived_total) }}</p>
+            <div class="card-body text-center d-flex flex-column justify-content-center">
+                <h6 class="card-title">供货商未到货总金额</h6>
+                <p class="card-text fs-5 fw-bold mb-0">¥{{ "%.2f"|format(supplier_unreceived_total) }}</p>
             </div>
         </div>
     </div>
-    <div class="col-md-3 mb-3">
+    <div class="col-6 col-md-3 mb-3">
         <div class="card text-white bg-success h-100">
-            <div class="card-body text-center">
-                <h5 class="card-title">客户未发货总金额</h5>
-                <p class="card-text display-6">¥{{ "%.2f"|format(customer_unshipped_total) }}</p>
+            <div class="card-body text-center d-flex flex-column justify-content-center">
+                <h6 class="card-title">客户未发货总金额</h6>
+                <p class="card-text fs-5 fw-bold mb-0">¥{{ "%.2f"|format(customer_unshipped_total) }}</p>
             </div>
         </div>
     </div>
-    <div class="col-md-3 mb-3">
+    <div class="col-6 col-md-3 mb-3">
         <div class="card text-white bg-warning h-100">
-            <div class="card-body text-center">
-                <h5 class="card-title">客户退款总额</h5>
-                <p class="card-text display-6">¥{{ "%.2f"|format(customer_refund_total) }}</p>
+            <div class="card-body text-center d-flex flex-column justify-content-center">
+                <h6 class="card-title">客户退款总余额</h6>
+                <p class="card-text fs-5 fw-bold mb-0">¥{{ "%.2f"|format(customer_refund_balance) }}</p>
             </div>
         </div>
     </div>
-    <div class="col-md-3 mb-3">
+    <div class="col-6 col-md-3 mb-3">
         <div class="card text-white bg-danger h-100">
-            <div class="card-body text-center">
-                <h5 class="card-title">供货商退款总额</h5>
-                <p class="card-text display-6">¥{{ "%.2f"|format(supplier_refund_total) }}</p>
+            <div class="card-body text-center d-flex flex-column justify-content-center">
+                <h6 class="card-title">供货商退款总额</h6>
+                <p class="card-text fs-5 fw-bold mb-0">¥{{ "%.2f"|format(supplier_refund_total) }}</p>
             </div>
         </div>
     </div>

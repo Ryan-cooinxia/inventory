@@ -37,10 +37,20 @@ def index():
                                .scalar()) or 0
     customer_unshipped_total = max(customer_order_total - customer_shipped_amount, 0)
 
-    customer_refund_total = (CustomerRefund
-                             .select(fn.SUM(CustomerRefund.amount))
-                             .where(CustomerRefund.user == current_user)
-                             .scalar()) or 0
+    # 客户预计退款总和（所有客户的 planned_refund 字段之和）
+    planned_refund_sum = (Customer
+                         .select(fn.SUM(Customer.planned_refund))
+                         .where(Customer.user == current_user)
+                         .scalar()) or 0
+
+    # 客户实际退款总和（所有退款记录的金额之和）
+    actual_refund_sum = (CustomerRefund
+                        .select(fn.SUM(CustomerRefund.amount))
+                        .where(CustomerRefund.user == current_user)
+                        .scalar()) or 0
+
+    # 客户退款总余额 = 预计退款 - 实际退款
+    customer_refund_balance = planned_refund_sum - actual_refund_sum
 
     supplier_refund_total = 0.0
 
@@ -122,7 +132,7 @@ def index():
                            today=today,
                            supplier_unreceived_total=supplier_unreceived_total,
                            customer_unshipped_total=customer_unshipped_total,
-                           customer_refund_total=customer_refund_total,
+                           customer_refund_balance=customer_refund_balance,
                            supplier_refund_total=supplier_refund_total,
                            purchase_list=purchase_list,
                            sales_list=sales_list,

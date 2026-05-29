@@ -1,45 +1,64 @@
 # blueprints/finance.py
-from flask import Blueprint, render_template
+from flask import Blueprint, render_template, request, redirect, url_for, flash
 from flask_login import login_required, current_user
 from models import Customer, CustomerOrder, SalesOrder, CustomerRefund
 from peewee import fn
 
 finance_bp = Blueprint('finance', __name__)
 
-@finance_bp.route('/customer/finance')
+@finance_bp.route('/customer/finance', methods=['GET', 'POST'])
 @login_required
 def customer_finance_overview():
+    if request.method == 'POST':
+        customer_id = request.form.get('customer_id')
+        planned_refund = request.form.get('planned_refund', '0')
+        try:
+            planned_refund = float(planned_refund)
+        except ValueError:
+            planned_refund = 0.0
+        customer = Customer.get_or_none((Customer.id == customer_id) & (Customer.user == current_user))
+        if customer:
+            customer.planned_refund = planned_refund
+            customer.save()
+            flash('预计退款金额已更新', 'success')
+        return redirect(url_for('finance.customer_finance_overview'))
+
     customers = Customer.select().where(Customer.user == current_user)
     rows = []
     for customer in customers:
         # 订单总金额
         order_total = (CustomerOrder
                        .select(fn.SUM(CustomerOrder.total_amount))
-                       .where((CustomerOrder.customer == customer) &
-                              (CustomerOrder.user == current_user))
+                       .where((CustomerOrder.customer == customer) & (CustomerOrder.user == current_user))
                        .scalar()) or 0
 
         # 已发货金额
         total_shipped = (SalesOrder
                          .select(fn.SUM(SalesOrder.total_amount))
-                         .where((SalesOrder.customer == customer) &
-                                (SalesOrder.user == current_user))
+                         .where((SalesOrder.customer == customer) & (SalesOrder.user == current_user))
                          .scalar()) or 0
 
-        # 退款金额
-        total_refund = (CustomerRefund
+        # 实际退款总金额（已发生的退款）
+        actual_refund = (CustomerRefund
                         .select(fn.SUM(CustomerRefund.amount))
-                        .where((CustomerRefund.customer == customer) &
-                               (CustomerRefund.user == current_user))
+                        .where((CustomerRefund.customer == customer) & (CustomerRefund.user == current_user))
                         .scalar()) or 0
 
-        balance = order_total - total_shipped - total_refund
+        # 预计退款总金额（手动设定）
+        planned_refund = getattr(customer, 'planned_refund', 0.0) or 0.0
+
+        # 剩余未退款 = 预计退款 - 实际退款
+        remaining_refund = max(planned_refund - actual_refund, 0)
+
+        balance = order_total - total_shipped - actual_refund
 
         rows.append({
             'customer': customer,
             'total_order': order_total,
             'total_shipped': total_shipped,
-            'total_refund': total_refund,
+            'actual_refund': actual_refund,
+            'planned_refund': planned_refund,
+            'remaining_refund': remaining_refund,
             'balance': balance
         })
 
