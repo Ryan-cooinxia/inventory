@@ -1,15 +1,8 @@
 {% extends "base.html" %}
-{% block title %}周期到货/出货统计{% endblock %}
+{% block title %}期间到货/出货统计{% endblock %}
 {% block content %}
-<h2>周期到货/出货统计</h2>
+<h2>期间到货/出货统计</h2>
 <form class="row g-3 mb-3" method="GET">
-    <div class="col-auto">
-        <label>统计粒度</label>
-        <select name="period" class="form-select">
-            <option value="week" {% if period == 'week' %}selected{% endif %}>按周</option>
-            <option value="month" {% if period == 'month' %}selected{% endif %}>按月</option>
-        </select>
-    </div>
     <div class="col-auto">
         <label>开始日期</label>
         <input type="date" name="start_date" value="{{ start_date }}" class="form-control">
@@ -28,26 +21,39 @@
     <table class="table table-bordered table-sm">
         <thead>
             <tr>
-                <th>{{ '周' if period == 'week' else '月' }}</th>
                 <th>产品</th>
                 <th>到货数量</th>
                 <th>到货货值</th>
                 <th>出货数量</th>
                 <th>出货货值</th>
+                <th>毛利</th>
+                <th>毛利率</th>
             </tr>
         </thead>
         <tbody>
         {% for row in rows %}
         <tr>
-            <td>{{ row.period }}</td>
             <td>{{ row.product_name }}</td>
             <td>{{ row.in_qty }}</td>
             <td>¥{{ "%.2f"|format(row.in_amount) }}</td>
             <td>{{ row.out_qty }}</td>
             <td>¥{{ "%.2f"|format(row.out_amount) }}</td>
+            <td>¥{{ "%.2f"|format(row.profit) }}</td>
+            <td>{{ row.margin }}%</td>
         </tr>
         {% endfor %}
         </tbody>
+        <tfoot class="table-secondary fw-bold">
+            <tr>
+                <td>合计</td>
+                <td>{{ total_in_qty }}</td>
+                <td>¥{{ "%.2f"|format(total_in_amount) }}</td>
+                <td>{{ total_out_qty }}</td>
+                <td>¥{{ "%.2f"|format(total_out_amount) }}</td>
+                <td>¥{{ "%.2f"|format(total_profit) }}</td>
+                <td>{{ total_margin }}%</td>
+            </tr>
+        </tfoot>
     </table>
 </div>
 {% else %}

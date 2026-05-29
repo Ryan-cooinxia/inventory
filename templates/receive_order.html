@@ -8,14 +8,7 @@
     <h5>收货明细</h5>
     <table class="table table-bordered">
         <thead>
-            <tr>
-                <th>产品</th>
-                <th>订单数量</th>
-                <th>已收货</th>
-                <th>待收货</th>
-                <th>本次收货数量</th>
-                <th>单价</th>
-            </tr>
+            <tr><th>产品</th><th>订单数量</th><th>已收货</th><th>待收货</th><th>本次收货数量</th><th>单价</th></tr>
         </thead>
         <tbody>
         {% for item in items_data %}
@@ -36,7 +29,7 @@
             <label>入库日期</label>
             <input type="date" name="order_date" class="form-control" value="{{ today }}" required>
         </div>
-        <div class="col-md-3">
+        <div class="col-md-2">
             <label>送货方式</label>
             <select name="ship_method" class="form-select">
                 <option value="">请选择</option>
@@ -49,11 +42,16 @@
         </div>
         <div class="col-md-3">
             <label>运单号 / 批次号</label>
-            <input type="text" name="tracking_number" class="form-control" placeholder="快递单号或批次号">
+            <div class="input-group">
+                <input type="text" name="tracking_number" id="tracking-number-input" class="form-control" placeholder="快递单号或批次号">
+                <button type="button" class="btn btn-outline-primary" id="ocr-btn" title="拍照识别运单号">📷</button>
+            </div>
         </div>
-    </div>
-    <div class="row mb-3">
-        <div class="col-md-6">
+        <div class="col-md-2">
+            <label>运费（元）</label>
+            <input type="number" step="0.01" name="freight_amount" id="freight-input" class="form-control" placeholder="后台查后填写">
+        </div>
+        <div class="col-md-2">
             <label>备注</label>
             <input type="text" name="remark" class="form-control">
         </div>
@@ -61,4 +59,47 @@
     <button type="submit" class="btn btn-success">确认收货（生成入库单）</button>
     <a href="/supplier_orders" class="btn btn-secondary">返回订单列表</a>
 </form>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script>
+document.getElementById('ocr-btn').addEventListener('click', async function() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.capture = 'environment';
+    input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const btn = document.getElementById('ocr-btn');
+        btn.disabled = true;
+        const statusDiv = document.createElement('div');
+        statusDiv.className = 'form-text text-muted';
+        btn.parentNode.parentNode.appendChild(statusDiv);
+        try {
+            const { data: { text } } = await Tesseract.recognize(file, 'eng', {
+                logger: m => {
+                    if (m.status === 'recognizing text') {
+                        statusDiv.textContent = `识别中 ${Math.round(m.progress * 100)}%`;
+                    }
+                }
+            });
+            const candidates = text.match(/[A-Za-z0-9]{8,}/g) || [];
+            if (candidates.length > 0) {
+                document.getElementById('tracking-number-input').value = candidates[0];
+                statusDiv.textContent = '运单号已识别！';
+            } else {
+                statusDiv.textContent = '未识别到运单号，请手动输入';
+            }
+        } catch (err) {
+            statusDiv.textContent = '识别失败：' + err.message;
+        } finally {
+            btn.disabled = false;
+            setTimeout(() => { statusDiv.remove(); }, 4000);
+        }
+    };
+    input.click();
+});
+</script>
 {% endblock %}

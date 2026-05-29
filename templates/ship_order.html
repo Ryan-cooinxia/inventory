@@ -61,6 +61,7 @@
     <button type="button" class="btn btn-secondary" id="add-extra-row">添加一行产品</button>
     <br><br>
 
+    <!-- 发货信息 -->
     <div class="row mb-3">
         <div class="col-md-3">
             <label>出库日期</label>
@@ -79,7 +80,14 @@
         </div>
         <div class="col-md-3">
             <label>运单号 / 批次号</label>
-            <input type="text" name="tracking_number" class="form-control" placeholder="快递单号或批次号">
+            <div class="input-group">
+                <input type="text" name="tracking_number" id="tracking-number-input" class="form-control" placeholder="快递单号或批次号">
+                <button type="button" class="btn btn-outline-primary" id="ocr-btn" title="拍照识别运单号">📷</button>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <label>运费（元）</label>
+            <input type="number" step="0.01" name="freight_amount" id="freight-input" class="form-control" placeholder="后台查后填写">
         </div>
     </div>
     <div class="row mb-3">
@@ -95,10 +103,13 @@
 {% endblock %}
 
 {% block scripts %}
+<!-- 引入 tesseract.js -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
 <script>
 // ========== SearchableSelect 组件 ==========
 class SearchableSelect {
-    constructor(container) {
+    constructor(container, config = {}) {
         this.container = container;
         this.name = container.dataset.name;
         this.placeholder = container.dataset.placeholder || '请选择';
@@ -130,6 +141,7 @@ class SearchableSelect {
         this.input = this.container.querySelector('.search-input');
         this.hidden = this.container.querySelector('input[type="hidden"]');
         this.dropdown = this.container.querySelector('.dropdown-menu');
+
         this.input.addEventListener('focus', () => this.showDropdown());
         this.input.addEventListener('input', () => this.filter());
         this.input.addEventListener('blur', () => {
@@ -153,13 +165,14 @@ class SearchableSelect {
     filter() {
         const keyword = this.input.value.toLowerCase();
         const items = this.getSortedList().filter(item => item.name.toLowerCase().includes(keyword));
-        this.renderItems(items);
+        this.renderDropdownItems(items);
     }
     showDropdown() {
-        this.renderItems(this.getSortedList());
+        const items = this.getSortedList();
+        this.renderDropdownItems(items);
         this.dropdown.style.display = 'block';
     }
-    renderItems(items) {
+    renderDropdownItems(items) {
         this.dropdown.innerHTML = '';
         if (items.length === 0) {
             this.dropdown.innerHTML = '<li class="dropdown-item text-muted">无匹配项</li>';
@@ -182,10 +195,10 @@ class SearchableSelect {
     }
 }
 
-// 初始化已有组件
+// 初始化所有搜索选择器
 document.querySelectorAll('.searchable-select').forEach(el => new SearchableSelect(el));
 
-// 额外产品行管理
+// ========== 额外产品行动态管理 ==========
 const extraTbody = document.querySelector('#extra-items-table tbody');
 document.getElementById('add-extra-row').addEventListener('click', () => {
     const newRow = extraTbody.rows[0].cloneNode(true);
@@ -217,5 +230,44 @@ function updateExtraSubtotal(row) {
     row.querySelector('.extra-subtotal').innerText = (qty * price).toFixed(2);
 }
 document.querySelectorAll('.extra-item-row').forEach(row => bindExtraRowEvents(row));
+
+// ========== 拍照识别运单号 ==========
+document.getElementById('ocr-btn').addEventListener('click', async function() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.capture = 'environment'; // 移动端打开相机
+    input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const btn = document.getElementById('ocr-btn');
+        btn.disabled = true;
+        const statusDiv = document.createElement('div');
+        statusDiv.className = 'form-text text-muted';
+        btn.parentNode.parentNode.appendChild(statusDiv);
+        try {
+            const { data: { text } } = await Tesseract.recognize(file, 'eng', {
+                logger: m => {
+                    if (m.status === 'recognizing text') {
+                        statusDiv.textContent = `识别中 ${Math.round(m.progress * 100)}%`;
+                    }
+                }
+            });
+            const candidates = text.match(/[A-Za-z0-9]{8,}/g) || [];
+            if (candidates.length > 0) {
+                document.getElementById('tracking-number-input').value = candidates[0];
+                statusDiv.textContent = '运单号已识别！';
+            } else {
+                statusDiv.textContent = '未识别到运单号，请手动输入';
+            }
+        } catch (err) {
+            statusDiv.textContent = '识别失败：' + err.message;
+        } finally {
+            btn.disabled = false;
+            setTimeout(() => { statusDiv.remove(); }, 4000);
+        }
+    };
+    input.click();
+});
 </script>
 {% endblock %}

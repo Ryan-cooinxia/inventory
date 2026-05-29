@@ -462,109 +462,122 @@ def report_inventory_trend():
 @reports_bp.route('/report/inventory_period')
 @login_required
 def report_inventory_period():
-    period = request.args.get('period', 'week')          # week 或 month
-    end_date_str = request.args.get('end_date', datetime.date.today().strftime('%Y-%m-%d'))
-    start_date_str = request.args.get('start_date', '')
+    end_date = request.args.get('end_date', datetime.date.today())
+    start_date = request.args.get('start_date', datetime.date.today() - datetime.timedelta(days=30))
 
-    if isinstance(end_date_str, str):
-        end_date = datetime.datetime.strptime(end_date_str, '%Y-%m-%d').date()
-    else:
-        end_date = end_date_str
+    if isinstance(start_date, str):
+        start_date = datetime.datetime.strptime(start_date, '%Y-%m-%d').date()
+    if isinstance(end_date, str):
+        end_date = datetime.datetime.strptime(end_date, '%Y-%m-%d').date()
 
-    if start_date_str:
-        start_date = datetime.datetime.strptime(start_date_str, '%Y-%m-%d').date()
-    else:
-        start_date = end_date - datetime.timedelta(days=90)
-
-    # ---------- 获取采购明细 ----------
-    purchase_items = (PurchaseOrderItem
-                      .select(PurchaseOrder.order_date,
-                              PurchaseOrderItem.product,
-                              Product.name.alias('product_name'),
-                              PurchaseOrderItem.quantity,
-                              PurchaseOrderItem.subtotal)
-                      .join(PurchaseOrder)
-                      .join(Product, on=(PurchaseOrderItem.product == Product.id))
-                      .where((PurchaseOrder.order_date.between(start_date, end_date)) &
-                             (PurchaseOrder.user == current_user))
-                      .dicts())
-
-    # ---------- 获取销售明细 ----------
-    sales_items = (SalesOrderItem
-                   .select(SalesOrder.order_date,
-                           SalesOrderItem.product,
-                           Product.name.alias('product_name'),
-                           SalesOrderItem.quantity,
-                           SalesOrderItem.subtotal)
-                   .join(SalesOrder)
-                   .join(Product, on=(SalesOrderItem.product == Product.id))
-                   .where((SalesOrder.order_date.between(start_date, end_date)) &
-                          (SalesOrder.user == current_user))
-                   .dicts())
-
-    # 定义周期键函数
-    def period_key(d):
-        if period == 'week':
-            return d.strftime('%Y-W%W')
+    # ---------- 加权平均成本（全局） ----------
+    product_cost = {}
+    cost_query = (PurchaseOrderItem
+                  .select(PurchaseOrderItem.product,
+                          fn.SUM(PurchaseOrderItem.subtotal).alias('total_cost'),
+                          fn.SUM(PurchaseOrderItem.quantity).alias('total_qty'))
+                  .join(PurchaseOrder)
+                  .where(PurchaseOrder.user == current_user)
+                  .group_by(PurchaseOrderItem.product))
+    for row in cost_query:
+        if row.total_qty and row.total_qty > 0:
+            product_cost[row.product_id] = row.total_cost / row.total_qty
         else:
-            return d.strftime('%Y-%m')
+            product_cost[row.product_id] = 0.0
 
-    # 按周期聚合进货
-    in_data = {}
-    for item in purchase_items:
-        d = item['order_date']
-        key = period_key(d)
-        pid = item['product']
-        name = item['product_name']
-        qty = item['quantity']
-        amount = item['subtotal']
-        if key not in in_data:
-            in_data[key] = {}
-        if pid not in in_data[key]:
-            in_data[key][pid] = {'product_name': name, 'in_qty': 0, 'in_amount': 0}
-        in_data[key][pid]['in_qty'] += qty
-        in_data[key][pid]['in_amount'] += amount
+    # ---------- 时间段内到货（采购） ----------
+    purchase_data = (PurchaseOrderItem
+                     .select(PurchaseOrderItem.product,
+                             Product.name.alias('product_name'),
+                             fn.SUM(PurchaseOrderItem.quantity).alias('in_qty'),
+                             fn.SUM(PurchaseOrderItem.subtotal).alias('in_amount'))
+                     .join(PurchaseOrder)
+                     .join(Product, on=(PurchaseOrderItem.product == Product.id))
+                     .where((PurchaseOrder.order_date.between(start_date, end_date)) &
+                            (PurchaseOrder.user == current_user))
+                     .group_by(PurchaseOrderItem.product, Product.name)
+                     .dicts())
 
-    # 按周期聚合出货
-    out_data = {}
-    for item in sales_items:
-        d = item['order_date']
-        key = period_key(d)
-        pid = item['product']
-        name = item['product_name']
-        qty = item['quantity']
-        amount = item['subtotal']
-        if key not in out_data:
-            out_data[key] = {}
-        if pid not in out_data[key]:
-            out_data[key][pid] = {'product_name': name, 'out_qty': 0, 'out_amount': 0}
-        out_data[key][pid]['out_qty'] += qty
-        out_data[key][pid]['out_amount'] += amount
+    # ---------- 时间段内出货（销售） ----------
+    sales_data = (SalesOrderItem
+                  .select(SalesOrderItem.product,
+                          Product.name.alias('product_name'),
+                          fn.SUM(SalesOrderItem.quantity).alias('out_qty'),
+                          fn.SUM(SalesOrderItem.subtotal).alias('out_amount'))
+                  .join(SalesOrder)
+                  .join(Product, on=(SalesOrderItem.product == Product.id))
+                  .where((SalesOrder.order_date.between(start_date, end_date)) &
+                         (SalesOrder.user == current_user))
+                  .group_by(SalesOrderItem.product, Product.name)
+                  .dicts())
 
-    # 合并进、出数据
-    all_keys = sorted(set(list(in_data.keys()) + list(out_data.keys())))
+    # 合并数据
+    products = {}
+    for row in purchase_data:
+        pid = row['product']
+        name = row['product_name']
+        products[pid] = {
+            'name': name,
+            'in_qty': row['in_qty'] or 0,
+            'in_amount': row['in_amount'] or 0.0,
+            'out_qty': 0,
+            'out_amount': 0.0
+        }
+    for row in sales_data:
+        pid = row['product']
+        name = row['product_name']
+        if pid not in products:
+            products[pid] = {
+                'name': name,
+                'in_qty': 0,
+                'in_amount': 0.0,
+                'out_qty': 0,
+                'out_amount': 0.0
+            }
+        products[pid]['out_qty'] = row['out_qty'] or 0
+        products[pid]['out_amount'] = row['out_amount'] or 0.0
+
+    # 计算毛利和毛利率
     rows = []
-    for key in all_keys:
-        # 合并该周期内的所有产品 ID
-        products_in = set(in_data.get(key, {}).keys())
-        products_out = set(out_data.get(key, {}).keys())
-        all_pids = products_in | products_out
-        for pid in all_pids:
-            in_info = in_data.get(key, {}).get(pid, {'product_name': '', 'in_qty': 0, 'in_amount': 0})
-            out_info = out_data.get(key, {}).get(pid, {'product_name': '', 'out_qty': 0, 'out_amount': 0})
-            # 产品名称优先使用进货的名称，如果没有则用出货的名称
-            name = in_info['product_name'] if in_info['product_name'] else out_info.get('product_name', '')
-            rows.append({
-                'period': key,
-                'product_name': name,
-                'in_qty': in_info['in_qty'],
-                'in_amount': in_info['in_amount'],
-                'out_qty': out_info['out_qty'],
-                'out_amount': out_info['out_amount']
-            })
+    total_in_qty = 0
+    total_in_amount = 0.0
+    total_out_qty = 0
+    total_out_amount = 0.0
+
+    for pid, data in products.items():
+        in_qty = data['in_qty']
+        in_amount = data['in_amount']
+        out_qty = data['out_qty']
+        out_amount = data['out_amount']
+        avg_cost = product_cost.get(pid, 0.0)
+        cost_total = avg_cost * out_qty
+        profit = out_amount - cost_total
+        margin = (profit / out_amount * 100) if out_amount > 0 else 0.0
+
+        rows.append({
+            'product_name': data['name'],
+            'in_qty': in_qty,
+            'in_amount': in_amount,
+            'out_qty': out_qty,
+            'out_amount': out_amount,
+            'profit': profit,
+            'margin': round(margin, 2)
+        })
+
+        total_in_qty += in_qty
+        total_in_amount += in_amount
+        total_out_qty += out_qty
+        total_out_amount += out_amount
+    total_profit = sum(row['profit'] for row in rows)
+    total_margin = (total_profit / total_out_amount * 100) if total_out_amount > 0 else 0.0
 
     return render_template('report_inventory_period.html',
-                           period=period,
                            start_date=start_date,
                            end_date=end_date,
-                           rows=rows)
+                           rows=rows,
+                           total_in_qty=total_in_qty,
+                           total_in_amount=total_in_amount,
+                           total_out_qty=total_out_qty,
+                           total_out_amount=total_out_amount,
+                           total_profit=total_profit,
+                           total_margin=round(total_margin, 2))
