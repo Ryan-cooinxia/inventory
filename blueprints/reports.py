@@ -458,3 +458,113 @@ def report_inventory_trend():
                            chart_data=chart_data,
                            initial_stock=initial_stock,
                            current_stock=current_stock)
+
+@reports_bp.route('/report/inventory_period')
+@login_required
+def report_inventory_period():
+    period = request.args.get('period', 'week')          # week 或 month
+    end_date_str = request.args.get('end_date', datetime.date.today().strftime('%Y-%m-%d'))
+    start_date_str = request.args.get('start_date', '')
+
+    if isinstance(end_date_str, str):
+        end_date = datetime.datetime.strptime(end_date_str, '%Y-%m-%d').date()
+    else:
+        end_date = end_date_str
+
+    if start_date_str:
+        start_date = datetime.datetime.strptime(start_date_str, '%Y-%m-%d').date()
+    else:
+        start_date = end_date - datetime.timedelta(days=90)
+
+    # ---------- 获取采购明细 ----------
+    purchase_items = (PurchaseOrderItem
+                      .select(PurchaseOrder.order_date,
+                              PurchaseOrderItem.product,
+                              Product.name.alias('product_name'),
+                              PurchaseOrderItem.quantity,
+                              PurchaseOrderItem.subtotal)
+                      .join(PurchaseOrder)
+                      .join(Product, on=(PurchaseOrderItem.product == Product.id))
+                      .where((PurchaseOrder.order_date.between(start_date, end_date)) &
+                             (PurchaseOrder.user == current_user))
+                      .dicts())
+
+    # ---------- 获取销售明细 ----------
+    sales_items = (SalesOrderItem
+                   .select(SalesOrder.order_date,
+                           SalesOrderItem.product,
+                           Product.name.alias('product_name'),
+                           SalesOrderItem.quantity,
+                           SalesOrderItem.subtotal)
+                   .join(SalesOrder)
+                   .join(Product, on=(SalesOrderItem.product == Product.id))
+                   .where((SalesOrder.order_date.between(start_date, end_date)) &
+                          (SalesOrder.user == current_user))
+                   .dicts())
+
+    # 定义周期键函数
+    def period_key(d):
+        if period == 'week':
+            return d.strftime('%Y-W%W')
+        else:
+            return d.strftime('%Y-%m')
+
+    # 按周期聚合进货
+    in_data = {}
+    for item in purchase_items:
+        d = item['order_date']
+        key = period_key(d)
+        pid = item['product']
+        name = item['product_name']
+        qty = item['quantity']
+        amount = item['subtotal']
+        if key not in in_data:
+            in_data[key] = {}
+        if pid not in in_data[key]:
+            in_data[key][pid] = {'product_name': name, 'in_qty': 0, 'in_amount': 0}
+        in_data[key][pid]['in_qty'] += qty
+        in_data[key][pid]['in_amount'] += amount
+
+    # 按周期聚合出货
+    out_data = {}
+    for item in sales_items:
+        d = item['order_date']
+        key = period_key(d)
+        pid = item['product']
+        name = item['product_name']
+        qty = item['quantity']
+        amount = item['subtotal']
+        if key not in out_data:
+            out_data[key] = {}
+        if pid not in out_data[key]:
+            out_data[key][pid] = {'product_name': name, 'out_qty': 0, 'out_amount': 0}
+        out_data[key][pid]['out_qty'] += qty
+        out_data[key][pid]['out_amount'] += amount
+
+    # 合并进、出数据
+    all_keys = sorted(set(list(in_data.keys()) + list(out_data.keys())))
+    rows = []
+    for key in all_keys:
+        # 合并该周期内的所有产品 ID
+        products_in = set(in_data.get(key, {}).keys())
+        products_out = set(out_data.get(key, {}).keys())
+        all_pids = products_in | products_out
+        for pid in all_pids:
+            in_info = in_data.get(key, {}).get(pid, {'product_name': '', 'in_qty': 0, 'in_amount': 0})
+            out_info = out_data.get(key, {}).get(pid, {'product_name': '', 'out_qty': 0, 'out_amount': 0})
+            # 产品名称优先使用进货的名称，如果没有则用出货的名称
+            name = in_info['product_name'] if in_info['product_name'] else out_info.get('product_name', '')
+            rows.append({
+                'period': key,
+                'product_name': name,
+                'in_qty': in_info['in_qty'],
+                'in_amount': in_info['in_amount'],
+                'out_qty': out_info['out_qty'],
+                'out_amount': out_info['out_amount']
+            })
+
+    return render_template('report_inventory_period.html',
+                           period=period,
+                           start_date=start_date,
+                           end_date=end_date,
+                           rows=rows)

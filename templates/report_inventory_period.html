@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}周期到货/出货统计{% endblock %}
+{% block content %}
+<h2>周期到货/出货统计</h2>
+<form class="row g-3 mb-3" method="GET">
+    <div class="col-auto">
+        <label>统计粒度</label>
+        <select name="period" class="form-select">
+            <option value="week" {% if period == 'week' %}selected{% endif %}>按周</option>
+            <option value="month" {% if period == 'month' %}selected{% endif %}>按月</option>
+        </select>
+    </div>
+    <div class="col-auto">
+        <label>开始日期</label>
+        <input type="date" name="start_date" value="{{ start_date }}" class="form-control">
+    </div>
+    <div class="col-auto">
+        <label>结束日期</label>
+        <input type="date" name="end_date" value="{{ end_date }}" class="form-control">
+    </div>
+    <div class="col-auto d-flex align-items-end">
+        <button type="submit" class="btn btn-primary">查询</button>
+    </div>
+</form>
+
+{% if rows %}
+<div class="table-responsive">
+    <table class="table table-bordered table-sm">
+        <thead>
+            <tr>
+                <th>{{ '周' if period == 'week' else '月' }}</th>
+                <th>产品</th>
+                <th>到货数量</th>
+                <th>到货货值</th>
+                <th>出货数量</th>
+                <th>出货货值</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in rows %}
+        <tr>
+            <td>{{ row.period }}</td>
+            <td>{{ row.product_name }}</td>
+            <td>{{ row.in_qty }}</td>
+            <td>¥{{ "%.2f"|format(row.in_amount) }}</td>
+            <td>{{ row.out_qty }}</td>
+            <td>¥{{ "%.2f"|format(row.out_amount) }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="text-muted">所选时间段内没有进出货记录。</p>
+{% endif %}
+{% endblock %}
