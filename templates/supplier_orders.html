@@ -9,8 +9,12 @@
     <div class="card-body">
         <form method="GET" action="/supplier_orders" class="row g-2 align-items-end">
             <div class="col-auto">
-                <label class="form-label fw-bold">对账日期</label>
-                <input type="date" name="date" class="form-control" value="{{ filter_date }}" style="width:160px">
+                <label class="form-label fw-bold">对账时段</label>
+                <div class="d-flex align-items-center gap-2">
+                    <input type="date" name="reconcile_start" class="form-control" value="{{ reconcile_start }}" style="width:140px">
+                    <span>至</span>
+                    <input type="date" name="reconcile_end" class="form-control" value="{{ reconcile_end }}" style="width:140px">
+                </div>
             </div>
             <div class="col-auto">
                 <label class="form-label fw-bold">供应商</label>
@@ -27,7 +31,7 @@
             </div>
         </form>
         <small class="text-muted mt-2 d-block">
-            📅 当前对账日：<strong>{{ filter_date }}</strong> — 期初 = 该日期前未收货量，今日入库 = 该日期当天入库量，期末 = 包含当天后剩余量
+            📅 对账时段：<strong>{{ reconcile_start }}</strong> 至 <strong>{{ reconcile_end }}</strong> — 期初 = 时段开始前未收货量，本时段入库 = 时段内到货量，期末 = 时段结束后仍欠量
         </small>
     </div>
 </div>
@@ -53,8 +57,8 @@
     <div class="col-md-3">
         <div class="card bg-success text-white">
             <div class="card-body text-center">
-                <h6 class="card-title">{{ filter_date }} 当日入库</h6>
-                <p class="card-text fs-5">¥{{ "%.2f"|format(total_received_today_value) }}</p>
+                <h6 class="card-title">本时段入库</h6>
+                <p class="card-text fs-5">¥{{ "%.2f"|format(total_received_in_period_value) }}</p>
             </div>
         </div>
     </div>
@@ -81,7 +85,7 @@
             <th>小计</th>
             <!-- 对账列 -->
             <th>期初剩余</th>
-            <th>今日入库</th>
+            <th>本时段入库</th>
             <th>累计已收</th>
             <th>期末剩余</th>
             <th>状态</th>
@@ -108,8 +112,8 @@
             {% endif %}
         </td>
         <td>
-            {% if row.received_today > 0 %}
-            <span class="text-success fw-bold">{{ row.received_today }}</span>
+            {% if row.received_in_period > 0 %}
+            <span class="text-success fw-bold">{{ row.received_in_period }}</span>
             {% else %}
             <span class="text-muted">0</span>
             {% endif %}

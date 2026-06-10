@@ -313,13 +313,16 @@ def report_supplier():
     end_date = request.args.get('end_date', datetime.date.today().strftime('%Y-%m-%d'))
     supplier_id = request.args.get('supplier_id', '')
 
-    # 对账日期：只有显式传入时才启用明细拆分
-    reconcile_str = request.args.get('reconcile_date', '')
-    reconcile_date = None
+    # 对账时段：两个日期都传入时才启用明细拆分
+    reconcile_start_str = request.args.get('reconcile_start', '')
+    reconcile_end_str = request.args.get('reconcile_end', '')
+    reconcile_start = None
+    reconcile_end = None
     show_detail = False
-    if reconcile_str:
+    if reconcile_start_str and reconcile_end_str:
         try:
-            reconcile_date = datetime.datetime.strptime(reconcile_str, '%Y-%m-%d').date()
+            reconcile_start = datetime.datetime.strptime(reconcile_start_str, '%Y-%m-%d').date()
+            reconcile_end = datetime.datetime.strptime(reconcile_end_str, '%Y-%m-%d').date()
             show_detail = True
         except ValueError:
             pass
@@ -368,31 +371,33 @@ def report_supplier():
                          .scalar()) or 0
 
         pending_total = total_qty - received_total
-        received_today = 0
+        received_in_period = 0
         pending_before = 0
         received_value = received_total * (total_amount / total_qty) if total_qty > 0 else 0
 
-        # 选了对账日才计算明细
-        if show_detail and reconcile_date:
+        # 选了对账时段才计算明细
+        if show_detail and reconcile_start and reconcile_end:
             received_before = (PurchaseOrderItem
                               .select(fn.SUM(PurchaseOrderItem.quantity))
                               .join(PurchaseOrder)
                               .where((PurchaseOrder.supplier_order.in_(so_ids)) &
                                      (PurchaseOrderItem.product == product) &
                                      (PurchaseOrder.user == current_user) &
-                                     (PurchaseOrder.order_date < reconcile_date))
+                                     (PurchaseOrder.order_date < reconcile_start))
                               .scalar()) or 0
-            received_today = (PurchaseOrderItem
-                             .select(fn.SUM(PurchaseOrderItem.quantity))
-                             .join(PurchaseOrder)
-                             .where((PurchaseOrder.supplier_order.in_(so_ids)) &
-                                    (PurchaseOrderItem.product == product) &
-                                    (PurchaseOrder.user == current_user) &
-                                    (PurchaseOrder.order_date == reconcile_date))
-                             .scalar()) or 0
+            # 时段内入库：开始日期 ≤ 收货日期 ≤ 结束日期
+            received_up_to_end = (PurchaseOrderItem
+                                  .select(fn.SUM(PurchaseOrderItem.quantity))
+                                  .join(PurchaseOrder)
+                                  .where((PurchaseOrder.supplier_order.in_(so_ids)) &
+                                         (PurchaseOrderItem.product == product) &
+                                         (PurchaseOrder.user == current_user) &
+                                         (PurchaseOrder.order_date <= reconcile_end))
+                                  .scalar()) or 0
+            received_in_period = received_up_to_end - received_before
             pending_before = total_qty - received_before
-            received_today_value = received_today * (total_amount / total_qty) if total_qty > 0 else 0
-            total_received_today_value += received_today_value
+            received_in_period_value = received_in_period * (total_amount / total_qty) if total_qty > 0 else 0
+            total_received_today_value += received_in_period_value
 
         rows.append({
             'product': product.name,
@@ -402,7 +407,7 @@ def report_supplier():
             'total_amount': total_amount,
             'received_total': received_total,
             'pending_total': pending_total,
-            'received_today': received_today,
+            'received_in_period': received_in_period,
             'pending_before': pending_before,
         })
         total_ordered_value += total_amount
@@ -410,7 +415,8 @@ def report_supplier():
 
     return render_template('report_supplier.html',
                            start_date=start_date, end_date=end_date,
-                           reconcile_date=reconcile_date,
+                           reconcile_start=reconcile_start,
+                           reconcile_end=reconcile_end,
                            show_detail=show_detail,
                            suppliers=suppliers,
                            selected_supplier=supplier_id,

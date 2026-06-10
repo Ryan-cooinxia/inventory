@@ -17,15 +17,24 @@ supplier_orders_bp = Blueprint('supplier_orders', __name__)
 @supplier_orders_bp.route('/supplier_orders')
 @login_required
 def list_supplier_orders():
-    # 日期筛选参数（默认今天）
-    date_str = request.args.get('date', '')
-    if date_str:
+    # 对账时段筛选参数（默认今天）
+    start_str = request.args.get('reconcile_start', '')
+    end_str = request.args.get('reconcile_end', '')
+    today = datetime.date.today()
+    if start_str:
         try:
-            filter_date = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
+            reconcile_start = datetime.datetime.strptime(start_str, '%Y-%m-%d').date()
         except ValueError:
-            filter_date = datetime.date.today()
+            reconcile_start = today
     else:
-        filter_date = datetime.date.today()
+        reconcile_start = today
+    if end_str:
+        try:
+            reconcile_end = datetime.datetime.strptime(end_str, '%Y-%m-%d').date()
+        except ValueError:
+            reconcile_end = today
+    else:
+        reconcile_end = today
 
     supplier_id = request.args.get('supplier_id', '')
     orders = SupplierOrder.select().where(SupplierOrder.user == current_user)
@@ -40,7 +49,7 @@ def list_supplier_orders():
     row_index = 0
     total_order_value = 0.0
     total_received_value = 0.0
-    total_received_today_value = 0.0
+    total_received_in_period_value = 0.0
 
     for order in orders:
         items = list(order.items)
@@ -58,34 +67,37 @@ def list_supplier_orders():
                                (PurchaseOrder.user == current_user))
                         .scalar()) or 0
 
-            # 筛选日期之前的收货量（不含当天）
+            # 时段开始前的收货量
             received_before = (PurchaseOrderItem
                         .select(fn.SUM(PurchaseOrderItem.quantity))
                         .join(PurchaseOrder)
                         .where((PurchaseOrder.supplier_order == order) &
                                (PurchaseOrderItem.product == pid) &
                                (PurchaseOrder.user == current_user) &
-                               (PurchaseOrder.order_date < filter_date))
+                               (PurchaseOrder.order_date < reconcile_start))
                         .scalar()) or 0
 
-            # 筛选日期当天的收货量
-            received_today = (PurchaseOrderItem
+            # 时段结束前的收货量（含结束日）
+            received_up_to_end = (PurchaseOrderItem
                         .select(fn.SUM(PurchaseOrderItem.quantity))
                         .join(PurchaseOrder)
                         .where((PurchaseOrder.supplier_order == order) &
                                (PurchaseOrderItem.product == pid) &
                                (PurchaseOrder.user == current_user) &
-                               (PurchaseOrder.order_date == filter_date))
+                               (PurchaseOrder.order_date <= reconcile_end))
                         .scalar()) or 0
 
-            # 期初剩余 = 订单量 - 日期前已收
+            # 时段内入库量
+            received_in_period = received_up_to_end - received_before
+
+            # 期初剩余 = 订单量 - 时段开始前已收
             pending_before = item.quantity - received_before
-            # 期末剩余 = 订单量 - 截止日期总收货（含当天）
-            pending_after = item.quantity - received_total
+            # 期末剩余 = 订单量 - 时段结束前总收货
+            pending_after = item.quantity - received_up_to_end
 
             item.received_total = received_total
             item.received_before = received_before
-            item.received_today = received_today
+            item.received_in_period = received_in_period
             item.pending_before = pending_before
             item.pending_after = pending_after
 
@@ -119,11 +131,11 @@ def list_supplier_orders():
                 'unit_price': unit_price,
                 'qty_ordered': qty_ordered,
                 'subtotal': subtotal,
-                'received_before': item.received_before,      # 日期前已收
-                'pending_before': item.pending_before,         # 期初剩余
-                'received_today': item.received_today,         # 当日入库
-                'received_total': item.received_total,         # 累计已收
-                'pending_after': item.pending_after,           # 期末剩余
+                'received_before': item.received_before,           # 时段前已收
+                'pending_before': item.pending_before,          # 期初剩余
+                'received_in_period': item.received_in_period,  # 时段内入库
+                'received_total': item.received_total,          # 累计已收
+                'pending_after': item.pending_after,            # 期末剩余
                 'status_text': status_text,
                 'status': order.status,
                 'estimated_delivery': order.estimated_delivery,
@@ -133,7 +145,7 @@ def list_supplier_orders():
             })
             total_order_value += subtotal
             total_received_value += item.received_total * unit_price
-            total_received_today_value += item.received_today * unit_price
+            total_received_in_period_value += item.received_in_period * unit_price
 
         if not items:
             row_index += 1
@@ -149,7 +161,7 @@ def list_supplier_orders():
                 'subtotal': 0,
                 'received_before': 0,
                 'pending_before': 0,
-                'received_today': 0,
+                'received_in_period': 0,
                 'received_total': 0,
                 'pending_after': 0,
                 'status_text': '-',
@@ -163,11 +175,12 @@ def list_supplier_orders():
     return render_template('supplier_orders.html',
                            orders=rows,
                            suppliers=suppliers,
-                           filter_date=filter_date,
+                           reconcile_start=reconcile_start,
+                           reconcile_end=reconcile_end,
                            selected_supplier=supplier_id,
                            total_order_value=total_order_value,
                            total_received_value=total_received_value,
-                           total_received_today_value=total_received_today_value)
+                           total_received_in_period_value=total_received_in_period_value)
 
 
 @supplier_orders_bp.route('/supplier_orders/add', methods=['GET', 'POST'])
