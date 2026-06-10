@@ -6,8 +6,9 @@ from models import (
     SalesOrder, SalesOrderItem, Product
 )
 from peewee import fn
-from helpers import check_stock_before_ship
+from helpers import check_stock_before_ship, parse_non_negative_float, parse_positive_float
 from log_utils import log_action
+from models import db
 import datetime
 
 orders_bp = Blueprint('orders', __name__)
@@ -141,6 +142,11 @@ def add_order():
         remark = request.form.get('remark', '')
         invoice_required = request.form.get('invoice_required') == '1'
 
+        customer = Customer.get_or_none((Customer.id == customer_id) & (Customer.user == current_user))
+        if not customer:
+            flash('客户不存在或无权访问', 'danger')
+            return redirect(url_for('orders.add_order'))
+
         product_ids = request.form.getlist('product_id[]')
         quantities = request.form.getlist('quantity[]')
         unit_prices = request.form.getlist('unit_price[]')
@@ -149,8 +155,19 @@ def add_order():
         for pid, qty, price in zip(product_ids, quantities, unit_prices):
             if not pid or not qty or not price:
                 continue
-            qty = float(qty)
-            price = float(price)
+            product = Product.get_or_none((Product.id == pid) & (Product.user == current_user))
+            qty = parse_positive_float(qty)
+            price = parse_non_negative_float(price)
+            if not product or qty is None or price is None:
+                flash('订单明细包含无效的产品、数量或单价', 'danger')
+                return render_template('order_form.html',
+                                       customers=customers,
+                                       products=products,
+                                       customers_json=customers_data,
+                                       products_json=products_data,
+                                       order=None,
+                                       order_items=[],
+                                       today=datetime.date.today())
             items.append({'product_id': int(pid), 'quantity': qty,
                           'unit_price': price, 'subtotal': qty * price})
 
@@ -165,21 +182,23 @@ def add_order():
                                    order_items=[],
                                    today=datetime.date.today())
 
-        total_amount = sum(item['subtotal'] for item in items)
-        order = CustomerOrder.create(
-            customer=customer_id,
-            order_date=order_date or datetime.date.today(),
-            total_amount=total_amount,
-            invoice_required=invoice_required,
-            remark=remark or None,
-            user=current_user
-        )
-        for item in items:
-            CustomerOrderItem.create(order=order,
-                                     product=item['product_id'],
-                                     quantity=item['quantity'],
-                                     unit_price=item['unit_price'],
-                                     subtotal=item['subtotal'])
+        with db.atomic():
+            total_amount = sum(item['subtotal'] for item in items)
+            order = CustomerOrder.create(
+                customer=customer,
+                order_date=order_date or datetime.date.today(),
+                total_amount=total_amount,
+                invoice_required=invoice_required,
+                remark=remark or None,
+                user=current_user
+            )
+            for item in items:
+                CustomerOrderItem.create(order=order,
+                                         product=item['product_id'],
+                                         quantity=item['quantity'],
+                                         unit_price=item['unit_price'],
+                                         subtotal=item['subtotal'],
+                                         user=current_user)
 
         # 记录操作日志
         log_action(current_user, 'create', 'CustomerOrder', order.id,
@@ -207,12 +226,29 @@ def edit_order(order_id):
         return redirect(url_for('orders.list_orders'))
 
     if request.method == 'POST':
-        order.customer = request.form.get('customer_id')
+        # 检查是否已有发货记录
+        has_shipments = SalesOrder.select().where(
+            (SalesOrder.customer_order == order) & (SalesOrder.user == current_user)
+        ).exists()
+
+        customer = Customer.get_or_none((Customer.id == request.form.get('customer_id')) &
+                                        (Customer.user == current_user))
+        if not customer:
+            flash('客户不存在或无权访问', 'danger')
+            return redirect(url_for('orders.list_orders'))
+        order.customer = customer
         order.order_date = request.form.get('order_date')
         order.remark = request.form.get('remark', '') or None
         order.invoice_required = (request.form.get('invoice_required') == '1')
 
-        CustomerOrderItem.delete().where(CustomerOrderItem.order == order).execute()
+        if has_shipments:
+            # 已有发货记录：只允许修改备注、发票标记等，不允许修改明细行
+            order.save()
+            log_action(current_user, 'update', 'CustomerOrder', order.id,
+                       f'修改客户订单 #{order.id}（仅更新基本信息）', request.remote_addr)
+            flash('订单已更新（已有发货记录，明细行不可修改）', 'warning')
+            return redirect(url_for('orders.list_orders'))
+
         product_ids = request.form.getlist('product_id[]')
         quantities = request.form.getlist('quantity[]')
         unit_prices = request.form.getlist('unit_price[]')
@@ -220,18 +256,28 @@ def edit_order(order_id):
         for pid, qty, price in zip(product_ids, quantities, unit_prices):
             if not pid or not qty or not price:
                 continue
-            qty = float(qty)
-            price = float(price)
+            product = Product.get_or_none((Product.id == pid) & (Product.user == current_user))
+            qty = parse_positive_float(qty)
+            price = parse_non_negative_float(price)
+            if not product or qty is None or price is None:
+                flash('订单明细包含无效的产品、数量或单价', 'danger')
+                return redirect(url_for('orders.edit_order', order_id=order.id))
             items.append({'product_id': int(pid), 'quantity': qty,
                           'unit_price': price, 'subtotal': qty * price})
-        order.total_amount = sum(item['subtotal'] for item in items)
-        order.save()
-        for item in items:
-            CustomerOrderItem.create(order=order,
-                                     product=item['product_id'],
-                                     quantity=item['quantity'],
-                                     unit_price=item['unit_price'],
-                                     subtotal=item['subtotal'])
+        if not items:
+            flash('请至少填写一条明细', 'danger')
+            return redirect(url_for('orders.edit_order', order_id=order.id))
+        with db.atomic():
+            CustomerOrderItem.delete().where(CustomerOrderItem.order == order).execute()
+            order.total_amount = sum(item['subtotal'] for item in items)
+            order.save()
+            for item in items:
+                CustomerOrderItem.create(order=order,
+                                         product=item['product_id'],
+                                         quantity=item['quantity'],
+                                         unit_price=item['unit_price'],
+                                         subtotal=item['subtotal'],
+                                         user=current_user)
 
         # 记录操作日志
         log_action(current_user, 'update', 'CustomerOrder', order.id,
@@ -351,6 +397,10 @@ def create_shipment(order_id):
                    .scalar()) or 0
         max_qty = item.quantity - shipped
         if qty > max_qty:
+            if max_qty <= 0:
+                flash(f'{item.product.name} 已全部发货，无需再发', 'warning')
+            else:
+                flash(f'{item.product.name} 发货量超出订单剩余({max_qty})，已自动调整为最大值', 'warning')
             qty = max_qty
         if qty > 0:
             ship_quantities[item.product.id] = {
@@ -366,8 +416,12 @@ def create_shipment(order_id):
     for pid, qty, price in zip(extra_product_ids, extra_quantities, extra_unit_prices):
         if not pid or not qty or not price:
             continue
-        qty = float(qty)
-        price = float(price)
+        product = Product.get_or_none((Product.id == pid) & (Product.user == current_user))
+        qty = parse_positive_float(qty)
+        price = parse_non_negative_float(price)
+        if not product or qty is None or price is None:
+            flash('额外发货明细包含无效的产品、数量或单价', 'danger')
+            return redirect(url_for('orders.ship_order_form', order_id=order.id))
         extra_items.append({
             'product_id': int(pid),
             'quantity': qty,
@@ -384,57 +438,60 @@ def create_shipment(order_id):
         all_ship_items.append({'product_id': pid, 'quantity': data['quantity']})
     all_ship_items.extend(extra_items)
 
-    stock_ok, stock_errors = check_stock_before_ship(all_ship_items)
+    stock_ok, stock_errors = check_stock_before_ship(all_ship_items, user=current_user)
     if not stock_ok:
         for err in stock_errors:
             flash(f'库存不足：{err}', 'danger')
         return redirect(url_for('orders.ship_order_form', order_id=order.id))
 
-    total_amount = sum(v['subtotal'] for v in ship_quantities.values()) + sum(e['subtotal'] for e in extra_items)
-    ship = SalesOrder.create(
-        customer=order.customer,
-        customer_order=order,
-        order_date=request.form.get('order_date', datetime.date.today()),
-        total_amount=total_amount,
-        remark=request.form.get('remark', '') or None,
-        ship_method=request.form.get('ship_method', '') or None,
-        tracking_number=request.form.get('tracking_number', '') or None,
-        user=current_user
-    )
-    for product_id, data in ship_quantities.items():
-        SalesOrderItem.create(
-            order=ship,
-            product=product_id,
-            quantity=data['quantity'],
-            unit_price=data['unit_price'],
-            subtotal=data['subtotal']
+    with db.atomic():
+        total_amount = sum(v['subtotal'] for v in ship_quantities.values()) + sum(e['subtotal'] for e in extra_items)
+        ship = SalesOrder.create(
+            customer=order.customer,
+            customer_order=order,
+            order_date=request.form.get('order_date', datetime.date.today()),
+            total_amount=total_amount,
+            remark=request.form.get('remark', '') or None,
+            ship_method=request.form.get('ship_method', '') or None,
+            tracking_number=request.form.get('tracking_number', '') or None,
+            user=current_user
         )
-    for extra in extra_items:
-        SalesOrderItem.create(
-            order=ship,
-            product=extra['product_id'],
-            quantity=extra['quantity'],
-            unit_price=extra['unit_price'],
-            subtotal=extra['subtotal']
-        )
+        for product_id, data in ship_quantities.items():
+            SalesOrderItem.create(
+                order=ship,
+                product=product_id,
+                quantity=data['quantity'],
+                unit_price=data['unit_price'],
+                subtotal=data['subtotal'],
+                user=current_user
+            )
+        for extra in extra_items:
+            SalesOrderItem.create(
+                order=ship,
+                product=extra['product_id'],
+                quantity=extra['quantity'],
+                unit_price=extra['unit_price'],
+                subtotal=extra['subtotal'],
+                user=current_user
+            )
 
-    all_shipped = True
-    for item in order.items:
-        shipped = (SalesOrderItem
-                   .select(fn.SUM(SalesOrderItem.quantity))
-                   .join(SalesOrder)
-                   .where((SalesOrder.customer_order == order) &
-                          (SalesOrderItem.product == item.product) &
-                          (SalesOrder.user == current_user))
-                   .scalar()) or 0
-        if shipped < item.quantity:
-            all_shipped = False
-            break
-    if all_shipped or total_amount >= order.total_amount:
-        order.status = 'shipped'
-    else:
-        order.status = 'pending'
-    order.save()
+        all_shipped = True
+        for item in order.items:
+            shipped = (SalesOrderItem
+                       .select(fn.SUM(SalesOrderItem.quantity))
+                       .join(SalesOrder)
+                       .where((SalesOrder.customer_order == order) &
+                              (SalesOrderItem.product == item.product) &
+                              (SalesOrder.user == current_user))
+                       .scalar()) or 0
+            if shipped < item.quantity:
+                all_shipped = False
+                break
+        if all_shipped or total_amount >= order.total_amount:
+            order.status = 'shipped'
+        else:
+            order.status = 'pending'
+        order.save()
 
     # 记录操作日志
     log_action(current_user, 'ship', 'CustomerOrder', order.id,

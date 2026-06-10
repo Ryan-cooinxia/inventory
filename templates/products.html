@@ -59,6 +59,55 @@
     <div class="col-md-1"><button type="submit" class="btn btn-primary w-100">添加</button></div>
 </form>
 
+<!-- 套装组成设置 -->
+<div class="border rounded p-3 mb-4 bg-light">
+    <h5 class="mb-3">套装组成设置</h5>
+    <form method="POST" id="bundleForm" action="/products/bundles">
+        <div class="row g-2 align-items-end mb-3">
+            <div class="col-md-5">
+                <label class="form-label">套装名称</label>
+                <input type="text" name="bundle_name" class="form-control" placeholder="例如：Osmo Mobile 8P全能套装" required>
+            </div>
+            <div class="col-md-7 text-md-end">
+                <button type="button" class="btn btn-outline-secondary" onclick="addBundleItemRow()">添加单品</button>
+                <button type="submit" class="btn btn-primary">保存套装组成</button>
+            </div>
+        </div>
+        <div id="bundleItems"></div>
+    </form>
+    {% if bundles %}
+    <hr>
+    <h6 class="mb-2">已保存套装方案</h6>
+    <div class="table-responsive">
+        <table class="table table-sm table-bordered bg-white mb-0">
+            <thead><tr><th>套装名称</th><th>组成单品</th><th>操作</th></tr></thead>
+            <tbody>
+            {% for bundle in bundles %}
+            <tr>
+                <td>{{ bundle.name }}</td>
+                <td>
+                    {% set components = bundle_map.get(bundle.id, []) %}
+                    {% if components %}
+                    <ul class="mb-0 ps-3">
+                        {% for item in components %}
+                        <li>{{ item.name }} x {{ item.quantity }}</li>
+                        {% endfor %}
+                    </ul>
+                    {% else %}-{% endif %}
+                </td>
+                <td>
+                    <form method="POST" action="/products/bundles/{{ bundle.id }}/delete" onsubmit="return confirm('确定删除该套装方案吗？')">
+                        <button type="submit" class="btn btn-sm btn-outline-danger">删除</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</div>
+
 <!-- 产品表格 -->
 <table class="table table-bordered product-table" style="font-size:0.9rem">
     <thead>
@@ -107,6 +156,51 @@
 
 {% block scripts %}
 <script>
+const allBundleProducts = {{ all_products_data | tojson }};
+
+function renderProductOptions(select, placeholder, keyword = '') {
+    const currentValue = select.value;
+    const normalizedKeyword = keyword.trim().toLowerCase();
+    const options = allBundleProducts.filter(product => {
+        return !normalizedKeyword || product.name.toLowerCase().includes(normalizedKeyword);
+    });
+
+    select.innerHTML = `<option value="">${placeholder}</option>` + options
+        .map(product => `<option value="${product.id}">${product.name}</option>`)
+        .join('');
+
+    if (options.some(product => product.id === currentValue)) {
+        select.value = currentValue;
+    }
+}
+
+function addBundleItemRow() {
+    const container = document.getElementById('bundleItems');
+    const row = document.createElement('div');
+    row.className = 'row g-2 align-items-center mb-2 bundle-item-row';
+    row.innerHTML = `
+        <div class="col-md-8">
+            <div class="input-group">
+                <input type="text" class="form-control component-product-search" placeholder="输入关键词搜索单品">
+                <select name="component_product_id[]" class="form-select component-product-select" required></select>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <input type="number" name="component_quantity[]" class="form-control" min="0.01" step="0.01" value="1" required>
+        </div>
+        <div class="col-md-1">
+            <button type="button" class="btn btn-outline-danger w-100" onclick="this.closest('.row').remove()">删除</button>
+        </div>
+    `;
+    container.appendChild(row);
+    const searchInput = row.querySelector('.component-product-search');
+    const select = row.querySelector('.component-product-select');
+    renderProductOptions(select, '选择单品');
+    searchInput.addEventListener('input', function() {
+        renderProductOptions(select, '选择单品', this.value);
+    });
+}
+
 // 编辑行切换（保持原样）
 function editRow(id) {
     const row = document.getElementById('row-' + id);

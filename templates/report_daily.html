@@ -3,35 +3,50 @@
 {% block content %}
 <h2>每日进出货统计</h2>
 <form class="row g-3 mb-3" method="GET">
+    <input type="hidden" name="chart_mode" id="chartModeInput" value="{{ chart_mode }}">
     <div class="col-auto"><input type="date" name="start_date" value="{{ start_date }}" class="form-control"></div>
     <div class="col-auto">至</div>
     <div class="col-auto"><input type="date" name="end_date" value="{{ end_date }}" class="form-control"></div>
+    <div class="col-12" id="productFilterBox" {% if chart_mode not in ['product_qty', 'product_amount'] %}style="display: none;"{% endif %}>
+        <div class="border rounded p-2 bg-light">
+            <div class="small text-muted mb-2">产品筛选（仅显示当前日期范围内有进出货记录的产品）</div>
+            {% if product_options %}
+            <div class="d-flex flex-wrap gap-2">
+            {% for product in product_options %}
+                <input type="checkbox" class="btn-check" name="product_ids" id="product_{{ product.id }}" value="{{ product.id }}" {% if product.id in selected_product_ids %}checked{% endif %}>
+                <label class="btn btn-outline-secondary btn-sm" for="product_{{ product.id }}">
+                    {{ product.name }}
+                </label>
+            {% endfor %}
+            </div>
+            {% else %}
+            <div class="text-muted small">当前日期范围内没有可筛选的产品。</div>
+            {% endif %}
+        </div>
+    </div>
     <div class="col-auto"><button type="submit" class="btn btn-primary">查询</button></div>
+    {% if selected_product_ids %}
+    <div class="col-auto">
+        <a class="btn btn-outline-secondary" href="{{ url_for('reports.report_daily', start_date=start_date, end_date=end_date, chart_mode=chart_mode) }}">查看全部产品</a>
+    </div>
+    {% endif %}
 </form>
 
 <!-- 图表模式切换 -->
 <div class="mb-3">
     <div class="btn-group btn-group-sm" role="group">
-        <input type="radio" class="btn-check" name="chartMode" id="modeTotalQty" value="total_qty" checked>
+        <input type="radio" class="btn-check" name="chartMode" id="modeTotalQty" value="total_qty" {% if chart_mode == 'total_qty' %}checked{% endif %}>
         <label class="btn btn-outline-primary" for="modeTotalQty">总数量</label>
 
-        <input type="radio" class="btn-check" name="chartMode" id="modeTotalAmount" value="total_amount">
+        <input type="radio" class="btn-check" name="chartMode" id="modeTotalAmount" value="total_amount" {% if chart_mode == 'total_amount' %}checked{% endif %}>
         <label class="btn btn-outline-primary" for="modeTotalAmount">总货值</label>
 
-        <input type="radio" class="btn-check" name="chartMode" id="modeProductQty" value="product_qty">
+        <input type="radio" class="btn-check" name="chartMode" id="modeProductQty" value="product_qty" {% if chart_mode == 'product_qty' %}checked{% endif %}>
         <label class="btn btn-outline-primary" for="modeProductQty">按产品数量</label>
 
-        <input type="radio" class="btn-check" name="chartMode" id="modeProductAmount" value="product_amount">
+        <input type="radio" class="btn-check" name="chartMode" id="modeProductAmount" value="product_amount" {% if chart_mode == 'product_amount' %}checked{% endif %}>
         <label class="btn btn-outline-primary" for="modeProductAmount">按产品货值</label>
     </div>
-
-    <!-- 产品选择下拉框（按产品模式时显示） -->
-    <select id="productSelect" class="form-select form-select-sm d-inline-block ms-2" style="width: auto; display: none !important;">
-        <option value="">选择产品</option>
-        {% for p in product_list %}
-        <option value="{{ p }}">{{ p }}</option>
-        {% endfor %}
-    </select>
 </div>
 
 <canvas id="dailyChart" height="100"></canvas>
@@ -40,6 +55,32 @@
 <!-- 明细表格保持不变 -->
 <h4>每日进出货明细</h4>
 {% if detail_rows %}
+<div class="row g-2 mb-3">
+    <div class="col-6 col-md-3">
+        <div class="border rounded p-2 bg-light">
+            <div class="text-muted small">进货总数量</div>
+            <div class="fw-bold">{{ "%.2f"|format(totals.in_qty) }}</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="border rounded p-2 bg-light">
+            <div class="text-muted small">进货总货值</div>
+            <div class="fw-bold">¥{{ "%.2f"|format(totals.in_amount) }}</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="border rounded p-2 bg-light">
+            <div class="text-muted small">出货总数量</div>
+            <div class="fw-bold">{{ "%.2f"|format(totals.out_qty) }}</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="border rounded p-2 bg-light">
+            <div class="text-muted small">出货总货值</div>
+            <div class="fw-bold">¥{{ "%.2f"|format(totals.out_amount) }}</div>
+        </div>
+    </div>
+</div>
 <div class="table-responsive">
     <table class="table table-bordered table-sm">
         <thead><tr><th>日期</th><th>产品</th><th>进货数量</th><th>进货货值</th><th>出货数量</th><th>出货货值</th></tr></thead>
@@ -48,6 +89,15 @@
         <tr><td>{{ row.date }}</td><td>{{ row.product_name }}</td><td>{{ row.in_qty }}</td><td>¥{{ "%.2f"|format(row.in_amount) }}</td><td>{{ row.out_qty }}</td><td>¥{{ "%.2f"|format(row.out_amount) }}</td></tr>
         {% endfor %}
         </tbody>
+        <tfoot>
+        <tr class="table-secondary fw-bold">
+            <td colspan="2">合计</td>
+            <td>{{ "%.2f"|format(totals.in_qty) }}</td>
+            <td>¥{{ "%.2f"|format(totals.in_amount) }}</td>
+            <td>{{ "%.2f"|format(totals.out_qty) }}</td>
+            <td>¥{{ "%.2f"|format(totals.out_amount) }}</td>
+        </tr>
+        </tfoot>
     </table>
 </div>
 {% else %}
@@ -59,6 +109,7 @@
 <script>
 // 后端传入的数据（已经是按日期顺序的列表）
 const chartLabels = {{ chart_dates | tojson }};
+const activeChartMode = {{ chart_mode | tojson }};
 const totalQty = {
     purchase: {{ purchase_qty_list | tojson }},
     sales: {{ sales_qty_list | tojson }}
@@ -74,30 +125,7 @@ let currentChart;
 
 // 初始化图表（默认总数量）
 function initChart() {
-    if (currentChart) currentChart.destroy();
-    const ctx = document.getElementById('dailyChart').getContext('2d');
-    currentChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: chartLabels,
-            datasets: [
-                {
-                    label: '进货量',
-                    data: totalQty.purchase,
-                    backgroundColor: 'rgba(75, 192, 192, 0.6)'
-                },
-                {
-                    label: '出货量',
-                    data: totalQty.sales,
-                    backgroundColor: 'rgba(255, 99, 132, 0.6)'
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            scales: { y: { beginAtZero: true } }
-        }
-    });
+    updateChart(activeChartMode);
 }
 
 // 更新图表
@@ -116,17 +144,15 @@ function updateChart(mode, productName = null) {
             { label: '进货货值', data: totalAmount.purchase, backgroundColor: 'rgba(75, 192, 192, 0.6)' },
             { label: '出货货值', data: totalAmount.sales, backgroundColor: 'rgba(255, 99, 132, 0.6)' }
         ];
-    } else if (mode === 'product_qty' && productName && productChartData[productName]) {
-        const prod = productChartData[productName];
+    } else if (mode === 'product_qty') {
         datasets = [
-            { label: `${productName} - 进货量`, data: prod.in_qty, backgroundColor: 'rgba(75, 192, 192, 0.6)' },
-            { label: `${productName} - 出货量`, data: prod.out_qty, backgroundColor: 'rgba(255, 99, 132, 0.6)' }
+            { label: '所选产品进货量', data: totalQty.purchase, backgroundColor: 'rgba(75, 192, 192, 0.6)' },
+            { label: '所选产品出货量', data: totalQty.sales, backgroundColor: 'rgba(255, 99, 132, 0.6)' }
         ];
-    } else if (mode === 'product_amount' && productName && productChartData[productName]) {
-        const prod = productChartData[productName];
+    } else if (mode === 'product_amount') {
         datasets = [
-            { label: `${productName} - 进货货值`, data: prod.in_amount, backgroundColor: 'rgba(75, 192, 192, 0.6)' },
-            { label: `${productName} - 出货货值`, data: prod.out_amount, backgroundColor: 'rgba(255, 99, 132, 0.6)' }
+            { label: '所选产品进货货值', data: totalAmount.purchase, backgroundColor: 'rgba(75, 192, 192, 0.6)' },
+            { label: '所选产品出货货值', data: totalAmount.sales, backgroundColor: 'rgba(255, 99, 132, 0.6)' }
         ];
     }
 
@@ -144,28 +170,16 @@ function updateChart(mode, productName = null) {
 document.querySelectorAll('input[name="chartMode"]').forEach(radio => {
     radio.addEventListener('change', function() {
         const mode = this.value;
-        const productSelect = document.getElementById('productSelect');
+        const productFilterBox = document.getElementById('productFilterBox');
+        const chartModeInput = document.getElementById('chartModeInput');
+        chartModeInput.value = mode;
         if (mode === 'product_qty' || mode === 'product_amount') {
-            productSelect.style.display = 'inline-block';
-            // 如果已选择产品，更新图表
-            const product = productSelect.value;
-            if (product) updateChart(mode, product);
-            else {
-                if (currentChart) currentChart.destroy();
-                currentChart = null;
-            }
+            productFilterBox.style.display = '';
         } else {
-            productSelect.style.display = 'none';
-            updateChart(mode);
+            productFilterBox.style.display = 'none';
         }
+        updateChart(mode);
     });
-});
-
-// 产品选择事件
-document.getElementById('productSelect').addEventListener('change', function() {
-    const product = this.value;
-    const mode = document.querySelector('input[name="chartMode"]:checked').value;
-    if (product) updateChart(mode, product);
 });
 
 // 默认加载

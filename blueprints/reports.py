@@ -5,7 +5,8 @@ from models import (
     Product, PurchaseOrder, PurchaseOrderItem,
     SalesOrder, SalesOrderItem,
     CustomerOrder, CustomerOrderItem,
-    SupplierOrder, SupplierOrderItem
+    SupplierOrder, SupplierOrderItem,
+    Supplier
 )
 from peewee import fn
 import datetime
@@ -48,6 +49,58 @@ def report_daily():
     if start_date > end_date:
         start_date = end_date
 
+    chart_mode = request.args.get('chart_mode', 'total_qty')
+    if chart_mode not in ('total_qty', 'total_amount', 'product_qty', 'product_amount'):
+        chart_mode = 'total_qty'
+    is_product_mode = chart_mode in ('product_qty', 'product_amount')
+
+    purchase_product_ids = {row[0] for row in (PurchaseOrderItem
+                                               .select(PurchaseOrderItem.product)
+                                               .join(PurchaseOrder)
+                                               .where((PurchaseOrder.order_date.between(start_date, end_date)) &
+                                                      (PurchaseOrder.user == current_user))
+                                               .distinct()
+                                               .tuples())}
+    sales_product_ids = {row[0] for row in (SalesOrderItem
+                                            .select(SalesOrderItem.product)
+                                            .join(SalesOrder)
+                                            .where((SalesOrder.order_date.between(start_date, end_date)) &
+                                                   (SalesOrder.user == current_user))
+                                            .distinct()
+                                            .tuples())}
+    available_product_ids = purchase_product_ids | sales_product_ids
+    if available_product_ids:
+        product_options = (Product
+                           .select()
+                           .where((Product.user == current_user) &
+                                  (Product.id.in_(available_product_ids)))
+                           .order_by(Product.name))
+    else:
+        product_options = []
+
+    raw_product_ids = request.args.getlist('product_ids')
+    selected_product_ids = []
+    for raw_id in raw_product_ids:
+        try:
+            selected_product_ids.append(int(raw_id))
+        except (TypeError, ValueError):
+            continue
+    if selected_product_ids:
+        valid_product_ids = set(Product
+                                .select(Product.id)
+                                .where((Product.user == current_user) &
+                                       (Product.id.in_(selected_product_ids)))
+                                .tuples())
+        valid_product_ids = {pid for (pid,) in valid_product_ids}
+    else:
+        valid_product_ids = set()
+    selected_product_ids = [pid for pid in selected_product_ids if pid in valid_product_ids]
+    if not is_product_mode:
+        selected_product_ids = []
+    product_filter_ids = selected_product_ids
+    if is_product_mode and raw_product_ids and not product_filter_ids:
+        product_filter_ids = [0]
+
     # 生成日期列表（用于图表和表格）
     date_range = [start_date + datetime.timedelta(days=i) for i in range((end_date - start_date).days + 1)]
     chart_dates = [d.strftime('%m-%d') for d in date_range]
@@ -59,12 +112,23 @@ def report_daily():
             d[row.order_date] = getattr(row, key)
         return d
 
+    purchase_total_where = ((PurchaseOrder.order_date.between(start_date, end_date)) &
+                            (PurchaseOrder.user == current_user))
+    sales_total_where = ((SalesOrder.order_date.between(start_date, end_date)) &
+                         (SalesOrder.user == current_user))
+    purchase_detail_where = purchase_total_where
+    sales_detail_where = sales_total_where
+    if product_filter_ids:
+        purchase_total_where = purchase_total_where & (PurchaseOrderItem.product.in_(product_filter_ids))
+        sales_total_where = sales_total_where & (SalesOrderItem.product.in_(product_filter_ids))
+        purchase_detail_where = purchase_detail_where & (PurchaseOrderItem.product.in_(product_filter_ids))
+        sales_detail_where = sales_detail_where & (SalesOrderItem.product.in_(product_filter_ids))
+
     purchase_qty_total = (PurchaseOrder
                           .select(PurchaseOrder.order_date,
                                   fn.SUM(PurchaseOrderItem.quantity).alias('total_qty'))
                           .join(PurchaseOrderItem)
-                          .where((PurchaseOrder.order_date.between(start_date, end_date)) &
-                                 (PurchaseOrder.user == current_user))
+                          .where(purchase_total_where)
                           .group_by(PurchaseOrder.order_date)
                           .order_by(PurchaseOrder.order_date))
 
@@ -72,8 +136,7 @@ def report_daily():
                        .select(SalesOrder.order_date,
                                fn.SUM(SalesOrderItem.quantity).alias('total_qty'))
                        .join(SalesOrderItem)
-                       .where((SalesOrder.order_date.between(start_date, end_date)) &
-                              (SalesOrder.user == current_user))
+                       .where(sales_total_where)
                        .group_by(SalesOrder.order_date)
                        .order_by(SalesOrder.order_date))
 
@@ -81,8 +144,7 @@ def report_daily():
                              .select(PurchaseOrder.order_date,
                                      fn.SUM(PurchaseOrderItem.subtotal).alias('total_amount'))
                              .join(PurchaseOrderItem)
-                             .where((PurchaseOrder.order_date.between(start_date, end_date)) &
-                                    (PurchaseOrder.user == current_user))
+                             .where(purchase_total_where)
                              .group_by(PurchaseOrder.order_date)
                              .order_by(PurchaseOrder.order_date))
 
@@ -90,8 +152,7 @@ def report_daily():
                           .select(SalesOrder.order_date,
                                   fn.SUM(SalesOrderItem.subtotal).alias('total_amount'))
                           .join(SalesOrderItem)
-                          .where((SalesOrder.order_date.between(start_date, end_date)) &
-                                 (SalesOrder.user == current_user))
+                          .where(sales_total_where)
                           .group_by(SalesOrder.order_date)
                           .order_by(SalesOrder.order_date))
 
@@ -109,8 +170,7 @@ def report_daily():
                                     fn.SUM(PurchaseOrderItem.subtotal).alias('amount'))
                             .join(PurchaseOrder)
                             .join(Product, on=(PurchaseOrderItem.product == Product.id))
-                            .where((PurchaseOrder.order_date.between(start_date, end_date)) &
-                                   (PurchaseOrder.user == current_user))
+                            .where(purchase_detail_where)
                             .group_by(PurchaseOrder.order_date, PurchaseOrderItem.product, Product.name)
                             .order_by(PurchaseOrder.order_date))
                            .dicts())
@@ -123,8 +183,7 @@ def report_daily():
                                  fn.SUM(SalesOrderItem.subtotal).alias('amount'))
                          .join(SalesOrder)
                          .join(Product, on=(SalesOrderItem.product == Product.id))
-                         .where((SalesOrder.order_date.between(start_date, end_date)) &
-                                (SalesOrder.user == current_user))
+                         .where(sales_detail_where)
                          .group_by(SalesOrder.order_date, SalesOrderItem.product, Product.name)
                          .order_by(SalesOrder.order_date))
                         .dicts())
@@ -159,6 +218,13 @@ def report_daily():
                 'out_qty': data['out_qty'],
                 'out_amount': data['out_amount']
             })
+
+    totals = {
+        'in_qty': sum(row['in_qty'] or 0 for row in detail_rows),
+        'in_amount': sum(row['in_amount'] or 0 for row in detail_rows),
+        'out_qty': sum(row['out_qty'] or 0 for row in detail_rows),
+        'out_amount': sum(row['out_amount'] or 0 for row in detail_rows),
+    }
 
     # ---------- 4. 按产品图表数据 ----------
     product_data = {}
@@ -201,8 +267,12 @@ def report_daily():
                            sales_qty_list=sales_qty_list,
                            purchase_amount_list=purchase_amount_list,
                            sales_amount_list=sales_amount_list,
+                           product_options=product_options,
+                           selected_product_ids=selected_product_ids,
+                           chart_mode=chart_mode,
                            product_list=product_list,
                            product_chart_data=product_chart_data,
+                           totals=totals,
                            detail_rows=detail_rows)
 
 @reports_bp.route('/report/customer')
@@ -241,30 +311,113 @@ def report_customer():
 def report_supplier():
     start_date = request.args.get('start_date', '2000-01-01')
     end_date = request.args.get('end_date', datetime.date.today().strftime('%Y-%m-%d'))
+    supplier_id = request.args.get('supplier_id', '')
+
+    # 对账日期：只有显式传入时才启用明细拆分
+    reconcile_str = request.args.get('reconcile_date', '')
+    reconcile_date = None
+    show_detail = False
+    if reconcile_str:
+        try:
+            reconcile_date = datetime.datetime.strptime(reconcile_str, '%Y-%m-%d').date()
+            show_detail = True
+        except ValueError:
+            pass
+
+    # 供应商列表（用于下拉筛选）
+    suppliers = Supplier.select().where(Supplier.user == current_user)
+
+    # 聚合：时间范围内每个产品的订购总量
+    order_filter = (SupplierOrder.order_date.between(start_date, end_date)) & \
+                   (SupplierOrder.user == current_user)
+    if supplier_id:
+        order_filter = order_filter & (SupplierOrder.supplier == int(supplier_id))
 
     query = (SupplierOrderItem
              .select(SupplierOrderItem.product,
                      fn.SUM(SupplierOrderItem.quantity).alias('total_qty'),
                      fn.SUM(SupplierOrderItem.subtotal).alias('total_amount'))
              .join(SupplierOrder)
-             .where((SupplierOrder.order_date.between(start_date, end_date)) &
-                    (SupplierOrder.user == current_user))
+             .where(order_filter)
              .group_by(SupplierOrderItem.product)
              .order_by(fn.SUM(SupplierOrderItem.subtotal).desc()))
 
     rows = []
+    total_ordered_value = 0.0
+    total_received_value = 0.0
+    total_received_today_value = 0.0
+
     for item in query:
+        product = item.product
+        total_qty = item.total_qty
+        total_amount = item.total_amount
+
+        # 相关供应商订单 ID
+        so_ids = (SupplierOrderItem
+                  .select(SupplierOrderItem.order)
+                  .join(SupplierOrder)
+                  .where((SupplierOrderItem.product == product) & order_filter))
+
+        # 累计已到货
+        received_total = (PurchaseOrderItem
+                         .select(fn.SUM(PurchaseOrderItem.quantity))
+                         .join(PurchaseOrder)
+                         .where((PurchaseOrder.supplier_order.in_(so_ids)) &
+                                (PurchaseOrderItem.product == product) &
+                                (PurchaseOrder.user == current_user))
+                         .scalar()) or 0
+
+        pending_total = total_qty - received_total
+        received_today = 0
+        pending_before = 0
+        received_value = received_total * (total_amount / total_qty) if total_qty > 0 else 0
+
+        # 选了对账日才计算明细
+        if show_detail and reconcile_date:
+            received_before = (PurchaseOrderItem
+                              .select(fn.SUM(PurchaseOrderItem.quantity))
+                              .join(PurchaseOrder)
+                              .where((PurchaseOrder.supplier_order.in_(so_ids)) &
+                                     (PurchaseOrderItem.product == product) &
+                                     (PurchaseOrder.user == current_user) &
+                                     (PurchaseOrder.order_date < reconcile_date))
+                              .scalar()) or 0
+            received_today = (PurchaseOrderItem
+                             .select(fn.SUM(PurchaseOrderItem.quantity))
+                             .join(PurchaseOrder)
+                             .where((PurchaseOrder.supplier_order.in_(so_ids)) &
+                                    (PurchaseOrderItem.product == product) &
+                                    (PurchaseOrder.user == current_user) &
+                                    (PurchaseOrder.order_date == reconcile_date))
+                             .scalar()) or 0
+            pending_before = total_qty - received_before
+            received_today_value = received_today * (total_amount / total_qty) if total_qty > 0 else 0
+            total_received_today_value += received_today_value
+
         rows.append({
-            'product': item.product.name,
-            'sku': item.product.sku or '',
-            'unit': item.product.unit,
-            'total_qty': item.total_qty,
-            'total_amount': item.total_amount
+            'product': product.name,
+            'sku': product.sku or '',
+            'unit': product.unit,
+            'total_qty': total_qty,
+            'total_amount': total_amount,
+            'received_total': received_total,
+            'pending_total': pending_total,
+            'received_today': received_today,
+            'pending_before': pending_before,
         })
+        total_ordered_value += total_amount
+        total_received_value += received_value
 
     return render_template('report_supplier.html',
                            start_date=start_date, end_date=end_date,
-                           rows=rows)
+                           reconcile_date=reconcile_date,
+                           show_detail=show_detail,
+                           suppliers=suppliers,
+                           selected_supplier=supplier_id,
+                           rows=rows,
+                           total_ordered_value=total_ordered_value,
+                           total_received_value=total_received_value,
+                           total_received_today_value=total_received_today_value)
 
 
 @reports_bp.route('/report/inventory')

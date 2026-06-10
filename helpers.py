@@ -1,20 +1,48 @@
 # helpers.py
-from models import Product, PurchaseOrderItem, SalesOrderItem
+from models import Product, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem
 from peewee import fn
 
-def get_product_stock(product_id):
-    """返回指定产品的当前库存"""
-    total_in = (PurchaseOrderItem
+def parse_positive_float(value):
+    """解析必须大于 0 的数字，失败时返回 None。"""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+def parse_non_negative_float(value):
+    """解析必须大于等于 0 的数字，失败时返回 None。"""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number >= 0 else None
+
+def get_product_stock(product_id, user=None):
+    """返回指定产品的当前库存（优先读缓存字段 stock）"""
+    if user is None:
+        product = Product.get_or_none(Product.id == product_id)
+        return product.stock if product else 0
+
+    # 多用户场景下仍需实时聚合
+    in_query = (PurchaseOrderItem
                 .select(fn.SUM(PurchaseOrderItem.quantity))
-                .where(PurchaseOrderItem.product == product_id)
-                .scalar()) or 0
-    total_out = (SalesOrderItem
+                .where(PurchaseOrderItem.product == product_id))
+    out_query = (SalesOrderItem
                  .select(fn.SUM(SalesOrderItem.quantity))
-                 .where(SalesOrderItem.product == product_id)
-                 .scalar()) or 0
+                 .where(SalesOrderItem.product == product_id))
+    in_query = (in_query
+                .join(PurchaseOrder)
+                .where(PurchaseOrder.user == user))
+    out_query = (out_query
+                 .join(SalesOrder)
+                 .where(SalesOrder.user == user))
+
+    total_in = in_query.scalar() or 0
+    total_out = out_query.scalar() or 0
     return total_in - total_out
 
-def check_stock_before_ship(items, extra_items=None):
+def check_stock_before_ship(items, extra_items=None, user=None):
     """检查库存是否足够，返回 (is_ok, error_messages)"""
     required = {}
     for it in items:
@@ -29,9 +57,12 @@ def check_stock_before_ship(items, extra_items=None):
 
     errors = []
     for pid, need_qty in required.items():
-        stock = get_product_stock(pid)
+        stock = get_product_stock(pid, user=user)
         if need_qty > stock:
-            product = Product.get_or_none(Product.id == pid)
+            query = Product.id == pid
+            if user is not None:
+                query = query & (Product.user == user)
+            product = Product.get_or_none(query)
             name = product.name if product else f'产品#{pid}'
             errors.append(f'{name}：需要发货 {need_qty}，当前库存仅 {stock}')
     return len(errors) == 0, errors

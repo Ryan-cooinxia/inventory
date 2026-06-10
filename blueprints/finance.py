@@ -3,6 +3,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash
 from flask_login import login_required, current_user
 from models import Customer, CustomerOrder, SalesOrder, CustomerRefund
 from peewee import fn
+from helpers import parse_non_negative_float
 
 finance_bp = Blueprint('finance', __name__)
 
@@ -12,9 +13,8 @@ def customer_finance_overview():
     if request.method == 'POST':
         customer_id = request.form.get('customer_id')
         planned_refund = request.form.get('planned_refund', '0')
-        try:
-            planned_refund = float(planned_refund)
-        except ValueError:
+        planned_refund = parse_non_negative_float(planned_refund)
+        if planned_refund is None:
             planned_refund = 0.0
         customer = Customer.get_or_none((Customer.id == customer_id) & (Customer.user == current_user))
         if customer:
@@ -50,16 +50,20 @@ def customer_finance_overview():
         # 剩余未退款 = 预计退款 - 实际退款
         remaining_refund = max(planned_refund - actual_refund, 0)
 
-        balance = order_total - total_shipped - actual_refund
+        # 财务指标拆分（避免语义混淆）
+        pending_shipment = max(order_total - total_shipped, 0)   # 待发货金额
+        net_receivable = total_shipped - actual_refund            # 已发货净应收
 
         rows.append({
             'customer': customer,
             'total_order': order_total,
             'total_shipped': total_shipped,
+            'pending_shipment': pending_shipment,
             'actual_refund': actual_refund,
             'planned_refund': planned_refund,
             'remaining_refund': remaining_refund,
-            'balance': balance
+            'net_receivable': net_receivable,
+            'balance': net_receivable        # 保留兼容，语义改为"净应收"
         })
 
     return render_template('customer_finance.html', rows=rows)

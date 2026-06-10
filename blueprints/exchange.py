@@ -21,7 +21,12 @@ def calculate():
     # 计算：amount * 汇率，或 amount / 汇率（反向）
     from_currency = request.args.get('from', 'CNY')
     to_currency = request.args.get('to', 'RUB')
-    amount = float(request.args.get('amount', 0))
+    try:
+        amount = float(request.args.get('amount', 0))
+    except (TypeError, ValueError):
+        return jsonify({'error': '金额格式不正确'}), 400
+    if amount < 0:
+        return jsonify({'error': '金额不能为负数'}), 400
 
     if from_currency == to_currency:
         rate = 1.0

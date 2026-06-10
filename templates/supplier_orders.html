@@ -4,47 +4,86 @@
 <h2>供应商订单列表</h2>
 <a href="/supplier_orders/add" class="btn btn-primary mb-3">新增订单</a>
 
+<!-- 日期 & 供应商筛选 -->
+<div class="card mb-3">
+    <div class="card-body">
+        <form method="GET" action="/supplier_orders" class="row g-2 align-items-end">
+            <div class="col-auto">
+                <label class="form-label fw-bold">对账日期</label>
+                <input type="date" name="date" class="form-control" value="{{ filter_date }}" style="width:160px">
+            </div>
+            <div class="col-auto">
+                <label class="form-label fw-bold">供应商</label>
+                <select name="supplier_id" class="form-select" style="width:180px">
+                    <option value="">全部供应商</option>
+                    {% for s in suppliers %}
+                    <option value="{{ s.id }}" {% if selected_supplier|string == s.id|string %}selected{% endif %}>{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-outline-primary">筛选</button>
+                <a href="/supplier_orders" class="btn btn-outline-secondary">重置</a>
+            </div>
+        </form>
+        <small class="text-muted mt-2 d-block">
+            📅 当前对账日：<strong>{{ filter_date }}</strong> — 期初 = 该日期前未收货量，今日入库 = 该日期当天入库量，期末 = 包含当天后剩余量
+        </small>
+    </div>
+</div>
+
 <!-- 统计卡片 -->
 <div class="row mb-3">
-    <div class="col-md-4">
+    <div class="col-md-3">
         <div class="card bg-light">
             <div class="card-body text-center">
-                <h5 class="card-title">全部产品总货值</h5>
-                <p class="card-text fs-4">¥{{ "%.2f"|format(total_order_value) }}</p>
+                <h6 class="card-title">全部订单总货值</h6>
+                <p class="card-text fs-5">¥{{ "%.2f"|format(total_order_value) }}</p>
             </div>
         </div>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-3">
         <div class="card bg-light">
             <div class="card-body text-center">
-                <h5 class="card-title">已收货总价值</h5>
-                <p class="card-text fs-4">¥{{ "%.2f"|format(total_received_value) }}</p>
+                <h6 class="card-title">累计已收货总价值</h6>
+                <p class="card-text fs-5">¥{{ "%.2f"|format(total_received_value) }}</p>
             </div>
         </div>
     </div>
-    <div class="col-md-4">
-        <div class="card bg-light">
+    <div class="col-md-3">
+        <div class="card bg-success text-white">
             <div class="card-body text-center">
-                <h5 class="card-title">未到货总价值</h5>
-                <p class="card-text fs-4">¥{{ "%.2f"|format(total_unreceived_value) }}</p>
+                <h6 class="card-title">{{ filter_date }} 当日入库</h6>
+                <p class="card-text fs-5">¥{{ "%.2f"|format(total_received_today_value) }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-warning">
+            <div class="card-body text-center">
+                <h6 class="card-title">未到货总价值</h6>
+                <p class="card-text fs-5">¥{{ "%.2f"|format(total_order_value - total_received_value) }}</p>
             </div>
         </div>
     </div>
 </div>
 
-<table class="table table-bordered table-sm">
-    <thead>
+<table class="table table-bordered table-sm align-middle">
+    <thead class="table-light">
         <tr>
             <th>序号</th>
             <th>订单单号</th>
             <th>供应商</th>
-            <th>日期</th>
+            <th>订单日</th>
             <th>产品</th>
             <th>单价</th>
-            <th>数量</th>
+            <th>订购量</th>
             <th>小计</th>
-            <th>已收货</th>
-            <th>剩余数量</th>   <!-- 新增列 -->
+            <!-- 对账列 -->
+            <th>期初剩余</th>
+            <th>今日入库</th>
+            <th>累计已收</th>
+            <th>期末剩余</th>
             <th>状态</th>
             <th>操作</th>
         </tr>
@@ -60,8 +99,29 @@
         <td>¥{{ "%.2f"|format(row.unit_price) }}</td>
         <td>{{ row.qty_ordered }}</td>
         <td>¥{{ "%.2f"|format(row.subtotal) }}</td>
-        <td>{{ row.received_qty }}</td>
-        <td>{{ row.qty_ordered - row.received_qty }}</td>   <!-- 剩余数量 -->
+        <!-- 对账数据 -->
+        <td>
+            {% if row.pending_before > 0 %}
+            <span class="text-warning fw-bold">{{ row.pending_before }}</span>
+            {% else %}
+            <span class="text-muted">0</span>
+            {% endif %}
+        </td>
+        <td>
+            {% if row.received_today > 0 %}
+            <span class="text-success fw-bold">{{ row.received_today }}</span>
+            {% else %}
+            <span class="text-muted">0</span>
+            {% endif %}
+        </td>
+        <td>{{ row.received_total }}</td>
+        <td>
+            {% if row.pending_after > 0 %}
+            <span class="text-danger fw-bold">{{ row.pending_after }}</span>
+            {% else %}
+            <span class="text-muted">0</span>
+            {% endif %}
+        </td>
         <td>
             {% if row.status_text == '未交货' %}
             <span class="badge bg-warning text-dark">未交货</span>

@@ -67,7 +67,7 @@ def import_csv(table_type):
                 text = raw_data.decode('latin-1')
         stream = io.StringIO(text)
         reader = csv.reader(stream)
-        next(reader)  # 跳过表头
+        headers = next(reader)  # 跳过表头，并用于兼容带 ID 的导出文件
     except Exception as e:
         flash(f'文件读取失败：{e}', 'danger')
         return redirect(url_for('data_io.data_manage'))
@@ -96,13 +96,16 @@ def import_csv(table_type):
                 error_count += 1
 
     elif table_type == 'customers':
+        offset = 1 if headers and headers[0].strip().upper() == 'ID' else 0
         for row in reader:
             try:
+                if len(row) <= offset:
+                    raise ValueError('客户名称为空')
                 Customer.create(
-                    name=row[0],
-                    contact=row[1] if row[1] else None,
-                    phone=row[2] if row[2] else None,
-                    address=row[3] if len(row) > 3 and row[3] else None,
+                    name=row[offset],
+                    contact=row[offset + 1] if len(row) > offset + 1 and row[offset + 1] else None,
+                    phone=row[offset + 2] if len(row) > offset + 2 and row[offset + 2] else None,
+                    address=row[offset + 3] if len(row) > offset + 3 and row[offset + 3] else None,
                     user=current_user
                 )
                 success_count += 1
@@ -110,12 +113,15 @@ def import_csv(table_type):
                 error_count += 1
 
     elif table_type == 'suppliers':
+        offset = 1 if headers and headers[0].strip().upper() == 'ID' else 0
         for row in reader:
             try:
+                if len(row) <= offset:
+                    raise ValueError('供应商名称为空')
                 Supplier.create(
-                    name=row[0],
-                    contact=row[1] if row[1] else None,
-                    phone=row[2] if row[2] else None,
+                    name=row[offset],
+                    contact=row[offset + 1] if len(row) > offset + 1 and row[offset + 1] else None,
+                    phone=row[offset + 2] if len(row) > offset + 2 and row[offset + 2] else None,
                     user=current_user
                 )
                 success_count += 1
