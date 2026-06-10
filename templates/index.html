@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}系统首页{% endblock %}
 {% block content %}
-<h2 class="mb-3">仓库概览（{{ today }}）</h2>
+<h2 class="mb-3">仓库概览</h2>
 
 <!-- 统计卡片 -->
 <div class="row mb-4">
@@ -56,7 +56,7 @@
 <div class="row">
     <div class="col-md-6">
         <div class="card mb-3">
-            <div class="card-header fw-bold">当日入库单</div>
+            <div class="card-header fw-bold">本时段入库单</div>
             <div class="card-body p-0">
                 <table class="table table-sm table-striped mb-0">
                     <thead>
@@ -71,7 +71,7 @@
                         <td>¥{{ "%.2f"|format(po.total_amount) }}</td>
                     </tr>
                     {% else %}
-                    <tr><td colspan="4" class="text-muted">今日暂无入库</td></tr>
+                    <tr><td colspan="4" class="text-muted">本时段暂无入库</td></tr>
                     {% endfor %}
                     </tbody>
                 </table>
@@ -81,7 +81,7 @@
 
     <div class="col-md-6">
         <div class="card mb-3">
-            <div class="card-header fw-bold">当日出库单</div>
+            <div class="card-header fw-bold">本时段出库单</div>
             <div class="card-body p-0">
                 <table class="table table-sm table-striped mb-0">
                     <thead>
@@ -96,7 +96,7 @@
                         <td>¥{{ "%.2f"|format(so.total_amount) }}</td>
                     </tr>
                     {% else %}
-                    <tr><td colspan="4" class="text-muted">今日暂无出库</td></tr>
+                    <tr><td colspan="4" class="text-muted">本时段暂无出库</td></tr>
                     {% endfor %}
                     </tbody>
                 </table>
@@ -123,6 +123,79 @@
             </tr>
             {% else %}
             <tr><td colspan="4" class="text-muted">暂无库存</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 对账时段筛选 -->
+<div class="card mt-4 mb-3">
+    <div class="card-header fw-bold">📅 产品订购对账</div>
+    <div class="card-body">
+        <form method="GET" action="/" class="row g-2 align-items-end">
+            <div class="col-auto">
+                <label class="form-label fw-bold">对账时段</label>
+                <div class="d-flex align-items-center gap-2">
+                    <input type="date" name="reconcile_start" class="form-control" value="{{ reconcile_start }}" style="width:140px">
+                    <span>至</span>
+                    <input type="date" name="reconcile_end" class="form-control" value="{{ reconcile_end }}" style="width:140px">
+                </div>
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-primary">查询</button>
+                <a href="/" class="btn btn-outline-secondary">今天</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 对账明细：时段入库详情 -->
+<div class="card mb-4">
+    <div class="card-header fw-bold">
+        📅 {{ reconcile_start }} 至 {{ reconcile_end }} 入库情况表
+        <span class="text-muted fw-normal ms-3">本时段入库 ¥{{ "%.2f"|format(total_received_in_period_value) }}</span>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-bordered table-sm mb-0 align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>SKU</th>
+                    <th>产品</th>
+                    <th class="text-center">期初剩余<br><small class="text-muted fw-normal">{{ reconcile_start }} 前未收</small></th>
+                    <th class="text-center">本时段入库<br><small class="text-muted fw-normal">{{ reconcile_start }} ～ {{ reconcile_end }}</small></th>
+                    <th class="text-center">期末剩余<br><small class="text-muted fw-normal">{{ reconcile_end }} 后仍欠</small></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in reconcile_rows %}
+            {% if row.pending_total > 0 or row.received_in_period > 0 %}
+            <tr>
+                <td><code>{{ row.sku }}</code></td>
+                <td>{{ row.product }}</td>
+                <td class="text-center">
+                    {% if row.pending_before > 0 %}
+                    <span class="text-warning fw-bold">{{ row.pending_before }}</span>
+                    {% else %}
+                    <span class="text-muted">0</span>
+                    {% endif %}
+                </td>
+                <td class="text-center">
+                    {% if row.received_in_period > 0 %}
+                    <span class="text-success fw-bold">+{{ row.received_in_period }}</span>
+                    {% else %}
+                    <span class="text-muted">0</span>
+                    {% endif %}
+                </td>
+                <td class="text-center">
+                    {% if row.pending_total > 0 %}
+                    <span class="text-danger fw-bold">{{ row.pending_total }}</span>
+                    {% else %}
+                    <span class="badge bg-success">✓ 时段内到齐</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endif %}
             {% endfor %}
             </tbody>
         </table>
