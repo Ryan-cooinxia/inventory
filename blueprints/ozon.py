@@ -6185,7 +6185,7 @@ def online_product_unarchive(product_id):
 @ozon_bp.route('/online-products/<int:product_id>/update', methods=['POST'])
 @login_required
 def online_product_update(product_id):
-    """更新在线商品并推送至 OZON"""
+    """更新在线商品并推送至 OZON（按字段类型分发到不同 API）"""
     product = OzonOnlineProduct.get_or_none(
         (OzonOnlineProduct.id == product_id) &
         (OzonOnlineProduct.user == current_user)
@@ -6200,52 +6200,94 @@ def online_product_update(product_id):
     try:
         from services.ozon_api import create_client
         client = create_client(product.account)
+        results = []
 
-        # 构建 product/import 请求体
-        body_item = {
-            "offer_id": product.offer_id,
-            "category_id": int(product.category_id) if product.category_id else 0,
-        }
+        # ── 价格更新（专用端点） ──
+        price_fields = {k: data[k] for k in ('price', 'old_price', 'min_price') if k in data}
+        if price_fields:
+            price_item = {
+                "offer_id": product.offer_id,
+                "currency_code": "RUB",
+            }
+            if 'price' in price_fields:
+                price_item['price'] = str(price_fields['price'])
+                product.price = price_fields['price']
+            if 'old_price' in price_fields:
+                price_item['old_price'] = str(price_fields['old_price'])
+                product.old_price = price_fields['old_price']
+            if 'min_price' in price_fields:
+                price_item['min_price'] = str(price_fields['min_price'])
+                product.min_price = price_fields['min_price']
 
-        if 'name' in data:
-            body_item['name'] = data['name']
-            product.name = data['name']
-        if 'price' in data:
-            body_item['price'] = str(data['price'])
-            product.price = data['price']
-        if 'old_price' in data:
-            body_item['old_price'] = str(data['old_price'])
-            product.old_price = data['old_price']
-        if 'min_price' in data:
-            body_item['min_price'] = str(data['min_price'])
-            product.min_price = data['min_price']
+            r = client.update_product_prices([price_item])
+            results.append(('price', r))
+
+        # ── 库存更新（专用端点） ──
         if 'stock' in data:
-            body_item['stock'] = int(data['stock'])
+            stock_item = {
+                "offer_id": product.offer_id,
+                "product_id": int(product.ozon_product_id) if product.ozon_product_id else 0,
+                "stock": int(data['stock']),
+            }
             product.stock_present = int(data['stock'])
-        if 'description' in data:
-            body_item['description'] = data['description']
-        if 'barcode' in data:
-            body_item['barcode'] = str(data['barcode'])
-        if 'weight' in data:
-            body_item['weight'] = int(data['weight'])
-        if 'depth' in data:
-            body_item['depth'] = int(data['depth'])
-        if 'width' in data:
-            body_item['width'] = int(data['width'])
-        if 'height' in data:
-            body_item['height'] = int(data['height'])
-        if 'attributes' in data:
-            body_item['attributes'] = data['attributes']
-            product.attributes_json = json.dumps(data['attributes'], ensure_ascii=False)
-        if 'images' in data:
-            body_item['images'] = data['images']
-            product.images_json = json.dumps(data['images'], ensure_ascii=False)
+            r = client.update_product_stocks([stock_item])
+            results.append(('stock', r))
 
-        if product.type_id:
-            body_item['type_id'] = int(product.type_id)
+        # ── 内容更新（标题/描述/属性 — 用 import 接口，带完整数据） ──
+        content_fields = {k: data[k] for k in ('name', 'description', 'barcode', 'weight', 'depth', 'width', 'height', 'attributes', 'images') if k in data}
+        if content_fields:
+            # 构建完整的商品数据（当前值 + 修改值），避免 OZON 判定为非正常更新
+            body_item = {
+                "offer_id": product.offer_id,
+                "name": product.name or '',
+                "category_id": int(product.category_id) if product.category_id else 0,
+            }
+            if product.type_id:
+                body_item['type_id'] = int(product.type_id)
 
-        request_json = json.dumps({"items": [body_item]}, ensure_ascii=False)
-        result = client.import_product(body_item)
+            # 保留现有图片
+            if product.images_json:
+                try:
+                    existing_imgs = json.loads(product.images_json) if isinstance(product.images_json, str) else product.images_json
+                    if isinstance(existing_imgs, list):
+                        body_item['images'] = existing_imgs
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            # 保留现有属性
+            if product.attributes_json:
+                try:
+                    existing_attrs = json.loads(product.attributes_json) if isinstance(product.attributes_json, str) else product.attributes_json
+                    if isinstance(existing_attrs, list):
+                        body_item['attributes'] = existing_attrs
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            # 覆盖要修改的字段
+            if 'name' in content_fields:
+                body_item['name'] = content_fields['name']
+                product.name = content_fields['name']
+            if 'description' in content_fields:
+                body_item['description'] = content_fields['description']
+            if 'barcode' in content_fields:
+                body_item['barcode'] = str(content_fields['barcode'])
+            if 'weight' in content_fields:
+                body_item['weight'] = int(content_fields['weight'])
+            if 'depth' in content_fields:
+                body_item['depth'] = int(content_fields['depth'])
+            if 'width' in content_fields:
+                body_item['width'] = int(content_fields['width'])
+            if 'height' in content_fields:
+                body_item['height'] = int(content_fields['height'])
+            if 'attributes' in content_fields:
+                body_item['attributes'] = content_fields['attributes']
+                product.attributes_json = json.dumps(content_fields['attributes'], ensure_ascii=False)
+            if 'images' in content_fields:
+                body_item['images'] = content_fields['images']
+                product.images_json = json.dumps(content_fields['images'], ensure_ascii=False)
+
+            r = client.import_product(body_item)
+            results.append(('content', r))
 
         product.updated_at = datetime.datetime.now()
         product.save()
@@ -6256,11 +6298,12 @@ def online_product_update(product_id):
             online_product=product,
             action_type='update_content',
             status='success',
-            request_json=request_json,
-            response_json=json.dumps(result, ensure_ascii=False),
+            request_json=json.dumps(data, ensure_ascii=False)[:2000],
+            response_json=json.dumps(results, ensure_ascii=False, default=str)[:2000],
         )
 
-        return jsonify({'ok': True, 'message': '已推送到 OZON', 'task_id': result.get('task_id')})
+        parts = [t for t, _ in results]
+        return jsonify({'ok': True, 'message': '已推送: ' + ', '.join(parts)})
 
     except Exception as e:
         OzonOnlineProductAction.create(

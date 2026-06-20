@@ -504,6 +504,45 @@ class OzonAPIClient:
         })
         return result.get("result", result)
 
+    def update_product_prices(self, prices_list):
+        """
+        更新商品价格（专用端点，不触发全量覆盖）
+
+        对应接口: POST /v4/product/info/prices
+
+        参数:
+            prices_list: [{
+                "offer_id": "xxx",
+                "price": "100.00",
+                "old_price": "120.00",  # 可选
+                "min_price": "90.00",   # 可选
+                "currency_code": "RUB"
+            }]
+        """
+        result, _, _ = self._request("POST", "/v4/product/info/prices", {
+            "prices": prices_list,
+        })
+        return result.get("result", result)
+
+    def update_product_stocks(self, stocks_list):
+        """
+        更新商品库存（专用端点）
+
+        对应接口: POST /v2/product/import/stocks
+
+        参数:
+            stocks_list: [{
+                "offer_id": "xxx",
+                "product_id": 12345,
+                "stock": 100,
+                "warehouse_id": 0
+            }]
+        """
+        result, _, _ = self._request("POST", "/v2/product/import/stocks", {
+            "stocks": stocks_list,
+        })
+        return result.get("result", result)
+
     # ── 4.5 图片上传 ────────────────────────────────
 
     def upload_image(self, image_url, primary=True):
