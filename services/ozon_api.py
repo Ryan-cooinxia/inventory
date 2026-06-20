@@ -488,7 +488,7 @@ class OzonAPIClient:
         """
         # OZON 要求某些字段必须是字符串
         body = self._sanitize_product_data(product_data)
-        result, _, _ = self._request("POST", "/v3/product/import", body)
+        result, _, _ = self._request("POST", "/v3/product/import", {"items": [body]})
         return result.get("result", result)
 
     def import_product_info(self, task_id):
