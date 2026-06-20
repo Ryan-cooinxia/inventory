@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}平台接口 — 仓库记账系统{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2 class="mb-0">⚙️ 平台接口</h2>
+  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal">+ 新增店铺</button>
+</div>
+
+<div class="row">
+  {% for acc in accounts %}
+  <div class="col-lg-6 mb-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start mb-2">
+          <div>
+            <h5 class="card-title mb-1">
+              {{ acc.name }}
+              <span class="badge {% if acc.environment == 'test' %}bg-warning text-dark{% else %}bg-info{% endif %}">
+                {{ '测试' if acc.environment == 'test' else '正式' }}
+              </span>
+            </h5>
+            <small class="text-muted">{{ '跨境店' if acc.shop_type == 'cross_border' else '本土店' }} · 创建于 {{ acc.created_at.strftime('%Y-%m-%d') if acc.created_at else '' }}</small>
+          </div>
+          <span class="badge {% if acc.sync_status == 'ok' %}bg-success{% else %}bg-danger{% endif %}">
+            {{ '🟢 已连通' if acc.sync_status == 'ok' else '🔴 未连通' }}
+          </span>
+        </div>
+        <table class="table table-sm table-borderless mb-2">
+          <tr><td class="text-muted" style="width:80px">Client-Id</td><td><code>{{ acc.client_id[:4] if acc.client_id else '' }}****{{ acc.client_id[-4:] if acc.client_id and acc.client_id|length > 4 else '' }}</code></td></tr>
+          <tr><td class="text-muted">Api-Key</td><td><code>****</code></td></tr>
+          <tr><td class="text-muted">最近同步</td><td>{{ acc.last_sync_at.strftime('%Y-%m-%d %H:%M') if acc.last_sync_at else '从未同步' }}</td></tr>
+        </table>
+        <div class="d-flex gap-1">
+          <a href="{{ url_for('ozon.account_edit', account_id=acc.id) }}" class="btn btn-sm btn-outline-secondary">编辑</a>
+          <form method="POST" action="{{ url_for('ozon.account_test', account_id=acc.id) }}" style="display:inline">
+            <button class="btn btn-sm btn-outline-success">测试连通</button>
+          </form>
+          <form method="POST" action="{{ url_for('ozon.account_delete', account_id=acc.id) }}" style="display:inline" onsubmit="return confirm('确定要删除此店铺吗？')">
+            <button class="btn btn-sm btn-outline-danger">删除</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+
+  {% if not accounts %}
+  <div class="col-12">
+    <div class="card bg-light">
+      <div class="card-body text-center text-muted py-5">
+        <p class="fs-4 mb-1">+</p>
+        <p class="mb-2">暂无 OZON 店铺，点击上方按钮新增</p>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal">+ 新增店铺</button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- 浏览器插件配置 -->
+<div class="card mt-3 border-success">
+  <div class="card-header bg-success bg-opacity-10 fw-bold">🔌 浏览器采集插件</div>
+  <div class="card-body">
+    <div class="row align-items-center">
+      <div class="col-md-8">
+        <p class="mb-2 fw-bold">插件认证 Token</p>
+        <code style="font-size:13px;word-break:break-all;background:#f8f9fa;padding:8px;display:block;border-radius:4px;" id="extToken">{{ extension_token }}</code>
+        <small class="text-muted">将此 Token 粘贴到浏览器插件的设置中</small>
+      </div>
+      <div class="col-md-4 text-end">
+        <button class="btn btn-outline-success btn-sm" onclick="copyToken()">📋 复制 Token</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function copyToken() {
+  var t = document.getElementById('extToken').textContent;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(t).then(function() { alert('Token 已复制'); });
+  } else {
+    var ta = document.createElement('textarea');
+    ta.value = t;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    alert('Token 已复制');
+  }
+}
+</script>
+
+<!-- Add Modal -->
+<div class="modal fade" id="addModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="POST" action="{{ url_for('ozon.account_add') }}">
+        <div class="modal-header">
+          <h5 class="modal-title">新增 OZON 店铺</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3"><label class="form-label fw-bold">店铺名称</label><input type="text" name="name" class="form-control" placeholder="如：OZON 正式店" required></div>
+          <div class="row mb-3">
+            <div class="col"><label class="form-label fw-bold">店铺类型</label><select name="shop_type" class="form-select"><option value="cross_border">跨境店</option><option value="local">本土店</option></select></div>
+            <div class="col"><label class="form-label fw-bold">环境</label><select name="environment" class="form-select"><option value="test">测试店</option><option value="production">正式店</option></select></div>
+          </div>
+          <div class="mb-3"><label class="form-label fw-bold">Client-Id</label><input type="text" name="client_id" class="form-control" placeholder="输入 OZON API Client-Id" required></div>
+          <div class="mb-3"><label class="form-label fw-bold">Api-Key</label><input type="password" name="api_key" class="form-control" placeholder="输入 OZON API Key" required></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-primary">保存并测试连通</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

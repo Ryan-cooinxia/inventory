@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>类目属性字典 — 原型预览</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  body { background: #f5f6fa; }
+  .tree-node { cursor: pointer; white-space: nowrap; }
+  .tree-node:hover { background: #f0f7ff; }
+  .tree-indent { display: inline-block; width: 16px; }
+  .tree-toggle { cursor: pointer; display: inline-block; width: 14px; font-size: 10px; color: #6c757d; }
+  .tree-spacer { display: inline-block; width: 14px; }
+  .tree-icon { font-size: 12px; }
+  .tree-label { cursor: pointer; }
+  .tree-label:hover { text-decoration: underline; }
+  .tree-children { padding-left: 0; }
+  .proto-highlight {
+    outline: 3px dashed #dc3545;
+    outline-offset: 2px;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { outline-color: #dc3545; }
+    50% { outline-color: #ff8080; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ====== 导航栏（与现有系统一致） ====== -->
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+  <div class="container">
+    <a class="navbar-brand" href="#">仓库记账</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <ul class="navbar-nav">
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">基础资料</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#">产品管理</a></li>
+            <li><a class="dropdown-item" href="#">客户管理</a></li>
+            <li><a class="dropdown-item" href="#">供应商管理</a></li>
+            <li><a class="dropdown-item" href="#">数据导入导出</a></li>
+          </ul>
+        </li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">库存工具</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#">📦 拆包规则</a></li>
+            <li><a class="dropdown-item" href="#">📋 拆包单</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">🔧 组合规则</a></li>
+            <li><a class="dropdown-item" href="#">🔩 组合单</a></li>
+          </ul>
+        </li>
+        <li class="nav-item"><a class="nav-link" href="#">供应商订单</a></li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">入库管理</a>
+        </li>
+        <li class="nav-item"><a class="nav-link" href="#">客户订单</a></li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">统计报表</a>
+        </li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle active" href="#" role="button" data-bs-toggle="dropdown">OZON 运营</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#">📊 工作台</a></li>
+            <li><a class="dropdown-item" href="#">⚙️ 平台接口</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📥 采集列表</a></li>
+            <li><a class="dropdown-item" href="#">📝 刊登草稿</a></li>
+            <li><a class="dropdown-item" href="#">🚀 发布任务</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item active" href="#">📋 类目属性字典</a></li>
+            <li><a class="dropdown-item" href="#">💬 提示词库</a></li>
+            <li><a class="dropdown-item" href="#">💰 定价规则</a></li>
+          </ul>
+        </li>
+      </ul>
+      <ul class="navbar-nav ms-auto">
+        <li class="nav-item"><span class="nav-link">👤 demo_user</span></li>
+        <li class="nav-item"><a class="nav-link" href="#">退出</a></li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+
+  <!-- ====== ⚠ 说明提示 ====== -->
+  <div class="alert alert-info py-2 mb-3" style="font-size:13px">
+    <strong>🔍 原型说明：</strong>红色虚线框标注的是 <strong>⚡ 一键同步全部</strong> 按钮位置（共 2 处）。
+    如果你在 Flask 页面看不到，请确认：① 已重启服务器 ② 浏览器强刷 Ctrl+Shift+R ③ 确认 URL 是 <code>/ozon/category-attributes</code>
+  </div>
+
+  <!-- ═══════════════ 顶部工具栏 ═══════════════ -->
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h5 class="mb-0">📋 类目属性字典</h5>
+    <div class="d-flex gap-1 flex-wrap justify-content-end">
+      <button class="btn btn-outline-success btn-sm">🌐 翻译全部</button>
+      <button class="btn btn-outline-primary btn-sm">🔄 同步类目树</button>
+
+      <!-- ★ 位置 1：顶部工具栏中的红色按钮 ★ -->
+      <button class="btn btn-danger btn-sm proto-highlight" title="全自动：类目树 → type → 属性 → 字典值">
+        ⚡ 一键同步全部
+      </button>
+
+      <button class="btn btn-outline-secondary btn-sm">📋 同步 type</button>
+      <button class="btn btn-outline-primary btn-sm">📥 提取属性</button>
+      <button class="btn btn-outline-info btn-sm">📖 拉取字典值</button>
+
+      <!-- ★ 位置 1b：黄色一键同步（选中类目）★ -->
+      <button class="btn btn-warning btn-sm" title="一键完成：同步 type → 提取属性 → 拉取字典值">
+        🚀 一键同步
+      </button>
+    </div>
+  </div>
+
+  <div class="row g-3">
+
+    <!-- ═══════════════ 左侧类目树 ═══════════════ -->
+    <div class="col-lg-3">
+      <div class="card">
+        <div class="card-header py-2 d-flex justify-content-between align-items-center">
+          <strong style="font-size:13px">类目树</strong>
+
+          <!-- ★ 位置 2：左侧面板标题栏中的红色按钮 ★ -->
+          <button class="btn btn-danger btn-sm proto-highlight" title="全自动全量同步">
+            ⚡ 一键同步全部
+          </button>
+        </div>
+        <div style="max-height:70vh;overflow-y:auto;font-size:12px">
+          <!-- 模拟树节点 -->
+          <div class="tree-node" style="padding:2px 8px">
+            <span class="tree-toggle">▼</span>
+            <span class="tree-icon">📂</span>
+            <span class="tree-label">Электроника</span>
+          </div>
+          <div class="tree-children" style="padding-left:16px">
+            <div class="tree-node" style="padding:2px 8px">
+              <span class="tree-toggle">▼</span>
+              <span class="tree-icon">📂</span>
+              <span class="tree-label">Смартфоны</span>
+              <span class="badge bg-warning text-dark" style="font-size:9px">5</span>
+            </div>
+            <div class="tree-children" style="padding-left:16px">
+              <div class="tree-node" style="padding:2px 8px;background:#0d6efd;color:#fff">
+                <span class="tree-spacer"></span>
+                <span class="tree-icon">📄</span>
+                <span class="tree-label">Смартфоны Apple</span>
+                <span class="badge bg-warning text-dark" style="font-size:9px">3</span>
+              </div>
+            </div>
+            <div class="tree-node" style="padding:2px 8px">
+              <span class="tree-toggle">▶</span>
+              <span class="tree-icon">📁</span>
+              <span class="tree-label">Ноутбуки</span>
+            </div>
+          </div>
+          <div class="tree-node" style="padding:2px 8px">
+            <span class="tree-toggle">▶</span>
+            <span class="tree-icon">📁</span>
+            <span class="tree-label">Одежда</span>
+            <span class="badge bg-warning text-dark" style="font-size:9px">2</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════ 右侧主区域 ═══════════════ -->
+    <div class="col-lg-9">
+      <div class="card mb-2">
+        <div class="card-body py-1 px-2" style="font-size:12px">
+          <strong>当前类目：</strong>Смартфоны Apple
+          <code class="ms-2">dcid=17030980</code>
+          <span class="ms-2"><span class="badge bg-success">type_id: 10561921 (Смартфон)</span></span>
+        </div>
+      </div>
+
+      <div class="row g-2">
+        <!-- type 列表 -->
+        <div class="col-md-5">
+          <div class="card">
+            <div class="card-header py-2"><strong style="font-size:13px">商品类型 (type_id)</strong></div>
+            <div style="max-height:60vh;overflow-y:auto;font-size:12px">
+              <a href="#" class="list-group-item list-group-item-action py-1 active">
+                <div><strong>Смартфон</strong></div>
+                <div><code>10561921</code></div>
+              </a>
+              <a href="#" class="list-group-item list-group-item-action py-1">
+                <div><strong>Чехол для смартфона</strong></div>
+                <div><code>10561922</code></div>
+              </a>
+              <a href="#" class="list-group-item list-group-item-action py-1">
+                <div><strong>Защитная пленка</strong></div>
+                <div><code>10561923</code></div>
+              </a>
+            </div>
+          </div>
+        </div>
+        <!-- 属性 -->
+        <div class="col-md-7">
+          <div class="card">
+            <div class="card-header py-2 d-flex justify-content-between">
+              <strong style="font-size:13px">属性 Schema (10561921)</strong>
+              <span class="badge bg-secondary">12 个</span>
+            </div>
+            <div style="max-height:60vh;overflow-y:auto;font-size:12px">
+              <table class="table table-sm mb-0">
+                <thead class="table-light"><tr><th>ID</th><th>属性名</th><th>必填</th><th>类型</th><th>字典</th></tr></thead>
+                <tbody>
+                  <tr><td><code>8229</code></td><td><strong>Бренд</strong></td><td><span class="badge bg-danger">必填</span></td><td>string</td><td><span class="badge bg-info">是</span> <small class="text-success">(156 个选项)</small></td></tr>
+                  <tr><td><code>85</code></td><td><strong>Модель</strong></td><td><span class="badge bg-danger">必填</span></td><td>string</td><td>-</td></tr>
+                  <tr><td><code>4416</code></td><td><strong>Объем памяти</strong></td><td><span class="text-muted">选填</span></td><td>string</td><td><span class="badge bg-info">是</span> <small class="text-success">(8 个选项)</small></td></tr>
+                  <tr><td><code>4389</code></td><td><strong>Цвет</strong></td><td><span class="text-muted">选填</span></td><td>string</td><td><span class="badge bg-info">是</span> <small class="text-success">(24 个选项)</small></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

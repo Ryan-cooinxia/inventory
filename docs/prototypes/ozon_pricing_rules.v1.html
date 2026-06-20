@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>定价规则 — 仓库记账系统</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+  <div class="container">
+    <a class="navbar-brand" href="#">仓库记账</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <ul class="navbar-nav">
+        <li class="nav-item dropdown"><a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">基础资料</a><ul class="dropdown-menu"><li><a class="dropdown-item" href="#">产品管理</a></li><li><a class="dropdown-item" href="#">客户管理</a></li><li><a class="dropdown-item" href="#">供应商管理</a></li></ul></li>
+        <li class="nav-item"><a class="nav-link" href="#">供应商订单</a></li>
+        <li class="nav-item"><a class="nav-link" href="#">客户订单</a></li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle active" href="#" data-bs-toggle="dropdown">OZON 运营</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#">📊 工作台</a></li><li><a class="dropdown-item" href="#">⚙️ 平台接口</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📥 采集列表</a></li>
+            <li><a class="dropdown-item" href="#">📝 刊登草稿</a></li><li><a class="dropdown-item" href="#">🚀 发布任务</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📋 提示词库</a></li><li><a class="dropdown-item active" href="#">💰 定价规则</a></li>
+          </ul>
+        </li>
+        <li class="nav-item dropdown"><a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">统计报表</a><ul class="dropdown-menu"><li><a class="dropdown-item" href="#">每日进出货</a></li></ul></li>
+      </ul>
+      <ul class="navbar-nav ms-auto">
+        <li class="nav-item"><span class="nav-link">👤 管理员</span></li>
+        <li class="nav-item"><a class="nav-link" href="#">退出</a></li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+  <h2 class="mb-3">定价规则</h2>
+
+  <div class="row">
+    <!-- Left: Config Form -->
+    <div class="col-lg-7">
+      <!-- Exchange Rate -->
+      <div class="card mb-3">
+        <div class="card-header fw-bold">💱 汇率设置</div>
+        <div class="card-body">
+          <div class="row g-3 align-items-end">
+            <div class="col-md-4">
+              <label class="form-label fw-bold">汇率来源</label>
+              <select class="form-select">
+                <option>自动 (exchangerate-api)</option>
+                <option>手动输入</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">1 CNY = RUB</label>
+              <input type="number" class="form-control" value="12.50" step="0.01" readonly>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">更新时间</label>
+              <input type="text" class="form-control" value="2026-06-13 08:00" readonly>
+            </div>
+            <div class="col-md-2">
+              <button class="btn btn-outline-secondary btn-sm">手动刷新</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Fee Settings -->
+      <div class="card mb-3">
+        <div class="card-header fw-bold">⚙️ 费率设置</div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label fw-bold">目标毛利率 (%)</label>
+              <div class="input-group">
+                <input type="number" class="form-control" value="35" min="0" max="100">
+                <span class="input-group-text">%</span>
+              </div>
+              <small class="text-muted">售价中期望的利润占比</small>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-bold">广告预留 (%)</label>
+              <div class="input-group">
+                <input type="number" class="form-control" value="5" min="0" max="100">
+                <span class="input-group-text">%</span>
+              </div>
+              <small class="text-muted">预计广告投放占比</small>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-bold">OZON 佣金 (%)</label>
+              <div class="input-group">
+                <input type="number" class="form-control" value="10" min="0" max="100">
+                <span class="input-group-text">%</span>
+              </div>
+              <small class="text-muted">平台佣金率</small>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Logistics -->
+      <div class="card mb-3">
+        <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+          🚚 物流费用阶梯
+          <button class="btn btn-sm btn-outline-primary">+ 添加阶梯</button>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive-mobile">
+            <table class="table table-bordered table-sm mb-0">
+              <thead class="table-light">
+                <tr><th>重量范围 (g)</th><th>国内运费 ¥</th><th>国际运费 ¥</th><th>包装费 ¥</th><th>操作</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>0 – 500</td>
+                  <td><input type="number" class="form-control form-control-sm" value="3.00" style="width:80px"></td>
+                  <td><input type="number" class="form-control form-control-sm" value="12.00" style="width:80px"></td>
+                  <td><input type="number" class="form-control form-control-sm" value="1.50" style="width:80px"></td>
+                  <td><button class="btn btn-sm btn-outline-danger">删除</button></td>
+                </tr>
+                <tr>
+                  <td>501 – 1000</td>
+                  <td><input type="number" class="form-control form-control-sm" value="5.00" style="width:80px"></td>
+                  <td><input type="number" class="form-control form-control-sm" value="18.00" style="width:80px"></td>
+                  <td><input type="number" class="form-control form-control-sm" value="2.00" style="width:80px"></td>
+                  <td><button class="btn btn-sm btn-outline-danger">删除</button></td>
+                </tr>
+                <tr>
+                  <td>1001 – 2000</td>
+                  <td><input type="number" class="form-control form-control-sm" value="8.00" style="width:80px"></td>
+                  <td><input type="number" class="form-control form-control-sm" value="25.00" style="width:80px"></td>
+                  <td><input type="number" class="form-control form-control-sm" value="3.00" style="width:80px"></td>
+                  <td><button class="btn btn-sm btn-outline-danger">删除</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Risk Buffer -->
+      <div class="card mb-3">
+        <div class="card-header fw-bold">🛡 风险缓冲</div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label fw-bold">缓冲方式</label>
+              <select class="form-select">
+                <option>固定金额 (CNY)</option>
+                <option>百分比 (%)</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-bold">缓冲值</label>
+              <div class="input-group">
+                <input type="number" class="form-control" value="3.00" step="0.01">
+                <span class="input-group-text">¥</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Live Preview -->
+    <div class="col-lg-5">
+      <div class="card sticky-top" style="top:1rem">
+        <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+          🧮 实时价格预览
+          <span class="badge bg-success">自动计算</span>
+        </div>
+        <div class="card-body">
+          <div class="mb-3">
+            <label class="form-label fw-bold">采购价 (CNY)</label>
+            <div class="input-group">
+              <span class="input-group-text">¥</span>
+              <input type="number" class="form-control" id="previewCost" value="42.30" step="0.01" placeholder="输入采购成本">
+            </div>
+            <small class="text-muted">含货款 + 国内运费 + 包装 + 国际运费 + 风险缓冲</small>
+          </div>
+
+          <hr>
+
+          <table class="table table-sm table-borderless mb-0">
+            <tr><td>产品成本</td><td class="text-end">¥42.30</td></tr>
+            <tr><td>汇率</td><td class="text-end">1 CNY = 12.50 RUB</td></tr>
+            <tr class="table-light"><td><b>折算 RUB</b></td><td class="text-end"><b>528.75 ₽</b></td></tr>
+            <tr><td>扣减：佣金 10%</td><td class="text-end text-danger">-52.88 ₽</td></tr>
+            <tr><td>扣减：广告 5%</td><td class="text-end text-danger">-26.44 ₽</td></tr>
+            <tr class="table-light"><td>扣除费用后</td><td class="text-end">449.43 ₽</td></tr>
+            <tr><td>目标毛利率 35%</td><td class="text-end text-success">利润 157.30 ₽</td></tr>
+            <tr class="table-primary"><td><b>建议 RUB 售价</b></td><td class="text-end fs-4 fw-bold text-primary">1,057.50 ₽</td></tr>
+          </table>
+
+          <hr>
+
+          <div class="small text-muted">
+            <div>公式：售价 = 成本RUB / (1 - 佣金率 - 广告率 - 毛利率)</div>
+            <div>= 528.75 / (1 - 0.10 - 0.05 - 0.35)</div>
+            <div>= 528.75 / 0.50</div>
+            <div>= 1,057.50 ₽</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Save -->
+  <div class="d-flex gap-2 justify-content-end mb-4">
+    <button class="btn btn-outline-secondary">恢复默认</button>
+    <button class="btn btn-primary btn-lg">💾 保存配置</button>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

@@ -1,0 +1,123 @@
+{
+  "schema_version": "1.0",
+  "source": {
+    "platform": "1688",
+    "url": "https://detail.1688.com/example",
+    "item_id": "123456",
+    "shop_name": "示例供应商",
+    "captured_at": "2026-06-13T00:00:00+08:00",
+    "capture_method": "browser_extension",
+    "html_snapshot_id": null,
+    "screenshot_ids": []
+  },
+  "product": {
+    "title_cn": "15合1多功能车载应急手电筒",
+    "title_source": "source_page",
+    "category_cn": "车载工具",
+    "description_cn": "源页面商品描述",
+    "model": null,
+    "origin": null,
+    "warranty": null,
+    "certifications": [],
+    "facts_locked": ["title_cn", "sku_order", "sku_names"]
+  },
+  "brand": {
+    "name": null,
+    "source": null,
+    "authorization_evidence": null,
+    "risk_level": "unknown",
+    "notes": ""
+  },
+  "supplier": {
+    "name": "示例供应商",
+    "contact": null,
+    "source_shop_url": "https://shop.example.com",
+    "min_order_quantity": 1,
+    "shipping_from": "广东 深圳",
+    "notes": ""
+  },
+  "skus": [
+    {
+      "source_order": 1,
+      "source_sku_id": "sku-yellow",
+      "source_sku_name": "黄色 标配",
+      "local_sku": null,
+      "offer_id": null,
+      "color_cn": "黄色",
+      "color_ru": null,
+      "size_cn": null,
+      "size_ru": null,
+      "style_cn": "标配",
+      "style_ru": null,
+      "bundle_quantity": 1,
+      "package_contents_cn": ["手电筒", "Type-C 线"],
+      "material_cn": null,
+      "purchase_price_cny": 19.8,
+      "stock_source": null,
+      "image_refs": ["img-sku-yellow"],
+      "evidence_refs": ["ev-sku-yellow"],
+      "confidence": 0.95,
+      "manual_status": "pending"
+    }
+  ],
+  "media": [
+    {
+      "media_id": "img-sku-yellow",
+      "source": "source_page",
+      "role": "sku",
+      "source_url": "https://example.com/yellow.jpg",
+      "local_path": null,
+      "sku_refs": ["sku-yellow"],
+      "width": null,
+      "height": null,
+      "aspect_ratio": null,
+      "has_text": false,
+      "text_language": "none",
+      "needs_cleanup": false,
+      "for_ozon": false,
+      "evidence_refs": ["ev-img-yellow"],
+      "review_status": "pending"
+    }
+  ],
+  "attributes": [],
+  "logistics": {
+    "net_weight_g": null,
+    "gross_weight_g": null,
+    "package_length_mm": null,
+    "package_width_mm": null,
+    "package_height_mm": null,
+    "shipping_profile": null,
+    "evidence_refs": [],
+    "manual_status": "pending"
+  },
+  "pricing": {
+    "source_price_cny": 19.8,
+    "domestic_shipping_cny": null,
+    "estimated_international_shipping_cny": null,
+    "commission_rate": null,
+    "ad_reserve_rate": 0.05,
+    "target_margin_rate": 0.35,
+    "cny_to_rub_rate": null,
+    "suggested_price_rub": null,
+    "manual_price_rub": null,
+    "pricing_status": "estimated"
+  },
+  "evidence": [
+    {
+      "evidence_id": "ev-sku-yellow",
+      "type": "text",
+      "source_url": "https://detail.1688.com/example",
+      "selector": ".sku-list",
+      "content": "黄色 标配",
+      "media_id": null,
+      "captured_at": "2026-06-13T00:00:00+08:00"
+    }
+  ],
+  "ai_outputs": {},
+  "quality": {
+    "overall_status": "pending_review",
+    "issues": [],
+    "reviewer": null,
+    "reviewed_at": null
+  }
+}

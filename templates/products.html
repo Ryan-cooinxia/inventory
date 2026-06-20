@@ -118,23 +118,27 @@
     </thead>
     <tbody>
     {% for p in products %}
+    <!-- 每行的编辑表单（使用 form 属性关联，无需 JS 建表） -->
+    <form method="POST" action="/products/edit/{{ p.id }}" id="edit-f-{{ p.id }}" style="display:none"></form>
     <tr id="row-{{ p.id }}">
         <td><input type="checkbox" class="product-checkbox" value="{{ p.id }}"></td>
-        <td>{{ p.sku or '' }}</td>
-        <td>{{ p.brand or '' }}</td>
-        <td>{{ p.category1 or '' }}</td>
-        <td>{{ p.category2 or '' }}</td>
-        <td>{{ p.name }}</td>
-        <td>{{ p.spec or '' }}</td>
-        <td>{{ p.unit }}</td>
+        <td><span class="view-mode">{{ p.sku or '' }}</span><input class="edit-mode form-control form-control-sm" style="display:none;width:80px" name="sku" form="edit-f-{{ p.id }}" value="{{ p.sku or '' }}"></td>
+        <td><span class="view-mode">{{ p.brand or '' }}</span><input class="edit-mode form-control form-control-sm" style="display:none;width:90px" name="brand" form="edit-f-{{ p.id }}" value="{{ p.brand or '' }}"></td>
+        <td><span class="view-mode">{{ p.category1 or '' }}</span><input class="edit-mode form-control form-control-sm" style="display:none;width:100px" name="category1" form="edit-f-{{ p.id }}" value="{{ p.category1 or '' }}"></td>
+        <td><span class="view-mode">{{ p.category2 or '' }}</span><input class="edit-mode form-control form-control-sm" style="display:none;width:100px" name="category2" form="edit-f-{{ p.id }}" value="{{ p.category2 or '' }}"></td>
+        <td><span class="view-mode">{{ p.name }}</span><input class="edit-mode form-control form-control-sm" style="display:none;width:180px" name="name" form="edit-f-{{ p.id }}" value="{{ p.name }}"></td>
+        <td><span class="view-mode">{{ p.spec or '' }}</span><input class="edit-mode form-control form-control-sm" style="display:none;width:120px" name="spec" form="edit-f-{{ p.id }}" value="{{ p.spec or '' }}"></td>
+        <td><span class="view-mode">{{ p.unit }}</span><input class="edit-mode form-control form-control-sm" style="display:none;width:60px" name="unit" form="edit-f-{{ p.id }}" value="{{ p.unit }}"></td>
         <td>
             {% if p.description %}
-            <button class="btn btn-sm btn-outline-info desc-trigger" data-name="{{ p.name }}" data-desc="{{ p.description | e }}">📋</button>
-            {% else %}-{% endif %}
+            <button type="button" class="btn btn-sm btn-outline-info desc-trigger view-mode" data-name="{{ p.name }}" data-desc="{{ p.description | e }}">📋</button>
+            {% else %}<span class="view-mode">-</span>{% endif %}
         </td>
         <td>
-            <button class="btn btn-sm btn-outline-primary" onclick="editRow({{ p.id }})">编辑</button>
-            <form method="POST" action="/products/delete/{{ p.id }}" style="display:inline" onsubmit="return confirm('确定删除吗？')">
+            <button type="button" class="btn btn-sm btn-outline-primary view-mode" onclick="editRow({{ p.id }})">编辑</button>
+            <button type="submit" class="btn btn-sm btn-success edit-mode" style="display:none" form="edit-f-{{ p.id }}">保存</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary edit-mode" style="display:none" onclick="cancelRow({{ p.id }})">取消</button>
+            <form method="POST" action="/products/delete/{{ p.id }}" class="view-mode" style="display:inline" onsubmit="return confirm('确定删除吗？')">
                 <button type="submit" class="btn btn-sm btn-outline-danger">删除</button>
             </form>
         </td>
@@ -201,18 +205,17 @@ function addBundleItemRow() {
     });
 }
 
-// 编辑行切换（保持原样）
+// 编辑行
 function editRow(id) {
     const row = document.getElementById('row-' + id);
     row.querySelectorAll('.view-mode').forEach(el => el.style.display = 'none');
     row.querySelectorAll('.edit-mode').forEach(el => el.style.display = '');
 }
-function cancelEdit(id) {
+function cancelRow(id) {
     const row = document.getElementById('row-' + id);
     row.querySelectorAll('.view-mode').forEach(el => el.style.display = '');
     row.querySelectorAll('.edit-mode').forEach(el => el.style.display = 'none');
 }
-
 // ========== 批量删除逻辑 ==========
 const selectAll = document.getElementById('selectAll');
 const checkboxes = document.querySelectorAll('.product-checkbox');

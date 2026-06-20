@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模型接口配置 — 仓库记账系统</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  body { background: #f5f6fa; }
+  .config-card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); margin-bottom: 16px; }
+  .config-card .card-header { padding: 12px 16px; border-bottom: 1px solid #e9ecef; font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+  .config-card .card-body { padding: 16px; }
+  .test-area { border: 2px dashed #dee2e6; border-radius: 8px; padding: 20px; text-align: center; cursor: pointer; transition: border-color .15s; }
+  .test-area:hover { border-color: #0d6efd; }
+  .test-result { background: #f8f9fa; border-radius: 8px; padding: 12px; font-size: 12px; max-height: 300px; overflow-y: auto; }
+  .test-result pre { margin: 0; font-size: 11px; }
+  .model-badge { font-size: 10px; padding: 2px 8px; border-radius: 10px; }
+  .model-badge.active { background: #d4edda; color: #155724; }
+  .model-badge.inactive { background: #e9ecef; color: #6c757d; }
+</style>
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-3">
+  <div class="container-fluid">
+    <a class="navbar-brand" href="#">仓库记账</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <ul class="navbar-nav">
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">基础资料</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#">产品管理</a></li>
+            <li><a class="dropdown-item" href="#">客户管理</a></li>
+            <li><a class="dropdown-item" href="#">供应商管理</a></li>
+          </ul>
+        </li>
+        <li class="nav-item"><a class="nav-link" href="#">供应商订单</a></li>
+        <li class="nav-item"><a class="nav-link" href="#">客户订单</a></li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle active" href="#" data-bs-toggle="dropdown">OZON 运营</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="ozon_dashboard.v1.html">📊 工作台</a></li>
+            <li><a class="dropdown-item" href="#">⚙️ 平台接口</a></li>
+            <li><a class="dropdown-item active" href="#">🔮 模型接口</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📥 采集列表</a></li>
+            <li><a class="dropdown-item" href="ozon_adaptation_workspace.v1.html">🔄 商品适配</a></li>
+            <li><a class="dropdown-item" href="#">📝 刊登草稿</a></li>
+            <li><a class="dropdown-item" href="#">🚀 发布任务</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📋 类目属性字典</a></li>
+            <li><a class="dropdown-item" href="#">💬 提示词库</a></li>
+            <li><a class="dropdown-item" href="#">💰 定价规则</a></li>
+          </ul>
+        </li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">统计报表</a>
+          <ul class="dropdown-menu"><li><a class="dropdown-item" href="#">每日进出货</a></li></ul>
+        </li>
+      </ul>
+      <ul class="navbar-nav ms-auto">
+        <li class="nav-item"><span class="nav-link">👤 管理员</span></li>
+        <li class="nav-item"><a class="nav-link" href="#">退出</a></li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<div class="container-fluid px-3">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h5 class="mb-0">🔮 模型接口配置</h5>
+      <small class="text-muted">配置主模型（DeepSeek）和视觉工具模型（Vision Tool Model）</small>
+    </div>
+    <div>
+      <button class="btn btn-sm btn-outline-secondary">📋 查看调用日志</button>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <!-- 左列：配置区 -->
+    <div class="col-lg-7">
+      <!-- 主模型配置 -->
+      <div class="config-card">
+        <div class="card-header">
+          <span>🧠 主模型</span>
+          <span class="model-badge active">已启用</span>
+        </div>
+        <div class="card-body">
+          <div class="row g-2">
+            <div class="col-md-4">
+              <label class="form-label" style="font-size:12px">Provider</label>
+              <select class="form-select form-select-sm">
+                <option selected>deepseek</option>
+                <option>openai</option>
+                <option>custom_http</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" style="font-size:12px">Model Name</label>
+              <input type="text" class="form-control form-control-sm" value="deepseek-chat-v4">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" style="font-size:12px">API Base</label>
+              <input type="text" class="form-control form-control-sm" value="https://api.deepseek.com/v1">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" style="font-size:12px">API Key</label>
+              <input type="password" class="form-control form-control-sm" value="••••••••••••••••" readonly>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label" style="font-size:12px">超时 (秒)</label>
+              <input type="number" class="form-control form-control-sm" value="120">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label" style="font-size:12px">状态</label>
+              <div class="form-check form-switch mt-1">
+                <input class="form-check-input" type="checkbox" checked>
+                <label class="form-check-label" style="font-size:12px">启用</label>
+              </div>
+            </div>
+          </div>
+          <div class="mt-2" style="font-size:11px;color:#6c757d">
+            负责：综合推理、商品事实整理、OZON类目适配、俄语文案、规则判断
+          </div>
+          <div class="mt-2">
+            <button class="btn btn-sm btn-outline-success me-1">🧪 测试连通</button>
+            <button class="btn btn-sm btn-outline-primary me-1">💾 保存</button>
+            <span class="text-success" style="font-size:11px;margin-left:8px">✅ 最近测试通过 (2026-06-14 09:00)</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 视觉模型配置 -->
+      <div class="config-card">
+        <div class="card-header">
+          <span>👁️ 视觉工具模型 (Vision Tool Model)</span>
+          <span class="model-badge active">已启用</span>
+        </div>
+        <div class="card-body">
+          <div class="row g-2">
+            <div class="col-md-4">
+              <label class="form-label" style="font-size:12px">Provider</label>
+              <select class="form-select form-select-sm">
+                <option>qwen_vl</option>
+                <option>openai_vision</option>
+                <option>gemini_vision</option>
+                <option>custom_http</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" style="font-size:12px">Model Name</label>
+              <input type="text" class="form-control form-control-sm" value="qwen-vl-max">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" style="font-size:12px">API Base</label>
+              <input type="text" class="form-control form-control-sm" value="https://dashscope.aliyuncs.com/api/v1">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" style="font-size:12px">API Key</label>
+              <input type="password" class="form-control form-control-sm" value="••••••••••••••••" readonly>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label" style="font-size:12px">超时 (秒)</label>
+              <input type="number" class="form-control form-control-sm" value="60">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label" style="font-size:12px">每批最大图片数</label>
+              <input type="number" class="form-control form-control-sm" value="5">
+            </div>
+          </div>
+          <div class="mt-2" style="font-size:11px;color:#6c757d">
+            负责：图片OCR文字提取、商品主体识别、SKU差异识别、图片合规检查、详情图信息抽取
+          </div>
+          <div class="mt-2">
+            <button class="btn btn-sm btn-outline-success me-1">🧪 测试连通</button>
+            <button class="btn btn-sm btn-outline-primary me-1">💾 保存</button>
+            <span class="text-success" style="font-size:11px;margin-left:8px">✅ 最近测试通过 (2026-06-14 08:30)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右列：测试区 -->
+    <div class="col-lg-5">
+      <!-- 测试图片上传 -->
+      <div class="config-card">
+        <div class="card-header">🧪 测试图片识别</div>
+        <div class="card-body">
+          <div class="mb-2">
+            <label class="form-label" style="font-size:12px">任务类型</label>
+            <select class="form-select form-select-sm">
+              <option>sku_image — SKU图片识别</option>
+              <option>detail_ocr — 详情图OCR</option>
+              <option>compliance_check — 图片合规检查</option>
+              <option>fact_extraction — 商品事实补充</option>
+            </select>
+          </div>
+
+          <div class="test-area mb-2" style="padding:30px">
+            <div style="font-size:32px;color:#adb5bd">🖼️</div>
+            <div style="color:#6c757d;font-size:12px">点击或拖拽图片到此处</div>
+            <div style="color:#adb5bd;font-size:11px">支持 JPG/PNG/WebP，单张 ≤ 10MB</div>
+          </div>
+
+          <button class="btn btn-primary btn-sm w-100">🔍 开始识别</button>
+        </div>
+      </div>
+
+      <!-- 测试结果 -->
+      <div class="config-card">
+        <div class="card-header">
+          <span>📊 识别结果</span>
+          <span class="badge bg-success" style="font-size:10px">成功</span>
+        </div>
+        <div class="card-body p-2">
+          <div class="test-result">
+            <div style="font-weight:600;font-size:12px;margin-bottom:6px">📷 图片: SKU_黑色_一拖二.jpg</div>
+            <div style="font-size:11px;margin-bottom:4px"><strong>任务:</strong> sku_image | <strong>模型:</strong> qwen-vl-max | <strong>耗时:</strong> 2.3s</div>
+
+            <div style="font-weight:600;font-size:11px;margin-top:8px">检测到的对象:</div>
+            <pre>✓ 主体: 黑色无线麦克风发射器
+✓ 配件: 充电盒 (半开), Type-C线
+✓ 颜色: 黑色 (#1a1a1a)
+✓ 背景: 白色干净背景</pre>
+
+            <div style="font-weight:600;font-size:11px;margin-top:8px">合规检查:</div>
+            <pre>✅ 无中文文字
+✅ 无水印
+✅ 无二维码
+✅ 无价格/折扣
+✅ 无平台Logo
+✅ 适合 OZON 商品卡 (ozon_ready: true)</pre>
+
+            <div style="font-weight:600;font-size:11px;margin-top:8px">识别事实:</div>
+            <pre>• skus[0].color_cn = "黑色" (置信度 95%)
+• package_contents = ["发射器×1", "充电盒×1"]
+  (置信度 88%)
+• 与SKU名称一致 ✅</pre>
+
+            <div style="font-weight:600;font-size:11px;margin-top:8px;color:#856404">不确定项:</div>
+            <pre>• material = "塑料" (置信度 35%, 需人工确认)</pre>
+
+            <div style="margin-top:8px">
+              <button class="btn btn-sm btn-success me-1">✅ 接受为事实</button>
+              <button class="btn btn-sm btn-outline-secondary me-1">✏️ 修正</button>
+              <button class="btn btn-sm btn-outline-danger">🗑️ 忽略</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

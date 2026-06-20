@@ -1,0 +1,275 @@
+{% extends "base.html" %}
+{% block title %}模型接口配置 — 仓库记账系统{% endblock %}
+{% block content %}
+<h5 class="mb-3">🔮 模型接口配置</h5>
+
+<div class="row g-3">
+  <div class="col-lg-6">
+    <!-- 主模型 -->
+    <div class="card mb-3">
+      <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <strong style="font-size:13px">🧠 主模型（DeepSeek）</strong>
+        <span class="badge bg-success">已配置</span>
+      </div>
+      <div class="card-body" style="font-size:12px">
+        {% for key in api_keys %}
+        <div class="mb-2">
+          <span class="text-muted">Provider: </span><strong>{{ key.api_provider }}</strong>
+          <span class="ms-3 text-muted">API Key: </span><code>••••••••</code>
+        </div>
+        {% else %}
+        <div class="alert alert-warning py-1" style="font-size:12px">⚠️ 未配置 API Key，请先在平台接口页配置。</div>
+        {% endfor %}
+        <div class="text-muted" style="font-size:11px">负责：综合推理、商品事实整理、OZON 类目适配、俄语文案生成、规则判断</div>
+        <div class="mt-1"><span class="text-success" style="font-size:11px">✅ 使用中: deepseek-chat</span></div>
+      </div>
+    </div>
+
+    <!-- 视觉模型 -->
+    <div class="card">
+      <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <strong style="font-size:13px">👁️ 视觉工具模型 (Vision Tool Model)</strong>
+        {% set has_enabled = namespace(val=false) %}
+        {% for v in vision_configs %}{% if v.enabled %}{% set has_enabled.val = true %}{% endif %}{% endfor %}
+        <span class="badge {% if has_enabled.val %}bg-success{% else %}bg-secondary{% endif %}">{{ '已启用' if has_enabled.val else '未启用' }}</span>
+      </div>
+      <div class="card-body" style="font-size:12px">
+        <form method="POST">
+          <input type="hidden" name="action" value="save_vision">
+          <div class="row g-2">
+            <div class="col-md-4">
+              <label class="form-label mb-0" style="font-size:11px">Provider</label>
+              <select class="form-select form-select-sm" name="vision_provider">
+                <option value="qwen_vl">qwen_vl</option>
+                <option value="openai_vision">openai_vision</option>
+                <option value="gemini_vision">gemini_vision</option>
+                <option value="custom_http">custom_http</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label mb-0" style="font-size:11px">Model Name</label>
+              <input type="text" class="form-control form-control-sm" name="vision_model_name" placeholder="如: qwen-vl-max">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label mb-0" style="font-size:11px">API Base URL</label>
+              <input type="text" class="form-control form-control-sm" name="vision_api_base" placeholder="https://...">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label mb-0" style="font-size:11px">API Key</label>
+              <input type="password" class="form-control form-control-sm" name="vision_api_key" placeholder="sk-...">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label mb-0" style="font-size:11px">超时(秒)</label>
+              <input type="number" class="form-control form-control-sm" name="vision_timeout" value="60">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label mb-0" style="font-size:11px">每批图片数</label>
+              <input type="number" class="form-control form-control-sm" name="vision_batch" value="5">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label mb-0" style="font-size:11px">启用</label>
+              <div class="form-check form-switch mt-1">
+                <input class="form-check-input" type="checkbox" name="vision_enabled">
+              </div>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-sm btn-primary mt-2">💾 保存视觉模型配置</button>
+        </form>
+
+        {% if vision_configs %}
+        <hr class="my-2">
+        <div style="font-size:11px"><strong>已保存的配置：</strong></div>
+        {% for v in vision_configs %}
+        <div class="d-flex justify-content-between align-items-center bg-light rounded p-1 mt-1" id="configRow{{ v.id }}">
+          <span>
+            <strong>{{ v.provider }}</strong> / {{ v.model_name }}
+            <span class="badge {% if v.enabled %}bg-success{% else %}bg-secondary{% endif %}">{{ '启用' if v.enabled else '禁用' }}</span>
+            <small class="text-muted">{{ v.updated_at.strftime('%m-%d %H:%M') if v.updated_at else '' }}</small>
+          </span>
+          <span class="d-flex gap-1">
+            <button class="btn btn-sm btn-outline-secondary" style="font-size:10px;padding:1px 6px" onclick="editConfig({{ v.id }}, '{{ v.provider }}', '{{ v.model_name }}', '{{ v.api_base }}', {{ v.timeout_seconds }}, {{ v.max_images_per_batch }})" title="编辑">✏️</button>
+            <button class="btn btn-sm btn-outline-danger" style="font-size:10px;padding:1px 6px" onclick="deleteConfig({{ v.id }})" title="删除">🗑️</button>
+          </span>
+        </div>
+        {% endfor %}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <!-- 测试区 -->
+    <div class="card">
+      <div class="card-header py-2"><strong style="font-size:13px">🧪 测试图片识别</strong></div>
+      <div class="card-body" style="font-size:12px">
+        <div class="border border-dashed rounded py-4 mb-2 text-center" id="dropZone"
+             style="border-style:dashed;border-color:#0d6efd;cursor:pointer;transition:background .2s;background:#fafbff">
+          <div style="font-size:32px;color:#adb5bd" id="dropIcon">🖼️</div>
+          <div class="text-muted" id="dropText">点击选择或拖拽图片到此处</div>
+          <small class="text-muted">支持 JPG/PNG/WebP，单张 ≤ 10MB</small>
+          <input type="file" id="imageInput" accept="image/jpeg,image/png,image/webp" style="display:none">
+        </div>
+        <div id="previewArea" class="text-center mb-2 d-none">
+          <img id="previewImg" src="" style="max-width:100%;max-height:200px;border-radius:6px">
+          <div class="mt-1"><button class="btn btn-sm btn-outline-secondary" onclick="resetImage()">✕ 清除</button></div>
+        </div>
+        <select class="form-select form-select-sm mb-2" id="taskType">
+          <option value="sku_image">sku_image — SKU图片识别</option>
+          <option value="detail_ocr">detail_ocr — 详情图OCR</option>
+          <option value="compliance_check">compliance_check — 图片合规检查</option>
+        </select>
+        <button class="btn btn-primary btn-sm w-100" id="btnRecognize" onclick="startRecognition()">
+          🔍 开始识别
+        </button>
+        <div id="resultArea" class="d-none mt-2">
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <strong style="font-size:12px">📊 识别结果</strong>
+            <span class="badge bg-success" id="resultStatus">成功</span>
+          </div>
+          <div style="font-size:11px;color:#6c757d" id="resultMeta"></div>
+          <pre id="resultJson" style="font-size:10px;max-height:250px;overflow:auto;background:#f8f9fa;border-radius:4px;padding:8px" class="mt-1"></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- 职责说明 -->
+    <div class="card mt-3">
+      <div class="card-header py-2"><strong style="font-size:13px">📖 双模型架构说明</strong></div>
+      <div class="card-body" style="font-size:12px">
+        <table class="table table-sm mb-0" style="font-size:11px">
+          <thead><tr><th>层级</th><th>模型</th><th>负责内容</th></tr></thead>
+          <tbody>
+            <tr><td>主模型</td><td>DeepSeek (deepseek-chat)</td><td>综合推理、事实整理、OZON 类目适配、俄语文案、规则判断</td></tr>
+            <tr><td>视觉模型</td><td>Vision Tool Model</td><td>图片 OCR、主体识别、SKU 差异识别、图片合规检查、参数图信息抽取</td></tr>
+            <tr><td>人工审核</td><td>运营人员</td><td>确认事实字段、确认图片是否可用、确认发布</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  var dropZone = document.getElementById('dropZone');
+  var imageInput = document.getElementById('imageInput');
+  var previewArea = document.getElementById('previewArea');
+  var previewImg = document.getElementById('previewImg');
+  var dropIcon = document.getElementById('dropIcon');
+  var dropText = document.getElementById('dropText');
+  var resultArea = document.getElementById('resultArea');
+  var btnRecognize = document.getElementById('btnRecognize');
+  var selectedFile = null;
+
+  dropZone.addEventListener('click', function() { imageInput.click(); });
+  imageInput.addEventListener('change', function() {
+    if (imageInput.files.length > 0) handleFile(imageInput.files[0]);
+  });
+
+  dropZone.addEventListener('dragover', function(e) {
+    e.preventDefault();
+    dropZone.style.background = '#e7f1ff';
+    dropZone.style.borderColor = '#0a58ca';
+  });
+  dropZone.addEventListener('dragleave', function(e) {
+    e.preventDefault();
+    dropZone.style.background = '#fafbff';
+    dropZone.style.borderColor = '#0d6efd';
+  });
+  dropZone.addEventListener('drop', function(e) {
+    e.preventDefault();
+    dropZone.style.background = '#fafbff';
+    dropZone.style.borderColor = '#0d6efd';
+    if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
+  });
+
+  function handleFile(file) {
+    if (!file.type.startsWith('image/')) { alert('请选择图片文件'); return; }
+    if (file.size > 10*1024*1024) { alert('图片不能超过 10MB'); return; }
+    selectedFile = file;
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      previewImg.src = e.target.result;
+      previewArea.classList.remove('d-none');
+      dropIcon.style.display = 'none';
+      dropText.textContent = file.name + ' (' + (file.size/1024).toFixed(1) + ' KB)';
+      resultArea.classList.add('d-none');
+    };
+    reader.readAsDataURL(file);
+  }
+
+  window.resetImage = function() {
+    selectedFile = null;
+    imageInput.value = '';
+    previewArea.classList.add('d-none');
+    dropIcon.style.display = '';
+    dropText.textContent = '点击选择或拖拽图片到此处';
+    resultArea.classList.add('d-none');
+  };
+
+  window.editConfig = function(id, provider, modelName, apiBase, timeout, batch) {
+    // 把配置值填回表单
+    var form = document.querySelector('form[method="POST"]');
+    form.querySelector('[name="vision_provider"]').value = provider;
+    form.querySelector('[name="vision_model_name"]').value = modelName;
+    form.querySelector('[name="vision_api_base"]').value = apiBase;
+    form.querySelector('[name="vision_timeout"]').value = timeout;
+    form.querySelector('[name="vision_batch"]').value = batch;
+    form.querySelector('[name="vision_api_key"]').value = '';
+    form.querySelector('[name="vision_api_key"]').placeholder = '留空则不修改';
+    // 添加隐藏字段标记编辑模式
+    var hidden = form.querySelector('[name="config_id"]');
+    if (!hidden) {
+      hidden = document.createElement('input');
+      hidden.type = 'hidden';
+      hidden.name = 'config_id';
+      form.appendChild(hidden);
+    }
+    hidden.value = id;
+    form.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  window.deleteConfig = function(id) {
+    if (!confirm('确认删除该视觉模型配置？此操作不可恢复。')) return;
+    fetch('/ozon/api/models/config/' + id, { method: 'DELETE' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.ok) {
+          var row = document.getElementById('configRow' + id);
+          if (row) row.remove();
+          alert('✅ 已删除');
+        } else {
+          alert('❌ ' + d.error);
+        }
+      });
+  };
+
+  window.startRecognition = function() {
+    if (!selectedFile) { alert('请先选择一张图片'); return; }
+    btnRecognize.disabled = true;
+    btnRecognize.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>识别中...';
+
+    var fd = new FormData();
+    fd.append('image', selectedFile);
+    fd.append('task_type', document.getElementById('taskType').value);
+
+    fetch('/ozon/api/models/test-vision', { method: 'POST', body: fd })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        btnRecognize.disabled = false;
+        btnRecognize.textContent = '🔍 开始识别';
+        resultArea.classList.remove('d-none');
+        document.getElementById('resultStatus').textContent = data.ok ? '成功' : '失败';
+        document.getElementById('resultStatus').className = 'badge ' + (data.ok ? 'bg-success' : 'bg-danger');
+        document.getElementById('resultMeta').textContent = data.meta || '';
+        document.getElementById('resultJson').textContent = JSON.stringify(data.result, null, 2);
+      })
+      .catch(function(err) {
+        btnRecognize.disabled = false;
+        btnRecognize.textContent = '🔍 开始识别';
+        alert('请求失败: ' + err.message);
+      });
+  };
+})();
+</script>
+{% endblock %}

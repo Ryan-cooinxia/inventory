@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>商品事实库 — 仓库记账系统</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  body { background: #f5f6fa; }
+  .fact-card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); margin-bottom: 12px; }
+  .fact-card .card-header { padding: 12px 16px; border-bottom: 1px solid #e9ecef; display: flex; justify-content: space-between; align-items: center; }
+  .fact-card .card-body { padding: 16px; }
+  .badge-confidence { font-size: 10px; padding: 2px 6px; }
+  .badge-confidence.high { background: #d4edda; color: #155724; }
+  .badge-confidence.medium { background: #fff3cd; color: #856404; }
+  .badge-confidence.low { background: #f8d7da; color: #721c24; }
+  .evidence-tag { font-size: 10px; padding: 1px 5px; border-radius: 3px; margin-left: 4px; }
+  .evidence-tag.source { background: #cfe2ff; color: #084298; }
+  .evidence-tag.ocr { background: #d1ecf1; color: #0c5460; }
+  .evidence-tag.ai { background: #fff3cd; color: #856404; }
+  .evidence-tag.manual { background: #d4edda; color: #155724; }
+  .field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+  .field-item { font-size: 12px; padding: 6px 8px; background: #f8f9fa; border-radius: 4px; }
+  .field-item .f-label { color: #6c757d; font-size: 10px; }
+  .sku-strip { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .sku-chip { padding: 4px 10px; background: #e9ecef; border-radius: 12px; font-size: 11px; cursor: pointer; }
+  .sku-chip.confirmed { background: #d4edda; border: 1px solid #28a745; }
+  .sku-chip.pending { background: #fff3cd; border: 1px solid #ffc107; }
+  .unknown-fields { background: #fff8e1; border: 1px dashed #ffc107; border-radius: 4px; padding: 8px 12px; margin-top: 8px; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-3">
+  <div class="container-fluid">
+    <a class="navbar-brand" href="#">仓库记账</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <ul class="navbar-nav">
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">基础资料</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#">产品管理</a></li>
+            <li><a class="dropdown-item" href="#">客户管理</a></li>
+            <li><a class="dropdown-item" href="#">供应商管理</a></li>
+          </ul>
+        </li>
+        <li class="nav-item"><a class="nav-link" href="#">供应商订单</a></li>
+        <li class="nav-item"><a class="nav-link" href="#">客户订单</a></li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle active" href="#" data-bs-toggle="dropdown">OZON 运营</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="ozon_dashboard.v1.html">📊 工作台</a></li>
+            <li><a class="dropdown-item" href="#">⚙️ 平台接口</a></li>
+            <li><a class="dropdown-item" href="ozon_vision_model_config.v1.html">🔮 模型接口</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📥 采集列表</a></li>
+            <li><a class="dropdown-item" href="ozon_adaptation_workspace.v1.html">🔄 商品适配</a></li>
+            <li><a class="dropdown-item active" href="#">📋 商品事实库</a></li>
+            <li><a class="dropdown-item" href="#">📝 刊登草稿</a></li>
+            <li><a class="dropdown-item" href="#">🚀 发布任务</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📋 类目属性字典</a></li>
+            <li><a class="dropdown-item" href="#">💬 提示词库</a></li>
+            <li><a class="dropdown-item" href="#">💰 定价规则</a></li>
+          </ul>
+        </li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">统计报表</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#">每日进出货</a></li>
+          </ul>
+        </li>
+      </ul>
+      <ul class="navbar-nav ms-auto">
+        <li class="nav-item"><span class="nav-link">👤 管理员</span></li>
+        <li class="nav-item"><a class="nav-link" href="#">退出</a></li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<div class="container-fluid px-3">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h5 class="mb-0">📋 商品事实库</h5>
+      <small class="text-muted">管理标准化商品事实，作为 OZON Listing 的唯一数据来源</small>
+    </div>
+    <div>
+      <button class="btn btn-outline-primary btn-sm me-1">🔄 同步视觉识别结果</button>
+      <button class="btn btn-primary btn-sm">+ 新建事实</button>
+    </div>
+  </div>
+
+  <!-- 筛选栏 -->
+  <div class="card mb-3">
+    <div class="card-body py-2">
+      <div class="row g-2 align-items-center">
+        <div class="col-auto"><label class="form-label mb-0" style="font-size:12px">商品类型</label></div>
+        <div class="col-auto"><select class="form-select form-select-sm" style="width:160px"><option>全部</option><option>无线麦克风</option><option>车载工具</option><option>摄影配件</option><option>3C配件</option></select></div>
+        <div class="col-auto"><label class="form-label mb-0" style="font-size:12px">审核状态</label></div>
+        <div class="col-auto"><select class="form-select form-select-sm" style="width:140px"><option>全部</option><option>待审核</option><option>已通过</option><option>需修改</option></select></div>
+        <div class="col-auto"><label class="form-label mb-0" style="font-size:12px">置信度</label></div>
+        <div class="col-auto"><select class="form-select form-select-sm" style="width:120px"><option>全部</option><option>高 (≥80%)</option><option>中 (50-79%)</option><option>低 (&lt;50%)</option></select></div>
+        <div class="col-auto"><button class="btn btn-sm btn-primary">查询</button></div>
+        <div class="col-auto ms-auto"><span class="text-muted" style="font-size:12px">共 8 条商品事实</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 商品事实卡片 #1 -->
+  <div class="fact-card">
+    <div class="card-header">
+      <div>
+        <strong>DJI Mic Mini 2 无线麦克风 一拖二含充电盒</strong>
+        <span class="badge bg-info ms-2">无线麦克风</span>
+        <span class="badge-confidence high ms-1">置信度 87%</span>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <span class="badge bg-success">已通过</span>
+        <span style="font-size:11px;color:#6c757d">证据: 12 条</span>
+        <button class="btn btn-outline-secondary btn-sm" style="font-size:11px">查看详情</button>
+        <button class="btn btn-outline-primary btn-sm" style="font-size:11px">进入适配 ▸</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="field-grid">
+        <div class="field-item"><div class="f-label">商品类型</div>无线麦克风 <span class="evidence-tag source">源</span></div>
+        <div class="field-item"><div class="f-label">品牌</div>DJI <span class="evidence-tag source">源</span></div>
+        <div class="field-item"><div class="f-label">材质</div><span class="text-warning">待确认</span> <span class="evidence-tag ai">AI 35%</span></div>
+        <div class="field-item"><div class="f-label">功能</div>无线收音, 降噪, 长续航</div>
+        <div class="field-item"><div class="f-label">适配型号</div>安卓/苹果/相机</div>
+        <div class="field-item"><div class="f-label">产地</div><span class="text-warning">待确认</span></div>
+        <div class="field-item"><div class="f-label">尺寸</div><span class="text-danger">未知</span></div>
+        <div class="field-item"><div class="f-label">重量</div><span class="text-danger">未知</span></div>
+        <div class="field-item"><div class="f-label">包装内容</div>发射器×2, 接收器×1, 充电盒×1</div>
+        <div class="field-item"><div class="f-label">电池容量</div><span class="text-danger">未知</span></div>
+      </div>
+
+      <div style="margin-top:10px"><strong style="font-size:12px">SKU 事实：</strong><span style="font-size:11px;color:#6c757d">6 个 SKU，5 已确认</span></div>
+      <div class="sku-strip">
+        <span class="sku-chip confirmed">SKU1: 黑色 / 一拖二含充电盒 ✅</span>
+        <span class="sku-chip confirmed">SKU2: 黑色 / 一拖二+转接头 ✅</span>
+        <span class="sku-chip confirmed">SKU3: 黑色 / 一拖一含充电盒 ✅</span>
+        <span class="sku-chip confirmed">SKU4: 黑色 / 一拖一+转接头 ✅</span>
+        <span class="sku-chip pending">SKU5: 黑色 / 一拖二... ⚠️</span>
+        <span class="sku-chip confirmed">SKU6: 黑色 / 一拖一 ✅</span>
+      </div>
+
+      <div class="unknown-fields">
+        <strong>⚠️ 未知字段 (4):</strong> material, dimensions, weight, battery_capacity
+        <span class="text-muted ms-2">— 这些字段在发布前需要人工补充或确认</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 商品事实卡片 #2 -->
+  <div class="fact-card">
+    <div class="card-header">
+      <div>
+        <strong>15合1多功能车载应急手电筒 黄色双USB</strong>
+        <span class="badge bg-info ms-2">车载工具</span>
+        <span class="badge-confidence high ms-1">置信度 92%</span>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <span class="badge bg-success">已通过</span>
+        <span style="font-size:11px;color:#6c757d">证据: 8 条</span>
+        <button class="btn btn-outline-secondary btn-sm" style="font-size:11px">查看详情</button>
+        <button class="btn btn-outline-primary btn-sm" style="font-size:11px">进入适配 ▸</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="field-grid">
+        <div class="field-item"><div class="f-label">商品类型</div>车载应急手电筒</div>
+        <div class="field-item"><div class="f-label">品牌</div><span class="text-muted">无品牌</span></div>
+        <div class="field-item"><div class="f-label">材质</div>ABS + 金属 <span class="evidence-tag source">源</span></div>
+        <div class="field-item"><div class="f-label">功能</div>照明, 安全锤, USB充电</div>
+        <div class="field-item"><div class="f-label">颜色</div>黄色</div>
+        <div class="field-item"><div class="f-label">包装内容</div>手电筒, Type-C线</div>
+      </div>
+      <div style="margin-top:10px"><strong style="font-size:12px">SKU 事实：</strong><span style="font-size:11px;color:#6c757d">2 个 SKU，全部已确认</span></div>
+      <div class="sku-strip">
+        <span class="sku-chip confirmed">SKU1: 黄色 标配 ✅</span>
+        <span class="sku-chip confirmed">SKU2: 黄色 高配 ✅</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 商品事实卡片 #3 — 待审核 -->
+  <div class="fact-card">
+    <div class="card-header">
+      <div>
+        <strong>摄影灯柔光箱套装 60x60cm 带支架</strong>
+        <span class="badge bg-info ms-2">摄影配件</span>
+        <span class="badge-confidence medium ms-1">置信度 65%</span>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <span class="badge bg-warning text-dark">待审核</span>
+        <span style="font-size:11px;color:#6c757d">证据: 4 条</span>
+        <button class="btn btn-outline-secondary btn-sm" style="font-size:11px">查看详情</button>
+        <button class="btn btn-outline-primary btn-sm" style="font-size:11px">进入适配 ▸</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="field-grid">
+        <div class="field-item"><div class="f-label">商品类型</div>摄影柔光箱</div>
+        <div class="field-item"><div class="f-label">尺寸</div>60×60cm <span class="evidence-tag manual">人工</span></div>
+        <div class="field-item"><div class="f-label">材质</div><span class="text-warning">待确认</span> <span class="evidence-tag ai">AI 40%</span></div>
+      </div>
+      <div class="unknown-fields mt-2">
+        <strong>⚠️ 待确认 (5 字段):</strong> 材质确认、重量实测、支架承重、灯泡色温、包装数量
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

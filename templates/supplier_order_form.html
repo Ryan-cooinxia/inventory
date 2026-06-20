@@ -13,7 +13,6 @@
     <div class="row mb-3">
         <div class="col-md-4">
             <label>供应商</label>
-            <!-- 携带当前供应商信息，供 JS 初始化 -->
             <div class="searchable-select"
                  data-name="supplier_id"
                  data-placeholder="请选择供应商"
@@ -44,23 +43,28 @@
         <tbody>
             {% set items = order_items if order else [] %}
             {% for i in items %}
-            <tr class="item-row">
+            <tr class="item-row" data-item-id="{{ i.id }}">
                 <td>
-                    <div class="searchable-select" data-name="product_id[]" data-placeholder="选择产品" data-storage="recent_products" data-list='{{ products_json | tojson }}'></div>
+                    <div class="searchable-select" data-name="product_id[]" data-placeholder="选择产品" data-storage="recent_products" data-list='{{ products_json | tojson }}' data-selected-id="{{ i.product.id }}" data-selected-name="{{ i.product.name }}"></div>
                 </td>
-                <td><input type="number" step="any" name="quantity[]" class="form-control quantity" required></td>
-                <td><input type="number" step="any" name="unit_price[]" class="form-control unit-price" required></td>
-                <td><span class="subtotal">0.00</span></td>
-                <td><button type="button" class="btn btn-danger btn-sm remove-row">删除</button></td>
+                <td><input type="number" step="any" name="quantity[]" class="form-control quantity" value="{{ i.quantity }}" required></td>
+                <td><input type="number" step="any" name="unit_price[]" class="form-control unit-price" value="{{ i.unit_price }}" required></td>
+                <td><span class="subtotal">{{ "%.2f"|format(i.subtotal) }}</span></td>
+                <td>
+                    <button type="button" class="btn btn-danger btn-sm remove-row">删除行</button>
+                    {% if i.id %}
+                    <button type="button" class="btn btn-outline-danger btn-sm delete-item-now ms-1" data-item-id="{{ i.id }}" title="直接从数据库删除此明细">✕</button>
+                    {% endif %}
+                </td>
             </tr>
             {% endfor %}
             {% if items|length == 0 %}
             <tr class="item-row">
                 <td>
-                    <div class="searchable-select" 
-                        data-name="product_id[]" 
-                        data-placeholder="搜索或选择产品" 
-                        data-storage="recent_products" 
+                    <div class="searchable-select"
+                        data-name="product_id[]"
+                        data-placeholder="搜索或选择产品"
+                        data-storage="recent_products"
                         data-list='{{ products_json | tojson }}'>
                     </div>
                 </td>
@@ -85,7 +89,7 @@
 
 {% block scripts %}
 <script>
-// ========== SearchableSelect 组件（增加初始值支持） ==========
+// ========== SearchableSelect 组件 ==========
 class SearchableSelect {
     constructor(container) {
         this.container = container;
@@ -94,7 +98,6 @@ class SearchableSelect {
         this.storageKey = container.dataset.storage;
         this.list = JSON.parse(container.dataset.list || '[]');
         this.recentIds = this.loadRecent();
-        // 读取初始值
         this.initialId = container.dataset.selectedId || '';
         this.initialName = container.dataset.selectedName || '';
         this.selectedId = this.initialId || null;
@@ -183,18 +186,22 @@ const addRowBtn = document.getElementById('add-row');
 const tbody = document.querySelector('#items-table tbody');
 
 addRowBtn.addEventListener('click', () => {
-    const newRow = tbody.rows[0].cloneNode(true);
+    const firstRow = tbody.rows[0];
+    const newRow = firstRow.cloneNode(true);
+    newRow.removeAttribute('data-item-id');
     // 清空输入框
-    newRow.querySelectorAll('input[type="text"]').forEach(inp => inp.value = '');
+    const searchContainer = newRow.querySelector('.searchable-select');
+    if (searchContainer) {
+        searchContainer.dataset.selectedId = '';
+        searchContainer.dataset.selectedName = '';
+        new SearchableSelect(searchContainer);
+    }
     newRow.querySelector('.quantity').value = '';
     newRow.querySelector('.unit-price').value = '';
     newRow.querySelector('.subtotal').innerText = '0.00';
-
-    // 重新初始化产品搜索选择器
-    const newSelectContainer = newRow.querySelector('.searchable-select');
-    if (newSelectContainer) {
-        new SearchableSelect(newSelectContainer);
-    }
+    // 移除立即删除按钮
+    const delNowBtn = newRow.querySelector('.delete-item-now');
+    if (delNowBtn) delNowBtn.remove();
 
     tbody.appendChild(newRow);
     bindRowEvents(newRow);
@@ -210,6 +217,28 @@ function bindRowEvents(row) {
     });
     row.querySelector('.quantity').addEventListener('input', () => updateSubtotal(row));
     row.querySelector('.unit-price').addEventListener('input', () => updateSubtotal(row));
+    // 立即删除按钮
+    const delNowBtn = row.querySelector('.delete-item-now');
+    if (delNowBtn) {
+        delNowBtn.addEventListener('click', () => deleteItemNow(row, delNowBtn.dataset.itemId));
+    }
+}
+
+async function deleteItemNow(row, itemId) {
+    if (!confirm('确定立即删除此明细？此操作不可撤销。')) return;
+    try {
+        const resp = await fetch(`/supplier_orders/item/${itemId}/delete`, { method: 'POST' });
+        const data = await resp.json();
+        if (data.ok) {
+            row.remove();
+            calcTotal();
+            alert('明细已删除');
+        } else {
+            alert('删除失败: ' + (data.error || '未知错误'));
+        }
+    } catch(e) {
+        alert('请求失败: ' + e.message);
+    }
 }
 
 function updateSubtotal(row) {

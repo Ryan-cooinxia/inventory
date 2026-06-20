@@ -1,0 +1,363 @@
+{% extends "base.html" %}
+{% block title %}采集列表 — 仓库记账系统{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2 class="mb-0">
+    {% if view == 'trash' %}🗑️ 回收站{% else %}📥 采集列表{% endif %}
+  </h2>
+  <div class="d-flex gap-2">
+    <button class="btn btn-primary" onclick="showCollectPanel()">🛒 网页采集</button>
+    <button class="btn btn-success" onclick="document.getElementById('import1688Panel').classList.toggle('d-none')">📂 导入 1688 文件夹</button>
+    <button class="btn btn-warning" onclick="document.getElementById('upload1688Panel').classList.toggle('d-none')">📄 上传 1688 HTML</button>
+    <button class="btn btn-outline-secondary" onclick="document.getElementById('pastePanel').classList.toggle('d-none')">📋 手动粘贴 JSON</button>
+    <a href="{{ url_for('ozon.sources', view='trash') if view != 'trash' else url_for('ozon.sources') }}" class="btn btn-outline-danger">
+      {% if view == 'trash' %}📥 返回列表{% else %}🗑️ 回收站{% endif %}
+    </a>
+  </div>
+</div>
+
+{% if view == 'trash' %}
+<div class="alert alert-warning d-flex justify-content-between align-items-center py-2 mb-3">
+  <span>⚠️ 回收站中的记录将在 <b>30 天</b>后自动清除</span>
+  <span class="text-muted small">{{ sources|length }} 条记录</span>
+</div>
+{% endif %}
+
+<!-- 网页采集面板 -->
+<div class="card mb-3 d-none" id="collectPanel">
+  <div class="card-header fw-bold">
+    🛒 网页采集
+    <button type="button" class="btn-close float-end" onclick="document.getElementById('collectPanel').classList.add('d-none')"></button>
+  </div>
+  <div class="card-body">
+    <ul class="nav nav-tabs mb-3" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-url" type="button">🔗 URL 采集</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-text" type="button">📄 粘贴内容</button>
+      </li>
+    </ul>
+    <div class="tab-content">
+      <!-- URL 采集 -->
+      <div class="tab-pane fade show active" id="tab-url">
+        <form method="POST" action="{{ url_for('ozon.source_collect_url') }}" onsubmit="return showLoading(this)">
+          <div class="mb-2">
+            <label class="form-label fw-bold">商品链接</label>
+            <input type="url" name="url" class="form-control" placeholder="https://detail.1688.com/offer/xxx.html 或淘宝/天猫/拼多多商品链接" required>
+          </div>
+          <small class="text-muted">支持 1688 / 淘宝 / 天猫 / 拼多多。系统将自动抓取页面、AI 提取商品信息。</small>
+          <div class="d-flex gap-2 justify-content-end mt-2">
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('collectPanel').classList.add('d-none')">取消</button>
+            <button type="submit" class="btn btn-primary">🔄 抓取并解析</button>
+          </div>
+        </form>
+      </div>
+      <!-- 粘贴内容 -->
+      <div class="tab-pane fade" id="tab-text">
+        <form method="POST" action="{{ url_for('ozon.source_collect_text') }}" onsubmit="return showLoading(this)">
+          <div class="mb-2">
+            <label class="form-label fw-bold">商品链接（可选）</label>
+            <input type="url" name="url" class="form-control" placeholder="方便标记来源，可不填">
+          </div>
+          <div class="mb-2">
+            <label class="form-label fw-bold">页面内容</label>
+            <textarea name="content" class="form-control" rows="10" style="font-family:monospace;font-size:12px" placeholder="在浏览器中打开商品页面，Ctrl+A 全选 → Ctrl+C 复制 → 粘贴到这里。&#10;&#10;AI 将自动识别标题、SKU、价格、图片等信息。" required></textarea>
+          </div>
+          <small class="text-muted">适用于无法直接抓取的页面（如需要登录的1688页面）。从浏览器全选复制内容后粘贴即可。</small>
+          <div class="d-flex gap-2 justify-content-end mt-2">
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('collectPanel').classList.add('d-none')">取消</button>
+            <button type="submit" class="btn btn-primary">🤖 AI 解析</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 加载提示 -->
+<div id="loadingOverlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:9999;display:none;align-items:center;justify-content:center;">
+  <div class="text-center bg-white rounded p-4 shadow">
+    <div class="spinner-border text-primary mb-3" role="status"></div>
+    <p class="mb-0">正在抓取并解析商品信息，请稍候...</p>
+    <small class="text-muted">可能需要 10-30 秒</small>
+  </div>
+</div>
+
+<!-- Paste Panel -->
+<div class="card mb-3 d-none" id="pastePanel">
+  <div class="card-header fw-bold">手动粘贴采集 JSON</div>
+  <div class="card-body">
+    <form method="POST" action="{{ url_for('ozon.source_add') }}">
+      <textarea name="raw_json" class="form-control mb-2" rows="5" style="font-family:monospace;font-size:12px" placeholder='粘贴符合采集 JSON 标准的数据 ...' required></textarea>
+      <div class="d-flex gap-2 justify-content-end">
+        <button type="button" class="btn btn-secondary" onclick="document.getElementById('pastePanel').classList.toggle('d-none')">取消</button>
+        <button type="submit" class="btn btn-primary">提交解析</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- 1688 文件夹导入面板 -->
+<div class="card mb-3 d-none" id="import1688Panel">
+  <div class="card-header fw-bold bg-success text-white">
+    📂 导入 jiyun/1688 采集结果
+    <button type="button" class="btn-close btn-close-white float-end" onclick="document.getElementById('import1688Panel').classList.add('d-none')"></button>
+  </div>
+  <div class="card-body">
+    <form method="POST" action="{{ url_for('ozon.source_import_1688_folder') }}">
+      <div class="mb-2">
+        <label class="form-label fw-bold">采集结果文件夹路径</label>
+        <input type="text" name="folder_path" class="form-control" placeholder="例如：G:\tools\1688-scraper\drone" required>
+        <small class="text-muted">包含 T_*.jpg（主图）、color_*.jpg（SKU图）、C_*.jpg（详情图）的文件夹</small>
+      </div>
+      <div class="mb-2">
+        <label class="form-label">商品标题（可选，留空自动从属性提取）</label>
+        <input type="text" name="title" class="form-control" placeholder="留空则自动识别">
+      </div>
+      <div class="alert alert-info py-2 mb-2" style="font-size:12px">
+        <b>使用流程：</b>
+        ① Chrome 安装 SingleFile 扩展 → ② 打开 1688 商品页保存为 HTML →
+        ③ 拖到 <code>G:\tools\1688-scraper\start_fixed.bat</code> →
+        ④ 在此输入输出文件夹路径导入
+      </div>
+      <div class="d-flex gap-2 justify-content-end">
+        <button type="button" class="btn btn-secondary" onclick="document.getElementById('import1688Panel').classList.add('d-none')">取消</button>
+        <button type="submit" class="btn btn-success">📂 导入</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- 上传 1688 HTML 文件面板 -->
+<div class="card mb-3 d-none" id="upload1688Panel">
+  <div class="card-header fw-bold bg-warning text-dark">
+    📄 上传 1688 HTML 文件（SingleFile 保存的网页）
+    <button type="button" class="btn-close float-end" onclick="document.getElementById('upload1688Panel').classList.add('d-none')"></button>
+  </div>
+  <div class="card-body">
+    <form method="POST" action="{{ url_for('ozon.source_import_1688_html') }}" enctype="multipart/form-data">
+      <div class="mb-2">
+        <label class="form-label fw-bold">选择 HTML 文件</label>
+        <input type="file" name="html_file" class="form-control" accept=".html,.htm" required>
+        <small class="text-muted">SingleFile 扩展保存的 1688 商品详情页 HTML 文件</small>
+      </div>
+      <div class="mb-2">
+        <label class="form-label">商品标题（可选，留空自动识别）</label>
+        <input type="text" name="title" class="form-control" placeholder="留空则从 HTML 中自动提取">
+      </div>
+      <div class="alert alert-warning py-2 mb-2" style="font-size:12px">
+        <b>使用流程：</b>
+        ① Chrome 安装 <a href="https://chromewebstore.google.com/detail/singlefile/mpiodijhfdgdkbphbolneriyphlmcjao" target="_blank">SingleFile 扩展</a> →
+        ② 打开 1688 商品页，点击 SingleFile 图标保存为 HTML →
+        ③ 在此上传保存的 HTML 文件 → 系统自动解析提取图片和数据
+      </div>
+      <div class="d-flex gap-2 justify-content-end">
+        <button type="button" class="btn btn-secondary" onclick="document.getElementById('upload1688Panel').classList.add('d-none')">取消</button>
+        <button type="submit" class="btn btn-warning">📄 上传并解析</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Filters -->
+<form class="row g-2 mb-3 align-items-end" method="GET">
+  <div class="col-auto">
+    <label class="form-label fw-bold">平台</label>
+    <select name="platform" class="form-select" style="width:130px">
+      <option value="">全部</option>
+      <option value="1688" {% if request.args.get('platform') == '1688' %}selected{% endif %}>1688</option>
+      <option value="taobao" {% if request.args.get('platform') == 'taobao' %}selected{% endif %}>淘宝</option>
+      <option value="tmall" {% if request.args.get('platform') == 'tmall' %}selected{% endif %}>天猫</option>
+      <option value="pinduoduo" {% if request.args.get('platform') == 'pinduoduo' %}selected{% endif %}>拼多多</option>
+      <option value="manual" {% if request.args.get('platform') == 'manual' %}selected{% endif %}>手动</option>
+      <option value="ai_extract" {% if request.args.get('platform') == 'ai_extract' %}selected{% endif %}>AI采集</option>
+    </select>
+  </div>
+  <div class="col-auto">
+    <label class="form-label fw-bold">状态</label>
+    <select name="status" class="form-select" style="width:130px">
+      <option value="">全部</option>
+      <option value="collected" {% if request.args.get('status') == 'collected' %}selected{% endif %}>collected</option>
+      <option value="parsed" {% if request.args.get('status') == 'parsed' %}selected{% endif %}>parsed</option>
+      <option value="drafted" {% if request.args.get('status') == 'drafted' %}selected{% endif %}>drafted</option>
+    </select>
+  </div>
+  <div class="col-auto"><button type="submit" class="btn btn-outline-primary">筛选</button></div>
+  <div class="col-auto ms-auto"><span class="text-muted">共 {{ sources|length if sources else 0 }} 条</span></div>
+</form>
+
+<div class="table-responsive-mobile">
+  {% if sources and view != 'trash' %}
+  <div class="mb-2 d-flex gap-2">
+    <form method="POST" action="{{ url_for('ozon.source_batch_delete') }}" id="batchDeleteForm" onsubmit="return confirmBatchDelete()">
+      <input type="hidden" name="ids" id="batchIds">
+      <button type="submit" class="btn btn-sm btn-outline-danger" id="btnBatchDelete" disabled>🗑️ 批量删除</button>
+    </form>
+    <span class="text-muted" style="font-size:11px;line-height:31px" id="batchCount"></span>
+  </div>
+  {% endif %}
+  <table class="table table-bordered table-sm align-middle">
+    <thead class="table-light">
+      <tr>
+        <th style="width:36px"><input type="checkbox" id="selectAll" onchange="toggleAll(this)" title="全选"></th>
+        <th>来源</th><th>商品标题</th><th class="text-center">SKU</th><th class="text-center">图片</th><th>采集时间</th><th>状态</th><th style="width:180px">操作</th></tr>
+    </thead>
+    <tbody>
+      {% for s in sources %}
+      <tr>
+        <td class="text-center"><input type="checkbox" class="source-checkbox" value="{{ s.id }}" onchange="updateBatch()"></td>
+        <td>
+          {% if s.platform == '1688' %}<span class="badge bg-danger">1688</span>
+          {% elif s.platform == 'taobao' %}<span class="badge bg-warning text-dark">淘宝</span>
+          {% elif s.platform == 'pinduoduo' %}<span class="badge" style="background:#e6004c;color:#fff">拼多多</span>
+          {% elif s.platform == 'ai_extract' %}<span class="badge bg-info">AI采集</span>
+          {% else %}<span class="badge bg-secondary">{{ s.platform }}</span>
+          {% endif %}
+        </td>
+        <td><a href="{{ url_for('ozon.source_detail', source_id=s.id) }}">{{ s.title_cn }}</a></td>
+        <td class="text-center">{{ s.sku_count }}</td>
+        <td class="text-center" style="min-width:120px">
+          {% set media_list = preview_media.get(s.id, []) %}
+          {% if media_list %}
+          <div class="d-flex gap-1 justify-content-center" style="flex-wrap:wrap;max-width:140px;margin:0 auto">
+            {% for m in media_list[:4] %}
+            <img src="{{ m.source_url }}" alt="" onclick="showImage('{{ m.source_url }}')" referrerpolicy="no-referrer"
+                 style="width:28px;height:28px;object-fit:cover;border-radius:3px;cursor:pointer;border:1px solid #dee2e6"
+                 onerror="this.style.display='none'" loading="lazy" title="点击查看大图">
+            {% endfor %}
+            {% if media_list|length > 4 %}
+            <span style="font-size:10px;color:#6c757d;line-height:28px">+{{ media_list|length - 4 }}</span>
+            {% endif %}
+          </div>
+          {% else %}
+          <span class="text-muted">{{ s.image_count }}</span>
+          {% endif %}
+        </td>
+        <td>{% if s.captured_at %}{% if s.captured_at is string %}{{ s.captured_at[:16] }}{% else %}{{ s.captured_at.strftime('%m-%d %H:%M') }}{% endif %}{% endif %}</td>
+        <td>
+          {% if s.status == 'collected' %}<span class="badge bg-info">collected</span>
+          {% elif s.status == 'parsed' %}<span class="badge bg-warning text-dark">parsed</span>
+          {% elif s.status == 'drafted' %}<span class="badge bg-success">drafted</span>
+          {% else %}<span class="badge bg-secondary">{{ s.status }}</span>
+          {% endif %}
+          {# 质量提醒标记 #}
+          {% set q = quality_map.get(s.id) %}
+          {% if q %}
+            {% if q.price_unconfirmed %}<span class="badge bg-warning text-dark ms-1" title="采购价待确认">💰待确认</span>{% endif %}
+            {% if q.detail_missing %}<span class="badge bg-secondary ms-1" title="详情描述缺失">📄缺详情</span>{% endif %}
+            {% if q.rejected_image_count and q.rejected_image_count > 0 %}<span class="badge bg-info ms-1" title="{{ q.rejected_image_count }} 张图片已过滤">🖼已过滤</span>{% endif %}
+          {% endif %}
+        </td>
+        <td>
+          {% if view == 'trash' %}
+          <div class="d-flex gap-1">
+            <form method="POST" action="{{ url_for('ozon.source_restore', source_id=s.id) }}" style="display:inline">
+              <button class="btn btn-sm btn-outline-success">↩ 还原</button>
+            </form>
+            <form method="POST" action="{{ url_for('ozon.source_destroy', source_id=s.id) }}" style="display:inline" onsubmit="return confirm('确定彻底删除「{{ s.title_cn }}」？此操作不可恢复。')">
+              <button class="btn btn-sm btn-outline-danger">✕ 彻底删除</button>
+            </form>
+          </div>
+          {% else %}
+          <div class="d-flex gap-1">
+            {% if s.status != 'drafted' %}
+              <a href="{{ url_for('ozon.adaptation_workspace', source_id=s.id) }}" class="btn btn-sm btn-primary">🔄 进入适配</a>
+            {% endif %}
+            {% set draft = s.drafts.first() if s.drafts else none %}
+            {% if draft %}
+              <a href="{{ url_for('ozon.listing_review', draft_id=draft.id) }}" class="btn btn-sm btn-outline-secondary">查看草稿</a>
+            {% endif %}
+            <form method="POST" action="{{ url_for('ozon.source_delete', source_id=s.id) }}" style="display:inline" onsubmit="return confirm('确定将「{{ s.title_cn }}」移入回收站？')">
+              <button class="btn btn-sm btn-outline-danger">🗑</button>
+            </form>
+          </div>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not sources %}
+      <tr><td colspan="7" class="text-center text-muted py-4">
+        {% if view == 'trash' %}
+        <p class="mb-2">🗑️ 回收站为空</p>
+        <p class="small">删除的采集记录会出现在这里，30天后自动清除</p>
+        {% else %}
+        <p class="mb-2">暂无采集商品</p>
+        <p class="small">点击上方 🛒 网页采集 粘贴商品链接自动解析，或使用 📋 手动粘贴 JSON</p>
+        {% endif %}
+      </td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function showCollectPanel() {
+  document.getElementById('collectPanel').classList.remove('d-none');
+  document.getElementById('pastePanel').classList.add('d-none');
+}
+function showLoading(form) {
+  var overlay = document.getElementById('loadingOverlay');
+  overlay.style.display = 'flex';
+  setTimeout(function(){ overlay.style.display = 'none'; }, 30000);
+  return true;
+}
+// URL 抓取失败时自动打开粘贴内容面板
+document.addEventListener('DOMContentLoaded', function() {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('collect') === 'paste') {
+    document.getElementById('collectPanel').classList.remove('d-none');
+    // 切换到粘贴内容 tab
+    var pasteTab = document.querySelector('[data-bs-target="#tab-text"]');
+    if (pasteTab) {
+      new bootstrap.Tab(pasteTab).show();
+    }
+    // 预填 URL
+    var url = params.get('url');
+    if (url) {
+      var urlInput = document.querySelector('#tab-text input[name="url"]');
+      if (urlInput) urlInput.value = url;
+    }
+  }
+});
+
+// 批量删除
+function toggleAll(el) {
+  document.querySelectorAll('.source-checkbox').forEach(function(cb) { cb.checked = el.checked; });
+  updateBatch();
+}
+function updateBatch() {
+  var checked = document.querySelectorAll('.source-checkbox:checked');
+  var ids = [];
+  checked.forEach(function(cb) { ids.push(cb.value); });
+  document.getElementById('batchIds').value = ids.join(',');
+  document.getElementById('btnBatchDelete').disabled = ids.length === 0;
+  document.getElementById('batchCount').textContent = ids.length ? '已选 ' + ids.length + ' 条' : '';
+}
+function confirmBatchDelete() {
+  var ids = document.getElementById('batchIds').value;
+  if (!ids) { alert('请先选择要删除的记录'); return false; }
+  return confirm('确认将 ' + ids.split(',').length + ' 条记录移入回收站？');
+}
+
+// 图片灯箱
+function showImage(url) {
+  var overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:flex;align-items:center;justify-content:center;cursor:pointer';
+  overlay.onclick = function() { overlay.remove(); };
+  var img = document.createElement('img');
+  img.src = url;
+  img.referrerPolicy = 'no-referrer';
+  img.style.cssText = 'max-width:90vw;max-height:90vh;object-fit:contain;border-radius:4px';
+  overlay.appendChild(img);
+  document.body.appendChild(overlay);
+}
+</script>
+
+<!-- 图片灯箱占位 -->
+<div id="imageLightbox" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;align-items:center;justify-content:center" onclick="this.style.display='none'">
+  <img id="lightboxImg" style="max-width:90vw;max-height:90vh;object-fit:contain;border-radius:4px">
+</div>
+{% endblock %}

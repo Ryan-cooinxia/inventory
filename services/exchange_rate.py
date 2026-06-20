@@ -56,7 +56,9 @@ def update_exchange_rates():
 def _background_updater():
     """后台线程：定时更新汇率"""
     update_exchange_rates()
-    threading.Timer(UPDATE_INTERVAL, _background_updater).start()
+    t = threading.Timer(UPDATE_INTERVAL, _background_updater)
+    t.daemon = True
+    t.start()
 
 
 def start_background_updater():

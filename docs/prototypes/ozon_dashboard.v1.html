@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OZON 工作台 — 仓库记账系统</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  .stat-card { transition: box-shadow .15s, transform .15s; cursor: pointer; }
+  .stat-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,.12); transform: translateY(-1px); }
+  .stat-value { font-size: 28px; font-weight: 700; }
+</style>
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+  <div class="container">
+    <a class="navbar-brand" href="#">仓库记账</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <ul class="navbar-nav">
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">基础资料</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#">产品管理</a></li>
+            <li><a class="dropdown-item" href="#">客户管理</a></li>
+            <li><a class="dropdown-item" href="#">供应商管理</a></li>
+          </ul>
+        </li>
+        <li class="nav-item"><a class="nav-link" href="#">供应商订单</a></li>
+        <li class="nav-item"><a class="nav-link" href="#">客户订单</a></li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle active" href="#" data-bs-toggle="dropdown">OZON 运营</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item active" href="#">📊 工作台</a></li>
+            <li><a class="dropdown-item" href="#">⚙️ 平台接口</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📥 采集列表</a></li>
+            <li><a class="dropdown-item" href="#">📝 刊登草稿</a></li>
+            <li><a class="dropdown-item" href="#">🚀 发布任务</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📋 提示词库</a></li>
+            <li><a class="dropdown-item" href="#">💰 定价规则</a></li>
+          </ul>
+        </li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">统计报表</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#">每日进出货</a></li>
+            <li><a class="dropdown-item" href="#">客户订货统计</a></li>
+            <li><a class="dropdown-item" href="#">产品订购总表</a></li>
+          </ul>
+        </li>
+      </ul>
+      <ul class="navbar-nav ms-auto">
+        <li class="nav-item"><span class="nav-link">👤 管理员</span></li>
+        <li class="nav-item"><a class="nav-link" href="#">退出</a></li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+  <h2 class="mb-3">OZON 工作台</h2>
+
+  <!-- Quick Actions -->
+  <div class="mb-3">
+    <a href="#" class="btn btn-primary me-2">📥 商品采集</a>
+    <a href="#" class="btn btn-outline-secondary">📋 查看待审核草稿 (8)</a>
+  </div>
+
+  <!-- Stats Cards -->
+  <div class="row mb-4">
+    <div class="col-md-3 col-6 mb-3">
+      <div class="card stat-card bg-light h-100">
+        <div class="card-body text-center">
+          <h6 class="card-title text-muted">已配置店铺</h6>
+          <p class="stat-value text-primary mb-0">2</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3 col-6 mb-3">
+      <div class="card stat-card bg-light h-100">
+        <div class="card-body text-center">
+          <h6 class="card-title text-muted">采集待处理</h6>
+          <p class="stat-value text-warning mb-0">15</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3 col-6 mb-3">
+      <div class="card stat-card bg-light h-100">
+        <div class="card-body text-center">
+          <h6 class="card-title text-muted">草稿待审核</h6>
+          <p class="stat-value mb-0" style="color:#fd7e14;">8</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3 col-6 mb-3">
+      <div class="card stat-card bg-success text-white h-100">
+        <div class="card-body text-center">
+          <h6 class="card-title text-white-50">可发布</h6>
+          <p class="stat-value mb-0">5</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3 col-6 mb-3">
+      <div class="card stat-card bg-info text-white h-100">
+        <div class="card-body text-center">
+          <h6 class="card-title text-white-50">发布中</h6>
+          <p class="stat-value mb-0">3</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3 col-6 mb-3">
+      <div class="card stat-card bg-danger text-white h-100">
+        <div class="card-body text-center">
+          <h6 class="card-title text-white-50">发布失败</h6>
+          <p class="stat-value mb-0">2</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3 col-6 mb-3">
+      <div class="card stat-card bg-light h-100">
+        <div class="card-body text-center">
+          <h6 class="card-title text-muted">已发布商品</h6>
+          <p class="stat-value mb-0" style="color:#6f42c1;">47</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent Failures -->
+  <div class="card mb-4">
+    <div class="card-header fw-bold">
+      最近失败原因
+      <small class="text-muted fw-normal ms-2">最近 5 条</small>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive-mobile">
+        <table class="table table-bordered table-sm mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th style="width:130px">时间</th>
+              <th style="width:110px">店铺</th>
+              <th>商品</th>
+              <th style="width:220px">失败原因</th>
+              <th style="width:80px">状态</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>06-13 10:32</td>
+              <td>OZON 测试店</td>
+              <td>15合1车载应急手电筒</td>
+              <td>类目必填属性 "Бренд" 未填写</td>
+              <td><span class="badge bg-danger">失败</span></td>
+            </tr>
+            <tr>
+              <td>06-13 09:15</td>
+              <td>OZON 测试店</td>
+              <td>无人机图传天线 5.8GHz</td>
+              <td>图片审核未通过：含中文字幕</td>
+              <td><span class="badge bg-danger">失败</span></td>
+            </tr>
+            <tr>
+              <td>06-12 16:48</td>
+              <td>OZON 测试店</td>
+              <td>Type-C 快充数据线 1m</td>
+              <td>SKU 价格未人工确认</td>
+              <td><span class="badge bg-warning text-dark">待重试</span></td>
+            </tr>
+            <tr>
+              <td>06-12 14:20</td>
+              <td>OZON 测试店</td>
+              <td>车载手机支架 磁吸款</td>
+              <td>OZON API 返回 429：请求频率限制</td>
+              <td><span class="badge bg-info">自动重试中</span></td>
+            </tr>
+            <tr>
+              <td>06-12 11:05</td>
+              <td>OZON 测试店</td>
+              <td>运动相机收纳包 防水款</td>
+              <td>图片尺寸不符：需 3:4 竖版，当前 16:9</td>
+              <td><span class="badge bg-danger">失败</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Future data placeholder -->
+  <div class="card mb-4">
+    <div class="card-header fw-bold">运营数据概览 <small class="text-muted fw-normal ms-2">二期接入</small></div>
+    <div class="card-body text-center text-muted py-4">
+      <p class="mb-0">📊 支付金额、访客数、转化率、退款率等运营数据将在二期接入 OZON 数据分析 API 后展示</p>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

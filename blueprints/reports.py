@@ -4,7 +4,7 @@ from flask_login import login_required, current_user
 from models import (
     Product, PurchaseOrder, PurchaseOrderItem,
     SalesOrder, SalesOrderItem,
-    CustomerOrder, CustomerOrderItem,
+    CustomerOrder, CustomerOrderItem, Customer,
     SupplierOrder, SupplierOrderItem,
     Supplier
 )
@@ -279,31 +279,120 @@ def report_daily():
 @login_required
 def report_customer():
     start_date = request.args.get('start_date', '2000-01-01')
-    end_date = request.args.get('end_date', datetime.date.today())
+    end_date = request.args.get('end_date', datetime.date.today().strftime('%Y-%m-%d'))
+    customer_id = request.args.get('customer_id', '')
+
+    # 对账时段：两个日期都传入时才启用明细拆分
+    reconcile_start_str = request.args.get('reconcile_start', '')
+    reconcile_end_str = request.args.get('reconcile_end', '')
+    reconcile_start = None
+    reconcile_end = None
+    show_detail = False
+    if reconcile_start_str and reconcile_end_str:
+        try:
+            reconcile_start = datetime.datetime.strptime(reconcile_start_str, '%Y-%m-%d').date()
+            reconcile_end = datetime.datetime.strptime(reconcile_end_str, '%Y-%m-%d').date()
+            show_detail = True
+        except ValueError:
+            pass
+
+    # 客户列表（用于下拉筛选）
+    customers = Customer.select().where(Customer.user == current_user)
+
+    # 聚合：时间范围内每个产品的订购总量
+    order_filter = (CustomerOrder.order_date.between(start_date, end_date)) & \
+                   (CustomerOrder.user == current_user)
+    if customer_id:
+        order_filter = order_filter & (CustomerOrder.customer == int(customer_id))
 
     query = (CustomerOrderItem
-             .select(CustomerOrder.customer, CustomerOrderItem.product,
+             .select(CustomerOrderItem.product,
                      fn.SUM(CustomerOrderItem.quantity).alias('total_qty'),
                      fn.SUM(CustomerOrderItem.subtotal).alias('total_amount'))
              .join(CustomerOrder)
-             .where((CustomerOrder.order_date.between(start_date, end_date)) &
-                    (CustomerOrder.user == current_user))
-             .group_by(CustomerOrder.customer, CustomerOrderItem.product)
-             .order_by(CustomerOrder.customer.name, CustomerOrderItem.product.name))
+             .where(order_filter)
+             .group_by(CustomerOrderItem.product)
+             .order_by(fn.SUM(CustomerOrderItem.subtotal).desc()))
 
     rows = []
+    total_ordered_value = 0.0
+    total_shipped_value = 0.0
+    total_shipped_in_period_value = 0.0
+
     for item in query:
+        product = item.product
+        total_qty = item.total_qty
+        total_amount = item.total_amount
+
+        # 相关客户订单 ID
+        co_ids = (CustomerOrderItem
+                  .select(CustomerOrderItem.order)
+                  .join(CustomerOrder)
+                  .where((CustomerOrderItem.product == product) & order_filter))
+
+        # 累计已发货
+        shipped_total = (SalesOrderItem
+                         .select(fn.SUM(SalesOrderItem.quantity))
+                         .join(SalesOrder)
+                         .where((SalesOrder.customer_order.in_(co_ids)) &
+                                (SalesOrderItem.product == product) &
+                                (SalesOrder.user == current_user))
+                         .scalar()) or 0
+
+        pending_total = total_qty - shipped_total
+        shipped_in_period = 0
+        pending_before = 0
+        shipped_value = shipped_total * (total_amount / total_qty) if total_qty > 0 else 0
+
+        # 选了对账时段才计算明细
+        if show_detail and reconcile_start and reconcile_end:
+            shipped_before = (SalesOrderItem
+                              .select(fn.SUM(SalesOrderItem.quantity))
+                              .join(SalesOrder)
+                              .where((SalesOrder.customer_order.in_(co_ids)) &
+                                     (SalesOrderItem.product == product) &
+                                     (SalesOrder.user == current_user) &
+                                     (SalesOrder.order_date < reconcile_start))
+                              .scalar()) or 0
+            # 时段内发货：开始日期 ≤ 发货日期 ≤ 结束日期
+            shipped_up_to_end = (SalesOrderItem
+                                  .select(fn.SUM(SalesOrderItem.quantity))
+                                  .join(SalesOrder)
+                                  .where((SalesOrder.customer_order.in_(co_ids)) &
+                                         (SalesOrderItem.product == product) &
+                                         (SalesOrder.user == current_user) &
+                                         (SalesOrder.order_date <= reconcile_end))
+                                  .scalar()) or 0
+            shipped_in_period = shipped_up_to_end - shipped_before
+            pending_before = total_qty - shipped_before
+            shipped_in_period_value = shipped_in_period * (total_amount / total_qty) if total_qty > 0 else 0
+            total_shipped_in_period_value += shipped_in_period_value
+
         rows.append({
-            'customer': item.order.customer.name,
-            'product': item.product.name,
-            'unit': item.product.unit,
-            'total_qty': item.total_qty,
-            'total_amount': item.total_amount
+            'product': product.name,
+            'sku': product.sku or '',
+            'unit': product.unit,
+            'total_qty': total_qty,
+            'total_amount': total_amount,
+            'shipped_total': shipped_total,
+            'pending_total': pending_total,
+            'shipped_in_period': shipped_in_period,
+            'pending_before': pending_before,
         })
+        total_ordered_value += total_amount
+        total_shipped_value += shipped_value
 
     return render_template('report_customer.html',
                            start_date=start_date, end_date=end_date,
-                           rows=rows)
+                           reconcile_start=reconcile_start,
+                           reconcile_end=reconcile_end,
+                           show_detail=show_detail,
+                           customers=customers,
+                           selected_customer=customer_id,
+                           rows=rows,
+                           total_ordered_value=total_ordered_value,
+                           total_shipped_value=total_shipped_value,
+                           total_shipped_in_period_value=total_shipped_in_period_value)
 
 
 @reports_bp.route('/report/supplier')

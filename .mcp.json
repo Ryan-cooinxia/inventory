@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "vision-tools": {
+      "command": "C:\\Users\\Lenovo\\.claude-mcp\\vision-tools\\.venv\\Scripts\\python.exe",
+      "args": ["C:\\Users\\Lenovo\\.claude-mcp\\vision-tools\\server.py"],
+      "description": "图片识别分析工具，支持 UI 审查、商品图片检测、OZON 后台截图分析、OCR 文字提取"
+    }
+  }
+}

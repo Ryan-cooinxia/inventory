@@ -1,25 +1,150 @@
 {% extends "base.html" %}
-{% block title %}客户订货统计{% endblock %}
+{% block title %}客户订货对账表{% endblock %}
 {% block content %}
-<h2>客户订货统计</h2>
-<form class="row g-3 mb-4" method="GET">
-    <div class="col-auto"><input type="date" name="start_date" value="{{ start_date }}"></div>
-    <div class="col-auto">至</div>
-    <div class="col-auto"><input type="date" name="end_date" value="{{ end_date }}"></div>
-    <div class="col-auto"><button type="submit" class="btn btn-primary">查询</button></div>
+<h2>客户订货对账表</h2>
+
+<form class="row g-3 mb-3" method="GET">
+    <div class="col-auto">
+        <label class="form-label fw-bold">客户</label>
+        <select name="customer_id" class="form-select" style="width:160px">
+            <option value="">全部客户</option>
+            {% for c in customers %}
+            <option value="{{ c.id }}" {% if selected_customer|string == c.id|string %}selected{% endif %}>{{ c.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto">
+        <label class="form-label fw-bold">订单日期</label>
+        <div class="d-flex align-items-center gap-2">
+            <input type="date" name="start_date" value="{{ start_date }}" class="form-control" style="width:140px">
+            <span>至</span>
+            <input type="date" name="end_date" value="{{ end_date }}" class="form-control" style="width:140px">
+        </div>
+    </div>
+    <div class="col-auto">
+        <label class="form-label fw-bold">对账时段 <small class="text-muted">(选填)</small></label>
+        <div class="d-flex align-items-center gap-2">
+            <input type="date" name="reconcile_start" value="{{ reconcile_start or '' }}" class="form-control" style="width:140px">
+            <span>至</span>
+            <input type="date" name="reconcile_end" value="{{ reconcile_end or '' }}" class="form-control" style="width:140px">
+        </div>
+    </div>
+    <div class="col-auto align-self-end">
+        <button type="submit" class="btn btn-primary">查询</button>
+        <a href="/report/customer" class="btn btn-outline-secondary">重置</a>
+    </div>
 </form>
-<table class="table table-striped">
-    <thead><tr><th>客户</th><th>产品</th><th>单位</th><th>订货总量</th><th>订货金额</th></tr></thead>
-    <tbody>
-    {% for row in rows %}
-    <tr>
-        <td>{{ row.customer }}</td>
-        <td>{{ row.product }}</td>
-        <td>{{ row.unit }}</td>
-        <td>{{ row.total_qty }}</td>
-        <td>{{ "%.2f"|format(row.total_amount) }}</td>
-    </tr>
-    {% endfor %}
-    </tbody>
-</table>
+
+<!-- ===== 上表：产品订货汇总 ===== -->
+<div class="card mb-4">
+    <div class="card-header fw-bold">
+        📊 产品订货汇总
+        <span class="text-muted fw-normal ms-3">订货 ¥{{ "%.2f"|format(total_ordered_value) }} / 已发 ¥{{ "%.2f"|format(total_shipped_value) }} / 未发 ¥{{ "%.2f"|format(total_ordered_value - total_shipped_value) }}</span>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-bordered table-sm mb-0 align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>SKU</th>
+                    <th>产品</th>
+                    <th>单位</th>
+                    <th class="text-center">订货量</th>
+                    <th class="text-center">已发货</th>
+                    <th class="text-center">未发货</th>
+                    <th>状态</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in rows %}
+            <tr>
+                <td><code>{{ row.sku }}</code></td>
+                <td>{{ row.product }}</td>
+                <td>{{ row.unit }}</td>
+                <td class="text-center">{{ row.total_qty }}</td>
+                <td class="text-center text-success">{{ row.shipped_total }}</td>
+                <td class="text-center">
+                    {% if row.pending_total > 0 %}
+                    <span class="text-danger fw-bold">{{ row.pending_total }}</span>
+                    {% else %}
+                    <span class="badge bg-success">✓</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if row.pending_total <= 0 %}
+                    <span class="badge bg-success">已完成</span>
+                    {% elif row.shipped_total == 0 %}
+                    <span class="badge bg-warning text-dark">未发货</span>
+                    {% else %}
+                    <span class="badge bg-info">部分发货</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr class="table-secondary fw-bold">
+                    <td colspan="3" class="text-end">合计：</td>
+                    <td class="text-center">{{ rows | sum(attribute='total_qty') }}</td>
+                    <td class="text-center">{{ rows | sum(attribute='shipped_total') }}</td>
+                    <td class="text-center">{{ rows | sum(attribute='pending_total') }}</td>
+                    <td></td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+</div>
+
+<!-- ===== 下表：对账明细（选了对账时段才显示） ===== -->
+{% if show_detail %}
+<div class="card mb-4">
+    <div class="card-header fw-bold">
+        📅 {{ reconcile_start }} 至 {{ reconcile_end }} 发货情况表
+        <span class="text-muted fw-normal ms-3">本时段发货 ¥{{ "%.2f"|format(total_shipped_in_period_value) }}</span>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-bordered table-sm mb-0 align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>SKU</th>
+                    <th>产品</th>
+                    <th class="text-center">期初剩余<br><small class="text-muted fw-normal">{{ reconcile_start }} 前未发</small></th>
+                    <th class="text-center">本时段发货<br><small class="text-muted fw-normal">{{ reconcile_start }} ～ {{ reconcile_end }}</small></th>
+                    <th class="text-center">期末剩余<br><small class="text-muted fw-normal">{{ reconcile_end }} 后仍欠</small></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in rows %}
+            {% if row.pending_total > 0 or row.shipped_in_period > 0 %}
+            <tr>
+                <td><code>{{ row.sku }}</code></td>
+                <td>{{ row.product }}</td>
+                <td class="text-center">
+                    {% if row.pending_before > 0 %}
+                    <span class="text-warning fw-bold">{{ row.pending_before }}</span>
+                    {% else %}
+                    <span class="text-muted">0</span>
+                    {% endif %}
+                </td>
+                <td class="text-center">
+                    {% if row.shipped_in_period > 0 %}
+                    <span class="text-success fw-bold">+{{ row.shipped_in_period }}</span>
+                    {% else %}
+                    <span class="text-muted">0</span>
+                    {% endif %}
+                </td>
+                <td class="text-center">
+                    {% if row.pending_total > 0 %}
+                    <span class="text-danger fw-bold">{{ row.pending_total }}</span>
+                    {% else %}
+                    <span class="badge bg-success">✓ 时段内发齐</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
 {% endblock %}

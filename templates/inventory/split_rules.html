@@ -1,0 +1,380 @@
+{% extends "base.html" %}
+{% block title %}拆包规则 — 仓库记账系统{% endblock %}
+{% block head %}
+<style>
+.searchable-select { position: relative; }
+.searchable-select .dropdown-menu {
+  max-height: 200px; overflow-y: auto; width: 100%;
+  position: absolute; top: 100%; left: 0; z-index: 1050;
+}
+.rule-item-row .searchable-select { min-width: 200px; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0">📦 拆包规则</h5>
+  <button class="btn btn-primary btn-sm" id="btnNewRule">+ 新建规则</button>
+</div>
+
+<!-- 编辑表单卡片 -->
+<div class="card mb-3 d-none" id="ruleFormCard">
+  <div class="card-header py-2"><strong id="formTitle">新建拆包规则</strong></div>
+  <div class="card-body py-2">
+    <form id="ruleForm" onsubmit="return validateRule()">
+      <input type="hidden" name="rule_id" id="editRuleId" value="">
+      <div class="row g-2 mb-2">
+        <div class="col-sm-3">
+          <label class="form-label" style="font-size:12px">规则名称</label>
+          <input type="text" name="name" id="ruleName" class="form-control form-control-sm" required>
+        </div>
+        <div class="col-sm-3">
+          <label class="form-label" style="font-size:12px">源产品（整包）</label>
+          <div class="searchable-select" data-name="source_product_id" data-placeholder="搜索或选择产品" data-storage="recent_split_source"></div>
+        </div>
+        <div class="col-sm-2">
+          <label class="form-label" style="font-size:12px">成本分摊</label>
+          <select name="cost_method" id="costMethod" class="form-select form-select-sm">
+            <option value="ratio">按比例</option>
+            <option value="manual">手动指定</option>
+          </select>
+        </div>
+        <div class="col-sm-2">
+          <label class="form-label" style="font-size:12px">备注</label>
+          <input type="text" name="remark" id="ruleRemark" class="form-control form-control-sm">
+        </div>
+      </div>
+      <div style="font-size:12px"><strong>拆出产品：</strong></div>
+      <table class="table table-sm" id="ruleItems">
+        <thead><tr><th>目标产品</th><th>每包产出数量</th><th>成本比例 %</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <button type="button" class="btn btn-outline-secondary btn-sm" onclick="addRuleItem()">+ 添加产品</button>
+      <div class="mt-2">
+        <button type="submit" class="btn btn-success btn-sm" id="btnSubmit">保存规则</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="hideForm()">取消</button>
+      </div>
+      <small class="text-muted ms-2">比例自动补齐到 100%</small>
+    </form>
+  </div>
+</div>
+
+<!-- 规则列表 -->
+<div class="table-responsive">
+  <table class="table table-sm table-hover" style="font-size:12px">
+    <thead class="table-light"><tr><th>规则名称</th><th>源产品</th><th>拆出产品</th><th>分摊方式</th><th>更新时间</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for r in rules %}
+      <tr id="rule-row-{{ r.id }}">
+        <td><strong>{{ r.name }}</strong></td>
+        <td>{{ r.source_product.name }}</td>
+        <td>
+          {% for item in r.items %}
+          <span class="badge bg-light text-dark me-1">{{ item.target_product.name }} x{{ item.quantity }}</span>
+          {% endfor %}
+        </td>
+        <td>{{ '按比例' if r.cost_method == 'ratio' else '手动' }}</td>
+        <td>{{ r.updated_at.strftime('%m-%d %H:%M') }}</td>
+        <td>
+          <button type="button" class="btn btn-sm btn-outline-primary" style="font-size:10px" onclick="editRule({{ r.id }})">编辑</button>
+          <form method="POST" action="/inventory/split-rules/{{ r.id }}/delete" style="display:inline" onsubmit="return confirm('确定删除？')">
+            <button class="btn btn-sm btn-outline-danger" style="font-size:10px">删除</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="text-center text-muted py-3">暂无拆包规则</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ========== 产品数据（全局，一次性生成）==========
+var allProducts = [{% for p in products %}{"id": {{ p.id }}, "name": {{ p.name | tojson }}}{% if not loop.last %}, {% endif %}{% endfor %}];
+console.log('产品数量:', allProducts.length);
+
+// ========== 规则数据（用于编辑回填）==========
+var rulesData = {};
+{% for r in rules %}
+rulesData[{{ r.id }}] = {
+  name: {{ r.name | tojson }},
+  source_id: {{ r.source_product.id }},
+  source_name: {{ r.source_product.name | tojson }},
+  cost_method: {{ r.cost_method | tojson }},
+  remark: {{ (r.remark or '') | tojson }},
+  items: [{% for item in r.items %}{
+    product_id: {{ item.target_product.id }},
+    product_name: {{ item.target_product.name | tojson }},
+    quantity: {{ item.quantity }},
+    cost_ratio: {{ (item.cost_ratio or 0) * 100 }}
+  }{% if not loop.last %}, {% endif %}{% endfor %}]
+};
+{% endfor %}
+
+// ========== SearchableSelect 组件 ==========
+var _ssCounter = 0;
+
+function createSearchableSelect(container) {
+  _ssCounter++;
+  var name = container.dataset.name;
+  var placeholder = container.dataset.placeholder || '请选择';
+  var storageKey = container.dataset.storage;
+  var list = allProducts.slice();
+  var selectedId = null;
+  var uid = '_ss' + _ssCounter;
+
+  // 渲染 DOM
+  container.innerHTML =
+    '<input type="text" id="' + uid + '_input" class="form-control form-control-sm search-input" placeholder="' + placeholder + '" autocomplete="off">'
+    + '<input type="hidden" name="' + name + '" id="' + uid + '_hidden" value="">'
+    + '<ul class="dropdown-menu" id="' + uid + '_dropdown" style="display:none"></ul>';
+
+  var input = document.getElementById(uid + '_input');
+  var hidden = document.getElementById(uid + '_hidden');
+  var dropdown = document.getElementById(uid + '_dropdown');
+
+  // 近期选择
+  function loadRecent() {
+    if (!storageKey) return [];
+    try { return JSON.parse(localStorage.getItem(storageKey) || '[]'); } catch(e) { return []; }
+  }
+  function saveRecent(id) {
+    if (!storageKey) return;
+    var recents = loadRecent();
+    recents = recents.filter(function(x){ return x !== id; });
+    recents.unshift(id);
+    if (recents.length > 5) recents.pop();
+    localStorage.setItem(storageKey, JSON.stringify(recents));
+  }
+
+  function getSortedList() {
+    var items = list.slice();
+    var recents = loadRecent();
+    if (recents.length) {
+      items.sort(function(a, b) {
+        var ai = recents.indexOf(a.id), bi = recents.indexOf(b.id);
+        if (ai !== -1 && bi === -1) return -1;
+        if (ai === -1 && bi !== -1) return 1;
+        if (ai !== -1 && bi !== -1) return ai - bi;
+        return 0;
+      });
+    }
+    return items;
+  }
+
+  function renderItems(items) {
+    dropdown.innerHTML = '';
+    if (!items.length) {
+      dropdown.innerHTML = '<li class="dropdown-item text-muted" style="font-size:12px">无匹配项</li>';
+      dropdown.style.display = 'block';
+      return;
+    }
+    items.forEach(function(item) {
+      var li = document.createElement('li');
+      li.className = 'dropdown-item';
+      li.style.cssText = 'font-size:12px;cursor:pointer';
+      li.textContent = item.name;
+      li.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        input.value = item.name;
+        hidden.value = item.id;
+        selectedId = item.id;
+        saveRecent(item.id);
+        dropdown.style.display = 'none';
+      });
+      dropdown.appendChild(li);
+    });
+    dropdown.style.display = 'block';
+  }
+
+  input.addEventListener('focus', function() {
+    renderItems(getSortedList());
+  });
+  input.addEventListener('input', function() {
+    var kw = input.value.toLowerCase();
+    var filtered = getSortedList().filter(function(it) { return it.name.toLowerCase().indexOf(kw) !== -1; });
+    renderItems(filtered);
+  });
+  input.addEventListener('blur', function() {
+    setTimeout(function(){ dropdown.style.display = 'none'; }, 200);
+  });
+
+  // 公开接口
+  return {
+    setValue: function(id, name) {
+      input.value = name || '';
+      hidden.value = id || '';
+      selectedId = id;
+    },
+    getValue: function() { return hidden.value; },
+    getInput: function() { return input; },
+    getHidden: function() { return hidden; },
+    focus: function() { input.focus(); }
+  };
+}
+
+// ========== 全局 Select 实例引用 ==========
+var sourceSelect = null;
+var targetSelects = [];
+
+function initSourceSelect() {
+  var container = document.querySelector('#ruleFormCard .searchable-select[data-name="source_product_id"]');
+  if (container && container.querySelector('.search-input') === null) {
+    sourceSelect = createSearchableSelect(container);
+  } else if (container) {
+    sourceSelect = createSearchableSelect(container);
+  }
+}
+
+function addRuleItem(productId, productName, qty, ratio) {
+  var tbody = document.querySelector('#ruleItems tbody');
+  var tr = document.createElement('tr');
+  tr.className = 'rule-item-row';
+  tr.innerHTML =
+    '<td style="width:280px"><div class="searchable-select target-select" data-name="target_product_id[]" data-placeholder="搜索产品" data-storage="recent_split_target"></div></td>'
+    + '<td><input type="number" step="any" name="target_quantity[]" class="form-control form-control-sm" style="width:80px" value="' + (qty || 1) + '"></td>'
+    + '<td><input type="number" step="any" name="target_cost_ratio[]" class="form-control form-control-sm" style="width:80px" value="' + (ratio !== undefined ? ratio : 0) + '"></td>'
+    + '<td><button type="button" class="btn btn-danger btn-sm" onclick="removeRuleItem(this)">✕</button></td>';
+  tbody.appendChild(tr);
+  var selectDiv = tr.querySelector('.searchable-select');
+  var ss = createSearchableSelect(selectDiv);
+  if (productId) { ss.setValue(productId, productName); }
+  targetSelects.push(ss);
+  return ss;
+}
+
+function removeRuleItem(btn) {
+  var tbody = document.querySelector('#ruleItems tbody');
+  if (tbody.rows.length <= 1) { alert('至少保留一行'); return; }
+  btn.closest('tr').remove();
+}
+
+function validateRule() {
+  if (!sourceSelect || !sourceSelect.getValue()) { alert('请选择源产品'); return false; }
+  var hiddenInputs = document.querySelectorAll('#ruleItems input[name="target_product_id[]"]');
+  if (hiddenInputs.length === 0) { alert('请至少添加一个拆出产品'); return false; }
+  var ids = [];
+  for (var i = 0; i < hiddenInputs.length; i++) {
+    if (!hiddenInputs[i].value) { alert('请为每行选择目标产品'); return false; }
+    if (ids.indexOf(hiddenInputs[i].value) >= 0) { alert('拆出产品不能重复'); return false; }
+    ids.push(hiddenInputs[i].value);
+  }
+  return true;
+}
+
+// ========== 编辑模式 ==========
+var editingRuleId = null;
+
+function showForm(isEdit) {
+  document.getElementById('ruleFormCard').classList.remove('d-none');
+  document.getElementById('formTitle').textContent = isEdit ? '编辑拆包规则' : '新建拆包规则';
+  document.getElementById('btnSubmit').textContent = isEdit ? '更新规则' : '保存规则';
+  // 初始化源产品搜索
+  initSourceSelect();
+  // 如果还没行，加一行
+  if (document.querySelectorAll('#ruleItems tbody tr').length === 0) {
+    addRuleItem();
+  }
+}
+
+function hideForm() {
+  document.getElementById('ruleFormCard').classList.add('d-none');
+  resetForm();
+}
+
+function resetForm() {
+  editingRuleId = null;
+  document.getElementById('editRuleId').value = '';
+  document.getElementById('ruleName').value = '';
+  document.getElementById('costMethod').value = 'ratio';
+  document.getElementById('ruleRemark').value = '';
+  if (sourceSelect) { sourceSelect.setValue('', ''); }
+  document.querySelector('#ruleItems tbody').innerHTML = '';
+  targetSelects = [];
+}
+
+function editRule(ruleId) {
+  var rule = rulesData[ruleId];
+  if (!rule) { alert('规则数据未找到'); return; }
+
+  resetForm();
+  editingRuleId = ruleId;
+  document.getElementById('editRuleId').value = ruleId;
+
+  showForm(true);
+
+  document.getElementById('ruleName').value = rule.name;
+  document.getElementById('costMethod').value = rule.cost_method;
+  document.getElementById('ruleRemark').value = rule.remark || '';
+  sourceSelect.setValue(rule.source_id, rule.source_name);
+
+  // 回填拆出产品行
+  document.querySelector('#ruleItems tbody').innerHTML = '';
+  targetSelects = [];
+  if (rule.items.length > 0) {
+    rule.items.forEach(function(item) {
+      addRuleItem(item.product_id, item.product_name, item.quantity, item.cost_ratio);
+    });
+  } else {
+    addRuleItem();
+  }
+}
+
+// ========== 新建按钮 ==========
+document.getElementById('btnNewRule').addEventListener('click', function() {
+  resetForm();
+  showForm(false);
+});
+
+// ========== 表单提交 ==========
+document.getElementById('ruleForm').addEventListener('submit', function(e) {
+  if (!validateRule()) {
+    e.preventDefault();
+    return false;
+  }
+
+  var formData = new FormData(this);
+  var url = editingRuleId
+    ? '/inventory/split-rules/' + editingRuleId + '/edit'
+    : '/inventory/split-rules/add';
+
+  // 用 fetch 提交，手动处理 source_product_id
+  var data = new URLSearchParams();
+  data.append('name', document.getElementById('ruleName').value);
+  data.append('source_product_id', sourceSelect.getValue());
+  data.append('cost_method', document.getElementById('costMethod').value);
+  data.append('remark', document.getElementById('ruleRemark').value);
+
+  var targetIds = document.querySelectorAll('#ruleItems input[name="target_product_id[]"]');
+  var targetQtys = document.querySelectorAll('#ruleItems input[name="target_quantity[]"]');
+  var targetRatios = document.querySelectorAll('#ruleItems input[name="target_cost_ratio[]"]');
+
+  for (var i = 0; i < targetIds.length; i++) {
+    data.append('target_product_id[]', targetIds[i].value);
+    data.append('target_quantity[]', targetQtys[i].value);
+    data.append('target_cost_ratio[]', (parseFloat(targetRatios[i].value) / 100).toString());
+    data.append('target_manual_cost[]', '');
+  }
+
+  fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: data.toString(),
+    credentials: 'same-origin'
+  }).then(function(resp) {
+    if (resp.redirected) {
+      window.location.href = resp.url;
+    } else {
+      window.location.reload();
+    }
+  }).catch(function(err) {
+    alert('提交失败：' + err.message);
+  });
+
+  e.preventDefault();
+  return false;
+});
+</script>
+{% endblock %}

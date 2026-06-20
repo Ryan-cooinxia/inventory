@@ -1,5 +1,8 @@
 # helpers.py
-from models import Product, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem
+from models import (Product, PurchaseOrder, PurchaseOrderItem,
+    SalesOrder, SalesOrderItem,
+    ProductSplitOrder, ProductSplitOrderItem,
+    ProductAssemblyOrder, ProductAssemblyOrderItem)
 from peewee import fn
 
 def parse_positive_float(value):
@@ -38,9 +41,43 @@ def get_product_stock(product_id, user=None):
                  .join(SalesOrder)
                  .where(SalesOrder.user == user))
 
+    # 拆包产出（增加库存）
+    split_in = (ProductSplitOrderItem
+                .select(fn.SUM(ProductSplitOrderItem.quantity))
+                .join(ProductSplitOrder)
+                .where((ProductSplitOrderItem.target_product == product_id) &
+                       (ProductSplitOrder.user == user) &
+                       (ProductSplitOrder.status == 'confirmed'))
+                .scalar()) or 0
+
+    # 拆包消耗（减少库存）
+    split_out = (ProductSplitOrder
+                 .select(fn.SUM(ProductSplitOrder.source_quantity))
+                 .where((ProductSplitOrder.source_product == product_id) &
+                        (ProductSplitOrder.user == user) &
+                        (ProductSplitOrder.status == 'confirmed'))
+                 .scalar()) or 0
+
+    # 组合产出（增加库存）：套装被组装出来
+    assembly_in = (ProductAssemblyOrder
+                   .select(fn.SUM(ProductAssemblyOrder.bundle_quantity))
+                   .where((ProductAssemblyOrder.bundle_product == product_id) &
+                          (ProductAssemblyOrder.user == user) &
+                          (ProductAssemblyOrder.status == 'confirmed'))
+                   .scalar()) or 0
+
+    # 组合消耗（减少库存）：零件被用于组装
+    assembly_out = (ProductAssemblyOrderItem
+                    .select(fn.SUM(ProductAssemblyOrderItem.quantity))
+                    .join(ProductAssemblyOrder)
+                    .where((ProductAssemblyOrderItem.component_product == product_id) &
+                           (ProductAssemblyOrder.user == user) &
+                           (ProductAssemblyOrder.status == 'confirmed'))
+                    .scalar()) or 0
+
     total_in = in_query.scalar() or 0
     total_out = out_query.scalar() or 0
-    return total_in - total_out
+    return total_in - total_out - split_out + split_in - assembly_out + assembly_in
 
 def check_stock_before_ship(items, extra_items=None, user=None):
     """检查库存是否足够，返回 (is_ok, error_messages)"""

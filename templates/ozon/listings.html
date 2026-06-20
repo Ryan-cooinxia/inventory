@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}刊登草稿 — 仓库记账系统{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2 class="mb-0">📝 刊登草稿</h2>
+  <span class="text-muted">共 {{ drafts|length if drafts else 0 }} 条</span>
+</div>
+
+<!-- Filters -->
+<form class="row g-2 mb-3 align-items-end" method="GET">
+  <div class="col-auto">
+    <label class="form-label fw-bold">状态</label>
+    <select name="status" class="form-select" style="width:130px">
+      <option value="">全部</option>
+      <option value="draft" {% if request.args.get('status') == 'draft' %}selected{% endif %}>草稿</option>
+      <option value="needs_review" {% if request.args.get('status') == 'needs_review' %}selected{% endif %}>待审核</option>
+      <option value="approved" {% if request.args.get('status') == 'approved' %}selected{% endif %}>已通过</option>
+      <option value="published" {% if request.args.get('status') == 'published' %}selected{% endif %}>已发布</option>
+      <option value="failed" {% if request.args.get('status') == 'failed' %}selected{% endif %}>失败</option>
+    </select>
+  </div>
+  <div class="col-auto">
+    <label class="form-label fw-bold">平台</label>
+    <select name="platform" class="form-select" style="width:130px">
+      <option value="">全部</option>
+      <option value="1688" {% if request.args.get('platform') == '1688' %}selected{% endif %}>1688</option>
+      <option value="taobao" {% if request.args.get('platform') == 'taobao' %}selected{% endif %}>淘宝</option>
+      <option value="pinduoduo" {% if request.args.get('platform') == 'pinduoduo' %}selected{% endif %}>拼多多</option>
+      <option value="manual" {% if request.args.get('platform') == 'manual' %}selected{% endif %}>手动</option>
+    </select>
+  </div>
+  <div class="col-auto">
+    <label class="form-label fw-bold">搜索</label>
+    <input type="text" name="q" class="form-control" placeholder="标题搜索..." style="width:200px" value="{{ request.args.get('q', '') }}">
+  </div>
+  <div class="col-auto">
+    <button type="submit" class="btn btn-outline-primary">筛选</button>
+  </div>
+</form>
+
+<div class="table-responsive-mobile">
+  {% if drafts %}
+  <div class="mb-2 d-flex gap-2">
+    <form method="POST" action="{{ url_for('ozon.listing_batch_delete') }}" id="batchDeleteForm" onsubmit="return confirmBatchDelete()">
+      <input type="hidden" name="ids" id="batchIds">
+      <button type="submit" class="btn btn-sm btn-outline-danger" id="btnBatchDelete" disabled>🗑️ 批量删除</button>
+    </form>
+    <span class="text-muted" style="font-size:11px;line-height:31px" id="batchCount"></span>
+  </div>
+  {% endif %}
+  <table class="table table-bordered table-sm align-middle">
+    <thead class="table-light">
+      <tr>
+        <th style="width:36px"><input type="checkbox" id="selectAll" onchange="toggleAll(this)" title="全选"></th>
+        <th>#</th>
+        <th>俄语标题</th>
+        <th>源商品</th>
+        <th class="text-center">SKU</th>
+        <th>店铺</th>
+        <th>状态</th>
+        <th>更新时间</th>
+        <th style="width:180px">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in drafts %}
+      <tr>
+        <td class="text-center"><input type="checkbox" class="row-checkbox" value="{{ d.id }}" onchange="updateBatch()"></td>
+        <td>{{ loop.index + ((page-1) * per_page if page and per_page else 0) }}</td>
+        <td><a href="{{ url_for('ozon.listing_review', draft_id=d.id) }}">{{ d.title_ru or '(无标题)' }}</a></td>
+        <td>
+          {% if d.source %}
+            {% if d.source.platform == '1688' %}<span class="badge bg-danger">1688</span>
+            {% elif d.source.platform == 'taobao' %}<span class="badge bg-warning text-dark">淘宝</span>
+            {% elif d.source.platform == 'pinduoduo' %}<span class="badge" style="background:#e6004c;color:#fff">拼多多</span>
+            {% else %}<span class="badge bg-secondary">{{ d.source.platform }}</span>
+            {% endif %}
+            <a href="{{ url_for('ozon.source_detail', source_id=d.source.id) }}">{{ d.source.title_cn }}</a>
+          {% endif %}
+        </td>
+        <td class="text-center">{{ d.draft_skus.count() }}</td>
+        <td>{{ d.account.name if d.account else '—' }}</td>
+        <td>
+          {% if d.status == 'draft' %}<span class="badge bg-secondary">草稿</span>
+          {% elif d.status == 'needs_review' %}<span class="badge bg-warning text-dark">待审核</span>
+          {% elif d.status == 'ready' %}<span class="badge bg-info">已就绪</span>
+          {% elif d.status == 'approved' %}<span class="badge bg-success">已通过</span>
+          {% elif d.status == 'publishing' %}<span class="badge bg-info">发布中</span>
+          {% elif d.status == 'published' %}<span class="badge bg-success">已发布</span>
+          {% elif d.status == 'failed' %}<span class="badge bg-danger">失败</span>
+          {% else %}<span class="badge bg-secondary">{{ d.status }}</span>
+          {% endif %}
+        </td>
+        <td>{{ d.updated_at.strftime('%m-%d %H:%M') if d.updated_at else '' }}</td>
+        <td>
+          <a href="{{ url_for('ozon.listing_review', draft_id=d.id) }}" class="btn btn-sm btn-primary">编辑审核</a>
+          {% if d.status == 'approved' %}
+            <form method="POST" action="{{ url_for('ozon.listing_publish', draft_id=d.id) }}" style="display:inline">
+              <button class="btn btn-sm btn-outline-success">提交发布</button>
+            </form>
+          {% elif d.status == 'failed' %}
+            <a href="{{ url_for('ozon.listing_review', draft_id=d.id) }}" class="btn btn-sm btn-outline-warning">修正</a>
+          {% endif %}
+          <form method="POST" action="{{ url_for('ozon.listing_delete', draft_id=d.id) }}" style="display:inline" onsubmit="return confirm('确定要删除此草稿吗？')">
+            <button class="btn btn-sm btn-outline-danger">删除</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not drafts %}
+      <tr><td colspan="8" class="text-center text-muted py-4">
+        <p class="mb-2">暂无刊登草稿</p>
+        <p class="small">请先在<a href="{{ url_for('ozon.sources') }}">采集列表</a>中对商品执行"生成草稿"</p>
+      </td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+{% if total_pages and total_pages > 1 %}
+<nav><ul class="pagination pagination-sm justify-content-center">
+  <li class="page-item {{ 'disabled' if page <= 1 }}"><a class="page-link" href="?page={{ page - 1 }}">上一页</a></li>
+  {% for p in range(1, total_pages + 1) %}
+  <li class="page-item {{ 'active' if p == page }}"><a class="page-link" href="?page={{ p }}">{{ p }}</a></li>
+  {% endfor %}
+  <li class="page-item {{ 'disabled' if page >= total_pages }}"><a class="page-link" href="?page={{ page + 1 }}">下一页</a></li>
+</ul></nav>
+{% endif %}
+
+<script>
+function toggleAll(el) { document.querySelectorAll('.row-checkbox').forEach(function(cb) { cb.checked = el.checked; }); updateBatch(); }
+function updateBatch() {
+  var ids = []; document.querySelectorAll('.row-checkbox:checked').forEach(function(cb) { ids.push(cb.value); });
+  document.getElementById('batchIds').value = ids.join(','); document.getElementById('btnBatchDelete').disabled = ids.length === 0;
+  document.getElementById('batchCount').textContent = ids.length ? '已选 ' + ids.length + ' 条' : '';
+}
+function confirmBatchDelete() { var ids = document.getElementById('batchIds').value; if (!ids) { alert('请先选择记录'); return false; } return confirm('确认删除 ' + ids.split(',').length + ' 条记录？'); }
+</script>
+{% endblock %}

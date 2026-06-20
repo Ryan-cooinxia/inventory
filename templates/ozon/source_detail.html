@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+{% block title %}{{ source.title_cn }} — 采集详情{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{{ url_for('ozon.sources') }}">采集列表</a></li>
+  <li class="breadcrumb-item active">采集详情</li>
+</ol></nav>
+<h2 class="mb-3">{{ source.title_cn }}</h2>
+
+{# ── 质量警告 ── #}
+{% if quality %}
+{% if quality.warnings or quality.missing_fields %}
+<div class="alert {% if quality.needs_manual_capture %}alert-danger{% else %}alert-warning{% endif %} py-2 mb-3" style="font-size:13px">
+  <strong>⚠️ 采集质量提醒</strong>
+  <ul class="mb-0 mt-1">
+    {% if quality.missing_fields %}
+    <li>缺失关键字段: <span class="text-danger">{{ quality.missing_fields|join(', ') }}</span></li>
+    {% endif %}
+    {% if quality.detail_missing %}
+    <li>详情描述缺失 — 该平台为 JS 动态渲染，建议<a href="#" onclick="return showExtensionTip()">使用浏览器插件</a>或<a href="{{ url_for('ozon.sources') }}?collect=paste&url={{ source.source_url|urlencode }}">粘贴内容模式</a>补充</li>
+    {% endif %}
+    {% if quality.price_unconfirmed %}
+    <li>采购价未确认 — 请手动核实后填入</li>
+    {% endif %}
+    {% for w in quality.warnings %}
+    <li>{{ w }}</li>
+    {% endfor %}
+    {% if quality.rejected_image_count and quality.rejected_image_count > 0 %}
+    <li>已自动过滤 <span class="fw-bold">{{ quality.rejected_image_count }}</span> 张平台/UI 图片 → <a href="#" onclick="toggleRejectedImages()">查看已过滤图片</a></li>
+    {% endif %}
+  </ul>
+</div>
+{% endif %}
+{% endif %}
+
+{# ── 浏览器插件提示（默认隐藏） ── #}
+<div id="extensionTip" class="alert alert-info py-2 mb-3 d-none" style="font-size:13px">
+  <strong>💡 浏览器插件采集</strong>（推荐用于淘宝/天猫/拼多多）<br>
+  浏览器插件可以直接获取页面上渲染完成的商品信息，包括图片、价格、SKU、详情描述。<br>
+  安装方式：加载 <code>browser-extension/</code> 目录到 Chrome 扩展管理页面（开发者模式 → 加载已解压的扩展程序）。<br>
+  之后在商品页点击插件图标即可一键采集。
+  <button class="btn btn-sm btn-outline-secondary mt-1" onclick="document.getElementById('extensionTip').classList.add('d-none')">关闭</button>
+</div>
+
+<div class="row">
+  <div class="col-lg-8">
+    <div class="card mb-3">
+      <div class="card-header fw-bold">📋 基本信息</div>
+      <div class="card-body">
+        <table class="table table-sm table-borderless">
+          <tr><td class="text-muted" style="width:100px">来源平台</td><td><span class="badge bg-danger">{{ source.platform }}</span></td></tr>
+          <tr><td class="text-muted">来源链接</td><td><a href="{{ source.source_url }}" target="_blank">{{ source.source_url[:80] }}{% if source.source_url|length > 80 %}...{% endif %}</a></td></tr>
+          <tr><td class="text-muted">类目</td><td>{{ source.category_cn or '未分类' }}</td></tr>
+          <tr><td class="text-muted">供应商</td><td>{{ source.shop_name or '—' }}</td></tr>
+          <tr><td class="text-muted">采集方式</td><td>{{ source.capture_method }}</td></tr>
+          <tr><td class="text-muted">采集时间</td><td>{{ source.captured_at.strftime('%Y-%m-%d %H:%M:%S') if source.captured_at else '' }}</td></tr>
+          <tr><td class="text-muted">状态</td><td>
+            {% if source.status == 'collected' %}<span class="badge bg-info">collected</span>
+            {% elif source.status == 'parsed' %}<span class="badge bg-warning text-dark">parsed</span>
+            {% elif source.status == 'drafted' %}<span class="badge bg-success">drafted</span>
+            {% else %}<span class="badge bg-secondary">{{ source.status }}</span>{% endif %}
+            {% if source.price_manual_confirmed %}<span class="badge bg-success ms-1">价格已确认</span>{% endif %}
+          </td></tr>
+        </table>
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header fw-bold">📦 SKU 列表 ({{ source.skus.count() }})</div>
+      <div class="card-body p-0">
+        <table class="table table-bordered table-sm mb-0">
+          <thead class="table-light"><tr><th>#</th><th>SKU ID</th><th>名称</th><th>颜色</th><th>款式</th><th>套装量</th><th>采购价 ¥</th></tr></thead>
+          <tbody>
+            {% for sku in source.skus.order_by(OzonSourceSku.source_order) %}
+            <tr>
+              <td>{{ sku.source_order }}</td>
+              <td>{{ sku.source_sku_id }}</td>
+              <td>{{ sku.source_sku_name }}</td>
+              <td>{{ sku.color_cn or '—' }}</td>
+              <td>{{ sku.style_cn or '—' }}</td>
+              <td>{{ sku.bundle_quantity }}</td>
+              <td>
+                {% if sku.purchase_price_cny %}
+                  <span class="{% if source.price_manual_confirmed %}text-success{% else %}text-warning{% endif %}">
+                    {{ '%.2f'|format(sku.purchase_price_cny) }}
+                    {% if not source.price_manual_confirmed %}<small class="text-muted">(待确认)</small>{% endif %}
+                  </span>
+                {% else %}
+                  <span class="text-danger">—</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    {# ── 可用图片 ── #}
+    <div class="card mb-3">
+      <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+        <span>🖼 可用图片 ({{ usable_media|length }})</span>
+      </div>
+      <div class="card-body">
+        {% if usable_media %}
+        <div class="d-flex flex-wrap gap-1">
+          {% for m in usable_media %}
+          <div style="position:relative" title="{{ m.role or 'image' }}{% if m.compliance_status == 'needs_review' %} ⚠️需审查: {{ m.reject_reason }}{% endif %}">
+            <img src="{{ m.source_url }}" referrerpolicy="no-referrer" style="width:72px;height:72px;object-fit:cover;border-radius:4px;border:1px solid {% if m.compliance_status == 'needs_review' %}#ffc107{% else %}#dee2e6{% endif %}"
+                 onerror="this.style.display='none'" loading="lazy">
+            {% if m.compliance_status == 'needs_review' %}
+            <span class="badge bg-warning text-dark" style="font-size:7px;position:absolute;bottom:0;right:0">审查</span>
+            {% endif %}
+            <small class="d-block text-muted" style="font-size:8px;max-width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ m.role or '—' }}</small>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-muted">暂无可用图片</div>
+        {% endif %}
+      </div>
+    </div>
+
+    {# ── 已过滤图片（折叠） ── #}
+    {% if rejected_media %}
+    <div class="card mb-3">
+      <div class="card-header p-2" style="cursor:pointer" onclick="toggleRejectedImages()">
+        <small class="text-muted">🚫 已过滤图片 ({{ rejected_media|length }}) ▸</small>
+      </div>
+      <div class="card-body p-2 d-none" id="rejectedImagesSection">
+        {% for m in rejected_media %}
+        <div class="mb-1 p-1 bg-light rounded" style="font-size:10px">
+          <div class="d-flex gap-1 align-items-start">
+            <img src="{{ m.source_url }}" referrerpolicy="no-referrer" style="width:36px;height:36px;object-fit:cover;border-radius:2px"
+                 onerror="this.style.display='none'" loading="lazy">
+            <div style="min-width:0">
+              <div class="text-danger">{{ m.reject_reason or '自动过滤' }}</div>
+              <div class="text-muted" style="word-break:break-all">{{ m.source_url[:80] }}...</div>
+            </div>
+            <button class="btn btn-sm btn-outline-success flex-shrink-0" style="font-size:9px;padding:1px 4px"
+                    onclick="restoreImage({{ m.id }})" title="恢复为可用">✓ 恢复</button>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="card mb-3">
+      <div class="card-header fw-bold">📄 原始 JSON</div>
+      <div class="card-body">
+        <pre class="bg-dark text-light p-2 rounded small" style="max-height:400px;overflow:auto">{{ source.raw_json[:5000] }}{% if source.raw_json|length > 5000 %}...{% endif %}</pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="d-flex gap-2">
+  <a href="{{ url_for('ozon.processing', source_id=source.id) }}" class="btn btn-success">🤖 生成草稿</a>
+  {% if not source.price_manual_confirmed %}
+  <button class="btn btn-outline-warning" onclick="confirmPrice()">✅ 确认采购价</button>
+  {% endif %}
+  <a href="{{ url_for('ozon.sources') }}" class="btn btn-outline-secondary">返回列表</a>
+</div>
+
+<script>
+function toggleRejectedImages() {
+  var section = document.getElementById('rejectedImagesSection');
+  if (section) section.classList.toggle('d-none');
+}
+
+function showExtensionTip() {
+  document.getElementById('extensionTip').classList.remove('d-none');
+  return false;
+}
+
+function restoreImage(mediaId) {
+  if (!confirm('确认恢复此图片为可用？')) return;
+  fetch('/ozon/api/source-media/' + mediaId + '/restore', {method: 'POST'})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (d.ok) { location.reload(); }
+      else { alert('恢复失败: ' + (d.error || '')); }
+    });
+}
+
+function confirmPrice() {
+  if (!confirm('确认当前显示的采购价为正确价格？确认后将标记为已核实。')) return;
+  fetch('/ozon/api/source/{{ source.id }}/confirm-price', {method: 'POST'})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (d.ok) { location.reload(); }
+      else { alert('确认失败: ' + (d.error || '')); }
+    });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>字段缺口检查 — 仓库记账系统</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  body { background: #f5f6fa; }
+  .gap-summary { display: flex; gap: 12px; margin-bottom: 16px; }
+  .gap-summary-card { flex: 1; background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); text-align: center; }
+  .gap-summary-card .number { font-size: 32px; font-weight: 700; }
+  .gap-card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); margin-bottom: 12px; }
+  .gap-card .card-header { padding: 10px 16px; border-bottom: 1px solid #e9ecef; display: flex; justify-content: space-between; align-items: center; font-size:13px; }
+  .gap-card.blocking { border-left: 4px solid #dc3545; }
+  .gap-card.warning { border-left: 4px solid #ffc107; }
+  .gap-card.resolved { border-left: 4px solid #28a745; opacity: .7; }
+  .gap-detail-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px; }
+  .gap-detail-row .g-label { color: #6c757d; }
+  .progress-steps { display: flex; align-items: center; margin-bottom: 16px; }
+  .progress-step { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+  .progress-step .dot { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; }
+  .progress-step .dot.done { background: #d4edda; color: #155724; }
+  .progress-step .dot.current { background: #fff3cd; color: #856404; }
+  .progress-step .dot.pending { background: #e9ecef; color: #6c757d; }
+  .progress-line { flex: 1; height: 2px; margin: 0 8px; background: #dee2e6; }
+</style>
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-3">
+  <div class="container-fluid">
+    <a class="navbar-brand" href="#">仓库记账</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <ul class="navbar-nav">
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">基础资料</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#">产品管理</a></li>
+            <li><a class="dropdown-item" href="#">客户管理</a></li>
+            <li><a class="dropdown-item" href="#">供应商管理</a></li>
+          </ul>
+        </li>
+        <li class="nav-item"><a class="nav-link" href="#">供应商订单</a></li>
+        <li class="nav-item"><a class="nav-link" href="#">客户订单</a></li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle active" href="#" data-bs-toggle="dropdown">OZON 运营</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="ozon_dashboard.v1.html">📊 工作台</a></li>
+            <li><a class="dropdown-item" href="#">⚙️ 平台接口</a></li>
+            <li><a class="dropdown-item" href="ozon_vision_model_config.v1.html">🔮 模型接口</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📥 采集列表</a></li>
+            <li><a class="dropdown-item" href="ozon_adaptation_workspace.v1.html">🔄 商品适配</a></li>
+            <li><a class="dropdown-item" href="#">📝 刊登草稿</a></li>
+            <li><a class="dropdown-item" href="#">🚀 发布任务</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📋 类目属性字典</a></li>
+            <li><a class="dropdown-item" href="#">💬 提示词库</a></li>
+            <li><a class="dropdown-item" href="#">💰 定价规则</a></li>
+          </ul>
+        </li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">统计报表</a>
+          <ul class="dropdown-menu"><li><a class="dropdown-item" href="#">每日进出货</a></li></ul>
+        </li>
+      </ul>
+      <ul class="navbar-nav ms-auto">
+        <li class="nav-item"><span class="nav-link">👤 管理员</span></li>
+        <li class="nav-item"><a class="nav-link" href="#">退出</a></li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<div class="container-fluid px-3">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h5 class="mb-0">⚠️ 字段缺口检查</h5>
+      <small class="text-muted">草稿：DJI Mic Mini 2 — 类目：Электроника > Аудио > Микрофоны</small>
+    </div>
+    <div>
+      <button class="btn btn-primary btn-sm">🔍 重新检查</button>
+      <button class="btn btn-outline-secondary btn-sm">返回草稿</button>
+    </div>
+  </div>
+
+  <!-- 进度条 -->
+  <div class="card mb-3">
+    <div class="card-body" style="font-size:12px">
+      <div class="progress-steps">
+        <div class="progress-step"><span class="dot done">✓</span> 读取类目属性字典</div>
+        <div class="progress-line"></div>
+        <div class="progress-step"><span class="dot done">✓</span> 读取商品事实</div>
+        <div class="progress-line"></div>
+        <div class="progress-step"><span class="dot done">✓</span> 执行字段映射</div>
+        <div class="progress-line"></div>
+        <div class="progress-step"><span class="dot current">5</span> 生成缺口清单</div>
+        <div class="progress-line"></div>
+        <div class="progress-step"><span class="dot pending">6</span> 发布前阻断判断</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 汇总卡片 -->
+  <div class="gap-summary">
+    <div class="gap-summary-card">
+      <div class="number text-primary">12</div>
+      <small>类目必填属性</small>
+    </div>
+    <div class="gap-summary-card">
+      <div class="number text-success">8</div>
+      <small>已满足</small>
+    </div>
+    <div class="gap-summary-card">
+      <div class="number text-danger">4</div>
+      <small>阻断缺口</small>
+    </div>
+    <div class="gap-summary-card">
+      <div class="number text-warning">3</div>
+      <small>警告提示</small>
+    </div>
+    <div class="gap-summary-card">
+      <div class="number text-danger">⛔</div>
+      <small>发布状态</small>
+      <div class="mt-1"><span class="badge bg-danger">阻断</span></div>
+    </div>
+  </div>
+
+  <!-- 阻断级缺口 -->
+  <h6 class="mb-2">🔴 阻断缺口 (Blocking Gaps) — 必须解决才能发布</h6>
+
+  <div class="gap-card blocking">
+    <div class="card-header">
+      <div><strong>GAP-001</strong> — Бренд (品牌) 缺失</div>
+      <span class="badge bg-danger">阻断</span>
+    </div>
+    <div class="card-body" style="font-size:12px">
+      <div class="gap-detail-row"><span class="g-label">属性 ID</span><span><code>85</code></span></div>
+      <div class="gap-detail-row"><span class="g-label">缺口类型</span><span>missing_dictionary_value — 缺少可匹配字典值的品牌信息</span></div>
+      <div class="gap-detail-row"><span class="g-label">本地字段</span><span><code>brand.name</code> = "DJI"</span></div>
+      <div class="gap-detail-row"><span class="g-label">问题</span><span class="text-danger">DJI 未出现在 OZON 品牌字典中，且无法确认品牌授权</span></div>
+      <div class="gap-detail-row"><span class="g-label">建议操作</span><span>人工选择 "Нет бренда" (无品牌) 或联系 OZON 添加品牌，或提供授权证明后选择 "DJI"</span></div>
+      <div class="mt-2">
+        <button class="btn btn-sm btn-outline-success me-1">✅ 设为"无品牌"</button>
+        <button class="btn btn-sm btn-outline-primary me-1">📋 选择品牌...</button>
+        <button class="btn btn-sm btn-outline-secondary">⏭️ 跳过（需备注原因）</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="gap-card blocking">
+    <div class="card-header">
+      <div><strong>GAP-002</strong> — Гарантия (保修) 缺失</div>
+      <span class="badge bg-danger">阻断</span>
+    </div>
+    <div class="card-body" style="font-size:12px">
+      <div class="gap-detail-row"><span class="g-label">属性 ID</span><span><code>10100</code></span></div>
+      <div class="gap-detail-row"><span class="g-label">缺口类型</span><span>missing_required — 必填字段在商品事实中无对应值</span></div>
+      <div class="gap-detail-row"><span class="g-label">本地字段</span><span><code>warranty</code> = null（源数据未提供）</span></div>
+      <div class="gap-detail-row"><span class="g-label">建议操作</span><span>人工填写保修期限，例如 "12 месяцев"</span></div>
+      <div class="mt-2"><input type="text" class="form-control form-control-sm" placeholder="输入保修期限，如：12 месяцев" style="width:300px"></div>
+    </div>
+  </div>
+
+  <div class="gap-card blocking">
+    <div class="card-header">
+      <div><strong>GAP-003</strong> — Вес (重量) 缺失</div>
+      <span class="badge bg-danger">阻断</span>
+    </div>
+    <div class="card-body" style="font-size:12px">
+      <div class="gap-detail-row"><span class="g-label">属性 ID</span><span><code>10101</code></span></div>
+      <div class="gap-detail-row"><span class="g-label">缺口类型</span><span>missing_required — 物流必填字段</span></div>
+      <div class="gap-detail-row"><span class="g-label">建议操作</span><span>实测后填写净重 (g) 和毛重 (g)</span></div>
+    </div>
+  </div>
+
+  <div class="gap-card blocking">
+    <div class="card-header">
+      <div><strong>GAP-004</strong> — Размеры (尺寸) 缺失</div>
+      <span class="badge bg-danger">阻断</span>
+    </div>
+    <div class="card-body" style="font-size:12px">
+      <div class="gap-detail-row"><span class="g-label">属性 ID</span><span><code>10102</code></span></div>
+      <div class="gap-detail-row"><span class="g-label">缺口类型</span><span>missing_required — 物流必填字段</span></div>
+      <div class="gap-detail-row"><span class="g-label">建议操作</span><span>实测后填写包装尺寸 (长×宽×高 mm)</span></div>
+    </div>
+  </div>
+
+  <!-- 警告级缺口 -->
+  <h6 class="mb-2 mt-3">🟡 警告提示 (Warnings) — 建议解决，不阻断发布</h6>
+
+  <div class="gap-card warning">
+    <div class="card-header">
+      <div><strong>GAP-W01</strong> — Материал (材质) 置信度低</div>
+      <span class="badge bg-warning text-dark">警告</span>
+    </div>
+    <div class="card-body" style="font-size:12px">
+      <div class="gap-detail-row"><span class="g-label">问题</span><span>AI 推测材质为"塑料+金属"，置信度仅 35%，不足以自动填入</span></div>
+      <div class="gap-detail-row"><span class="g-label">建议</span><span>人工确认材质后填写，或标记为 source_or_empty 留空</span></div>
+    </div>
+  </div>
+
+  <div class="gap-card warning">
+    <div class="card-header">
+      <div><strong>GAP-W02</strong> — Комплектация 部分内容待确认</div>
+      <span class="badge bg-warning text-dark">警告</span>
+    </div>
+    <div class="card-body" style="font-size:12px">
+      <div class="gap-detail-row"><span class="g-label">问题</span><span>包装内容中"充电线×1"仅出现在图片 OCR 结果中，未在源文本确认</span></div>
+      <div class="gap-detail-row"><span class="g-label">建议</span><span>人工确认包装清单完整性</span></div>
+    </div>
+  </div>
+
+  <div class="gap-card warning">
+    <div class="card-header">
+      <div><strong>GAP-W03</strong> — Страна производитель (产地) 未确认</div>
+      <span class="badge bg-warning text-dark">警告</span>
+    </div>
+    <div class="card-body" style="font-size:12px">
+      <div class="gap-detail-row"><span class="g-label">问题</span><span>产地字段无任何来源证据，暂留空</span></div>
+      <div class="gap-detail-row"><span class="g-label">建议</span><span>人工填写产地或标记为 source_or_empty</span></div>
+    </div>
+  </div>
+
+  <!-- 已解决缺口 -->
+  <h6 class="mb-2 mt-3">🟢 已解决 (Resolved)</h6>
+
+  <div class="gap-card resolved">
+    <div class="card-header">
+      <div><strong>GAP-R01</strong> — Цвет 颜色值已匹配 OZON 字典 ✓</div>
+      <span class="badge bg-success">已解决</span>
+    </div>
+  </div>
+  <div class="gap-card resolved">
+    <div class="card-header">
+      <div><strong>GAP-R02</strong> — Тип 产品类型已确认 ✓</div>
+      <span class="badge bg-success">已解决</span>
+    </div>
+  </div>
+
+  <div class="d-grid mt-3">
+    <button class="btn btn-danger btn-sm">⛔ 存在 4 个阻断缺口，当前无法发布</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

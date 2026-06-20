@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+{% block title %}AI 生图 — 仓库记账系统{% endblock %}
+{% block head %}
+<style>
+  /* 步骤条 */
+  .step-bar { display:flex; gap:0; margin-bottom:1.5rem; }
+  .step-item { flex:1; text-align:center; position:relative; }
+  .step-item::after { content:''; position:absolute; top:18px; left:60%; width:80%; height:2px; background:#dee2e6; z-index:0; }
+  .step-item:last-child::after { display:none; }
+  .step-dot { display:inline-flex; width:36px; height:36px; border-radius:50%; align-items:center; justify-content:center; font-weight:700; font-size:15px; position:relative; z-index:1; background:#dee2e6; color:#6c757d; }
+  .step-dot.done { background:#198754; color:#fff; }
+  .step-dot.active { background:#fff; color:#198754; border:2px solid #198754; }
+  .step-label { display:block; margin-top:6px; font-size:13px; font-weight:600; color:#6c757d; }
+  .step-label.done { color:#198754; }
+  .step-label.active { color:#198754; }
+
+  /* 图片卡片网格 */
+  .img-card-grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:16px; }
+  @media (max-width: 1199px) { .img-card-grid { grid-template-columns:repeat(2, 1fr); } }
+  @media (max-width: 767px) { .img-card-grid { grid-template-columns:1fr; } }
+
+  .img-card { border:1px solid #e5e7eb; border-radius:8px; overflow:hidden; background:#fff; transition:box-shadow .15s; display:flex; flex-direction:column; }
+  .img-card:hover { box-shadow:0 2px 12px rgba(0,0,0,.08); }
+  .img-card-preview { position:relative; background:#f8f9fa; display:flex; align-items:center; justify-content:center; overflow:hidden; aspect-ratio:3/4; }
+  .img-card-preview img { width:100%; height:100%; object-fit:cover; }
+  .img-card-preview .placeholder { color:#adb5bd; font-size:48px; }
+  .img-card-body { padding:12px; flex:1; display:flex; flex-direction:column; gap:8px; }
+  .img-card-tags { display:flex; gap:6px; flex-wrap:wrap; }
+  .img-card-meta { font-size:12px; color:#6c757d; }
+  .img-card-meta span { margin-right:12px; }
+  .img-card-prompt { font-size:12px; color:#495057; background:#f8f9fa; border-radius:4px; padding:8px; max-height:72px; overflow:hidden; line-height:1.5; word-break:break-all; }
+  .img-card-actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:auto; padding-top:8px; border-top:1px solid #f0f0f0; }
+
+  /* 筛选栏 */
+  .filter-bar { background:#f8f9fa; border-radius:8px; padding:12px 16px; margin-bottom:16px; }
+</style>
+{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{{ url_for('ozon.listings') }}">刊登草稿</a></li>
+  <li class="breadcrumb-item"><a href="{{ url_for('ozon.listing_review', draft_id=draft.id) }}">草稿审核</a></li>
+  <li class="breadcrumb-item active">AI 生图</li>
+</ol></nav>
+
+<h2 class="mb-1">{{ draft.title_ru or draft.source.title_cn }}</h2>
+<p class="text-muted mb-3">{{ draft.source.platform if draft.source else '—' }} · {{ draft.draft_skus.count() }} SKU</p>
+
+<!-- 步骤条 -->
+<div class="card mb-3">
+  <div class="card-body py-3">
+    <div class="step-bar">
+      <div class="step-item">
+        <span class="step-dot done">✓</span>
+        <span class="step-label done">信息采集</span>
+      </div>
+      <div class="step-item">
+        <span class="step-dot done">✓</span>
+        <span class="step-label done">AI分析+属性</span>
+      </div>
+      <div class="step-item">
+        <span class="step-dot done">✓</span>
+        <span class="step-label done">SEO确认</span>
+      </div>
+      <div class="step-item">
+        <span class="step-dot active">4</span>
+        <span class="step-label active">生图</span>
+      </div>
+      <div class="step-item">
+        <span class="step-dot">5</span>
+        <span class="step-label">审核上传</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 筛选栏 -->
+<div class="filter-bar d-flex flex-wrap gap-3 align-items-center">
+  <div class="fw-bold text-nowrap">📊 筛选</div>
+  <select class="form-select form-select-sm" style="width:140px" onchange="filter('status', this.value)">
+    <option value="">全部状态</option>
+    <option value="planned" {% if status_filter == 'planned' %}selected{% endif %}>待生成</option>
+    <option value="generated" {% if status_filter == 'generated' %}selected{% endif %}>已生成</option>
+    <option value="reviewed" {% if status_filter == 'reviewed' %}selected{% endif %}>已审核</option>
+    <option value="approved" {% if status_filter == 'approved' %}selected{% endif %}>已通过</option>
+    <option value="rejected" {% if status_filter == 'rejected' %}selected{% endif %}>已拒绝</option>
+  </select>
+  <select class="form-select form-select-sm" style="width:140px" onchange="filter('role', this.value)">
+    <option value="">全部类型</option>
+    <option value="main" {% if role_filter == 'main' %}selected{% endif %}>主图</option>
+    <option value="scene" {% if role_filter == 'scene' %}selected{% endif %}>场景图</option>
+    <option value="detail" {% if role_filter == 'detail' %}selected{% endif %}>细节图</option>
+    <option value="selling_point" {% if role_filter == 'selling_point' %}selected{% endif %}>卖点图</option>
+    <option value="function" {% if role_filter == 'function' %}selected{% endif %}>结构图</option>
+    <option value="size" {% if role_filter == 'size' %}selected{% endif %}>尺寸图</option>
+    <option value="sku" {% if role_filter == 'sku' %}selected{% endif %}>SKU图</option>
+    <option value="package" {% if role_filter == 'package' %}selected{% endif %}>包装图</option>
+  </select>
+  <div class="ms-auto text-muted small">
+    {{ generated_count }}/{{ total }} 已生成 · {{ approved_count }} 已通过
+  </div>
+</div>
+
+<!-- 图片卡片网格 -->
+<div class="img-card-grid">
+  {% for slot in slots %}
+  <div class="img-card">
+    <!-- 预览区 -->
+    <div class="img-card-preview">
+      {% if slot.generated_url %}
+        <img src="{{ slot.generated_url }}" alt="{{ slot.role }}" loading="lazy" onclick="viewFullImage('{{ slot.generated_url }}')" style="cursor:pointer">
+      {% else %}
+        <span class="placeholder">🖼️</span>
+      {% endif %}
+    </div>
+    <!-- 信息区 -->
+    <div class="img-card-body">
+      <div class="d-flex justify-content-between align-items-start">
+        <div class="img-card-tags">
+          {% if slot.role == 'main' %}<span class="badge bg-primary">主图</span>
+          {% elif slot.role == 'scene' %}<span class="badge bg-success">场景图</span>
+          {% elif slot.role == 'detail' %}<span class="badge bg-info">细节图</span>
+          {% elif slot.role == 'selling_point' %}<span class="badge bg-warning text-dark">卖点图</span>
+          {% elif slot.role == 'function' %}<span class="badge bg-dark">结构图</span>
+          {% elif slot.role == 'size' %}<span class="badge bg-danger">尺寸图</span>
+          {% elif slot.role == 'sku' %}<span class="badge bg-secondary">SKU图</span>
+          {% else %}<span class="badge bg-secondary">{{ slot.role }}</span>
+          {% endif %}
+          {% if slot.style %}<span class="badge bg-light text-dark border">{{ slot.style }}</span>{% endif %}
+        </div>
+        <small class="text-muted">#{{ slot.slot_order }}</small>
+      </div>
+
+      <div class="img-card-meta">
+        {% if slot.status == 'planned' %}<span class="text-warning">⏳ 待生成</span>
+        {% elif slot.status == 'generated' %}<span class="text-info">🎨 已生成</span>
+        {% elif slot.status == 'reviewed' %}<span class="text-primary">👁 已审核</span>
+        {% elif slot.status == 'approved' %}<span class="text-success fw-bold">✅ 已通过</span>
+        {% elif slot.status == 'rejected' %}<span class="text-danger">❌ 已拒绝</span>
+        {% endif %}
+        {% if slot.generated_url %}<span>1024×1360</span>{% endif %}
+      </div>
+
+      {% if slot.prompt_cn %}
+      <div class="img-card-prompt">{{ slot.prompt_cn[:200] }}{% if slot.prompt_cn|length > 200 %}...{% endif %}</div>
+      {% endif %}
+
+      <div class="img-card-actions">
+        <button class="btn btn-sm btn-outline-secondary" title="查看大图" onclick="{% if slot.generated_url %}viewFullImage('{{ slot.generated_url }}'){% else %}alert('尚未生成图片'){% endif %}">🔍</button>
+        {% if slot.prompt_cn %}
+        <button class="btn btn-sm btn-outline-secondary" title="复制prompt" onclick="copyPrompt('{{ slot.prompt_cn|e }}')">📋</button>
+        {% endif %}
+        {% if slot.status == 'rejected' or slot.status == 'generated' %}
+        <button class="btn btn-sm btn-outline-warning" title="重新生成" onclick="alert('重新生成功能将在接入AI服务后可用')">🔄</button>
+        {% endif %}
+        {% if slot.generated_url %}
+        <a href="{{ slot.generated_url }}" class="btn btn-sm btn-outline-secondary" download target="_blank" title="下载">💾</a>
+        {% endif %}
+        <div class="ms-auto">
+          {% if slot.status != 'approved' and slot.generated_url %}
+          <form method="POST" action="{{ url_for('ozon.image_plan_approve', slot_id=slot.id) }}" style="display:inline" title="审核通过">
+            <button class="btn btn-sm btn-outline-success">✓</button>
+          </form>
+          {% endif %}
+          {% if slot.status != 'rejected' and slot.generated_url %}
+          <form method="POST" action="{{ url_for('ozon.image_plan_reject', slot_id=slot.id) }}" style="display:inline" title="拒绝">
+            <button class="btn btn-sm btn-outline-danger">✗</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+
+  {% if not slots %}
+  <div style="grid-column:1/-1" class="text-center text-muted py-5">
+    <p class="fs-1 mb-2">🖼️</p>
+    <p class="mb-1">暂无图片槽位</p>
+    <p class="small">请先生成图片方案</p>
+  </div>
+  {% endif %}
+</div>
+
+<!-- 大图模态框 -->
+<div class="modal fade" id="imageModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content bg-transparent border-0">
+      <div class="modal-body p-0 text-center">
+        <img id="fullImage" src="" style="max-width:100%;max-height:85vh;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.3)">
+      </div>
+      <button type="button" class="btn-close position-absolute top-0 end-0 m-3 bg-white rounded-circle p-2" data-bs-dismiss="modal"></button>
+    </div>
+  </div>
+</div>
+
+<!-- 底部操作栏 -->
+<div class="d-flex gap-2 justify-content-between mt-3 mb-4">
+  <a href="{{ url_for('ozon.listing_review', draft_id=draft.id) }}" class="btn btn-outline-secondary">← 返回草稿审核</a>
+  <div class="d-flex gap-2">
+    <form method="POST" action="{{ url_for('ozon.image_plan_generate', draft_id=draft.id) }}" style="display:inline">
+      <button type="submit" class="btn btn-success">🤖 批量生成图片</button>
+    </form>
+    <a href="{{ url_for('ozon.listings') }}" class="btn btn-primary">📋 完成审核 → 到刊登列表</a>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function filter(key, val) {
+  var url = new URL(window.location);
+  if (val) url.searchParams.set(key, val);
+  else url.searchParams.delete(key);
+  window.location = url.toString();
+}
+function viewFullImage(src) {
+  document.getElementById('fullImage').src = src;
+  var modal = new bootstrap.Modal(document.getElementById('imageModal'));
+  modal.show();
+}
+function copyPrompt(text) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(function() {
+      alert('Prompt 已复制到剪贴板');
+    });
+  } else {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    alert('Prompt 已复制');
+  }
+}
+</script>
+{% endblock %}

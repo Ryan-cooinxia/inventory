@@ -1,0 +1,236 @@
+{#
+  OZON 多级类目选择器 — 可复用于草稿页、在线商品页、类目属性页
+  用法: {% include 'ozon/_category_selector.html' %}
+  调用: openCategorySelector(callback) — callback 接收 {description_category_id, type_id, type_name, path}
+#}
+<div class="modal fade" id="categorySelectorModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <strong>📂 选择 OZON 类目</strong>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-2" style="min-height:400px">
+        <!-- 搜索 -->
+        <div class="input-group input-group-sm mb-2">
+          <input type="text" class="form-control" id="catSearchInput" placeholder="搜索类目或类型（至少2个字）..." oninput="searchCategories()">
+          <button class="btn btn-outline-secondary" onclick="searchCategories()">🔍</button>
+        </div>
+        <div id="catSearchResults" class="d-none mb-2" style="max-height:200px;overflow-y:auto;font-size:12px"></div>
+
+        <!-- 面包屑 -->
+        <div id="catBreadcrumb" class="mb-2" style="font-size:11px">
+          <span class="text-muted">📂</span>
+          <span class="text-primary" style="cursor:pointer" onclick="navigateTo(null)">全部类目</span>
+        </div>
+
+        <!-- 类目列表 -->
+        <div id="catList" style="max-height:300px;overflow-y:auto;font-size:13px">
+          <div class="text-center text-muted py-3">加载中...</div>
+        </div>
+
+        <!-- 选中结果 -->
+        <div id="catSelected" class="d-none mt-2 p-2 rounded" style="background:#d4edda;font-size:12px">
+          <strong>✅ 已选择：</strong>
+          <span id="catSelectedPath"></span>
+          <code class="ms-2" id="catSelectedId"></code>
+        </div>
+      </div>
+      <div class="modal-footer py-1">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+        <button class="btn btn-primary btn-sm" id="btnConfirmCat" disabled onclick="confirmCategory()">确认选择</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+var catCallback = null;
+var catSelectedDcid = null;
+var catSelectedTypeId = null;
+var catSelectedTypeName = '';
+var catSelectedPath = '';
+var catBreadcrumb = [];
+var currentNodeId = null;
+
+function openCategorySelector(callback) {
+  catCallback = callback;
+  catSelectedDcid = null;
+  catSelectedTypeId = null;
+  catBreadcrumb = [];
+  currentNodeId = null;
+  document.getElementById('catSearchResults').classList.add('d-none');
+  document.getElementById('catSelected').classList.add('d-none');
+  document.getElementById('btnConfirmCat').disabled = true;
+  updateBreadcrumb();
+  loadChildren(null);
+  new bootstrap.Modal(document.getElementById('categorySelectorModal')).show();
+}
+
+function updateBreadcrumb() {
+  var bc = document.getElementById('catBreadcrumb');
+  var html = '<span class="text-muted">📂</span> ';
+  html += '<span class="text-primary" style="cursor:pointer" onclick="navigateTo(null)">全部类目</span>';
+  for (var i = 0; i < catBreadcrumb.length; i++) {
+    html += ' <span class="text-muted">›</span> ';
+    if (i === catBreadcrumb.length - 1) {
+      html += '<b>' + escapeHtml(catBreadcrumb[i].name_cn || catBreadcrumb[i].name) + '</b>';
+    } else {
+      html += '<a href="#" onclick="navigateTo(\'' + catBreadcrumb[i].id + '\');return false">' +
+        escapeHtml(catBreadcrumb[i].name_cn || catBreadcrumb[i].name) + '</a>';
+    }
+  }
+  bc.innerHTML = html;
+}
+
+function loadChildren(parentId) {
+  currentNodeId = parentId;
+  var list = document.getElementById('catList');
+  list.innerHTML = '<div class="text-center py-3"><div class="spinner-border spinner-border-sm text-muted"></div></div>';
+
+  var url = parentId ? '/ozon/api/category/children?parent_id=' + parentId : '/ozon/api/category/root';
+  fetch(url).then(function(r){return r.json()}).then(function(d){
+    if (!d.ok || !d.items.length) {
+      list.innerHTML = '<div class="text-center text-muted py-3">该类目下暂无子类目。<br><small>请点击 📋 同步 type 按钮先拉取 type_id，或选择其他类目。</small></div>';
+      return;
+    }
+    renderCategoryList(d.items, !!parentId);
+  });
+}
+
+function renderCategoryList(items, hasBack) {
+  var list = document.getElementById('catList');
+  var html = '';
+  if (hasBack) {
+    html += '<div class="list-group-item" style="cursor:pointer;color:#0d6efd" onclick="goBack()">⬅ 返回上级</div>';
+  }
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    var displayName = it.name_cn || it.name;
+    var icon = it.is_type ? '📦' : (it.has_children ? '📁' : '📄');
+    var badge = it.is_type ? ' <span class="badge bg-info" style="font-size:9px">type</span>' : '';
+
+    html += '<div class="list-group-item list-group-item-action" style="cursor:pointer"';
+    if (it.is_type) {
+      html += ' onclick="selectType(\'' + it.id + '\',\'' + escapeJs(it.name) + '\',\'' + (it.description_category_id || '') + '\')"';
+    } else {
+      html += ' onclick="clickCategory(\'' + it.id + '\',\'' + escapeJs(it.name) + '\',\'' + (it.name_cn || '') + '\',\'' + (it.has_children ? '1' : '0') + '\')"';
+    }
+    html += '>';
+    html += icon + ' <strong>' + escapeHtml(displayName) + '</strong>' + badge;
+    if (it.name_cn && it.name_cn !== it.name) {
+      html += '<br><small class="text-muted">' + escapeHtml(it.name) + '</small>';
+    }
+    html += '</div>';
+  }
+  list.innerHTML = html;
+}
+
+function clickCategory(id, name, nameCn, hasChildren) {
+  catBreadcrumb.push({id: id, name: name, name_cn: nameCn});
+  updateBreadcrumb();
+  loadChildren(id);
+}
+
+function goBack() {
+  catBreadcrumb.pop();
+  var parentId = catBreadcrumb.length > 0 ? catBreadcrumb[catBreadcrumb.length - 1].id : null;
+  currentNodeId = parentId;
+  updateBreadcrumb();
+  loadChildren(parentId);
+}
+
+function navigateTo(id) {
+  // Navigate to specific breadcrumb
+  if (id === null) {
+    catBreadcrumb = [];
+    currentNodeId = null;
+    updateBreadcrumb();
+    loadChildren(null);
+    return;
+  }
+  var idx = -1;
+  for (var i = 0; i < catBreadcrumb.length; i++) {
+    if (catBreadcrumb[i].id === id) { idx = i; break; }
+  }
+  if (idx >= 0) {
+    catBreadcrumb = catBreadcrumb.slice(0, idx + 1);
+    currentNodeId = id;
+    updateBreadcrumb();
+    loadChildren(id);
+  }
+}
+
+function selectType(typeId, typeName, dcid) {
+  catSelectedTypeId = typeId;
+  catSelectedTypeName = typeName;
+  catSelectedDcid = dcid || (catBreadcrumb.length > 0 ? catBreadcrumb[catBreadcrumb.length - 1].id : '');
+  catSelectedPath = catBreadcrumb.map(function(b){return b.name_cn || b.name}).join(' > ') + ' > ' + typeName;
+
+  document.getElementById('catSelectedPath').textContent = catSelectedPath;
+  document.getElementById('catSelectedId').textContent = 'dcid=' + catSelectedDcid + ' type_id=' + typeId;
+  document.getElementById('catSelected').classList.remove('d-none');
+  document.getElementById('btnConfirmCat').disabled = false;
+}
+
+function confirmCategory() {
+  if (!catSelectedDcid || !catSelectedTypeId) return;
+  var modal = bootstrap.Modal.getInstance(document.getElementById('categorySelectorModal'));
+  modal.hide();
+  if (catCallback) {
+    catCallback({
+      description_category_id: catSelectedDcid,
+      type_id: catSelectedTypeId,
+      type_name: catSelectedTypeName,
+      path: catSelectedPath
+    });
+  }
+}
+
+function searchCategories() {
+  var q = document.getElementById('catSearchInput').value.trim();
+  if (q.length < 2) { document.getElementById('catSearchResults').classList.add('d-none'); return; }
+
+  fetch('/ozon/api/category/search?q=' + encodeURIComponent(q))
+    .then(function(r){return r.json()})
+    .then(function(d){
+      var div = document.getElementById('catSearchResults');
+      div.classList.remove('d-none');
+      if (!d.ok || !d.items.length) {
+        div.innerHTML = '<div class="text-muted p-2">无匹配结果</div>';
+        return;
+      }
+      var html = '<div class="list-group">';
+      for (var i = 0; i < d.items.length; i++) {
+        var it = d.items[i];
+        var name = it.name_cn || it.name;
+        var extra = it.path ? '<br><small class="text-muted">' + escapeHtml(it.path) + '</small>' : '';
+        if (it.is_type) {
+          html += '<a href="#" class="list-group-item list-group-item-action py-1" onclick="selectType(\'' + it.id + '\',\'' + escapeJs(it.name) + '\',\'' + (it.description_category_id || '') + '\');return false">📦 <b>' + escapeHtml(name) + '</b> <span class="badge bg-info" style="font-size:9px">type</span></a>';
+        } else {
+          html += '<a href="#" class="list-group-item list-group-item-action py-1" onclick="jumpToCategory(\'' + it.id + '\',\'' + escapeJs(name) + '\',\'' + (it.name_cn || '') + '\');return false">📁 ' + escapeHtml(name) + extra + '</a>';
+        }
+      }
+      html += '</div>';
+      div.innerHTML = html;
+    });
+}
+
+function jumpToCategory(id, name, nameCn) {
+  document.getElementById('catSearchResults').classList.add('d-none');
+  document.getElementById('catSearchInput').value = '';
+  catBreadcrumb = [{id: id, name: name, name_cn: nameCn}];
+  updateBreadcrumb();
+  loadChildren(id);
+}
+
+function escapeHtml(str) {
+  var div = document.createElement('div');
+  div.textContent = str || '';
+  return div.innerHTML;
+}
+
+function escapeJs(str) {
+  return (str || '').replace(/'/g, "\\'").replace(/"/g, '\\"').replace(/\n/g, '\\n');
+}
+</script>

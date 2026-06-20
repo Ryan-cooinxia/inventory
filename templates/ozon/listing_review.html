@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+{% block title %}刊登草稿审核 — 仓库记账系统{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{{ url_for('ozon.listings') }}">刊登草稿</a></li>
+  <li class="breadcrumb-item active">草稿审核</li>
+</ol></nav>
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2 class="mb-0">刊登草稿审核</h2>
+  <span class="badge fs-6
+    {% if draft.status == 'draft' %}bg-secondary
+    {% elif draft.status == 'needs_review' %}bg-warning text-dark
+    {% elif draft.status == 'approved' %}bg-success
+    {% elif draft.status == 'published' %}bg-success
+    {% elif draft.status == 'failed' %}bg-danger
+    {% else %}bg-info{% endif %}
+  ">
+    {% if draft.status == 'draft' %}草稿
+    {% elif draft.status == 'needs_review' %}待审核
+    {% elif draft.status == 'ready' %}已就绪
+    {% elif draft.status == 'approved' %}已通过
+    {% elif draft.status == 'publishing' %}发布中
+    {% elif draft.status == 'published' %}已发布
+    {% elif draft.status == 'failed' %}失败
+    {% else %}{{ draft.status }}{% endif %}
+  </span>
+</div>
+<p class="text-muted small">源商品：<a href="{{ url_for('ozon.source_detail', source_id=draft.source.id) if draft.source else '#' }}">{{ draft.source.title_cn if draft.source else '—' }}</a> | 来源：{{ draft.source.platform if draft.source else '—' }} | 采集：{{ draft.source.captured_at.strftime('%Y-%m-%d') if draft.source and draft.source.captured_at else '' }}</p>
+
+<form method="POST" action="{{ url_for('ozon.listing_save', draft_id=draft.id) }}">
+<!-- Content -->
+<div class="card mb-3">
+  <div class="card-header fw-bold">📝 内容</div>
+  <div class="card-body">
+    <div class="row mb-2">
+      <div class="col-md-6 mb-2">
+        <label class="form-label fw-bold">🇷🇺 俄语标题</label>
+        <input name="title_ru" class="form-control" value="{{ draft.title_ru or '' }}">
+      </div>
+      <div class="col-md-6 mb-2">
+        <label class="form-label fw-bold">📌 俄语卖点</label>
+        <textarea name="bullets_ru" class="form-control" rows="2">{{ draft.bullets_ru or '' }}</textarea>
+      </div>
+    </div>
+    <div class="mb-2">
+      <label class="form-label fw-bold">📄 俄语描述</label>
+      <textarea name="description_ru" class="form-control" rows="3">{{ draft.description_ru or '' }}</textarea>
+    </div>
+  </div>
+</div>
+
+<!-- Category -->
+<div class="card mb-3">
+  <div class="card-header fw-bold d-flex justify-content-between">📂 类目 & 属性
+    <button type="button" class="btn btn-outline-primary btn-sm" onclick="openCategorySelector(onCategorySelected)">选择类目</button>
+  </div>
+  <div class="card-body">
+    <div id="categoryInfo">
+      {% if draft.category_path_ru or draft.ozon_category_path %}
+      <div style="font-size:13px">
+        <strong>路径：</strong>{{ draft.category_path_cn or draft.category_path_ru or draft.ozon_category_path }}
+      </div>
+      {% endif %}
+      {% if draft.ozon_category_id %}
+      <div style="font-size:12px" class="mt-1">
+        <code>dcid: {{ draft.ozon_category_id }}</code>
+        {% if draft.type_id %}<code class="ms-2">type_id: {{ draft.type_id }}</code>{% endif %}
+        {% if draft.type_name_ru %}<span class="ms-2 badge bg-info">{{ draft.type_name_ru[:30] }}</span>{% endif %}
+      </div>
+      {% endif %}
+    </div>
+    {% if not draft.type_id %}
+    <p class="text-muted small mt-2 mb-0">请点击"选择类目"绑定 OZON 类目类型。发布前必须完成。</p>
+    {% endif %}
+    <input type="hidden" name="ozon_category_id" value="{{ draft.ozon_category_id or '' }}">
+    <input type="hidden" name="type_id" value="{{ draft.type_id or '' }}">
+  </div>
+</div>
+
+<!-- SKU -->
+<div class="card mb-3">
+  <div class="card-header fw-bold d-flex justify-content-between">
+    📦 SKU
+    <span class="badge bg-success">顺序与源一致 ✓</span>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive-mobile">
+      <table class="table table-bordered table-sm mb-0">
+        <thead class="table-light"><tr><th>#</th><th>源名称</th><th>颜色 (RU)</th><th>款式 (RU)</th><th>套装量</th><th>采购价 ¥</th><th>图片</th></tr></thead>
+        <tbody>
+          {% for item in skus_with_images %}
+          {% set sku = item.sku %}
+          <tr>
+            <td>{{ sku.source_order }}</td>
+            <td>{{ sku.source_sku_name }}</td>
+            <td><input class="form-control form-control-sm" value="{{ sku.color_ru or '' }}" style="width:100px" name="color_ru_{{ sku.id }}"></td>
+            <td><input class="form-control form-control-sm" value="{{ sku.style_ru or '' }}" style="width:100px" name="style_ru_{{ sku.id }}"></td>
+            <td>{{ sku.bundle_quantity }}</td>
+            <td>{{ '%.2f'|format(sku.purchase_price_cny) if sku.purchase_price_cny else '' }}</td>
+            <td>{{ item.approved_img }} / {{ item.total_img }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Pricing -->
+<div class="card mb-3">
+  <div class="card-header fw-bold d-flex justify-content-between">
+    💰 定价
+    {% if not draft.price_manual_confirmed %}<span class="badge bg-danger">⚠ 需人工确认</span>
+    {% else %}<span class="badge bg-success">✓ 已确认</span>{% endif %}
+  </div>
+  <div class="card-body">
+    <div class="bg-light rounded p-3 small mb-3">
+      <div class="mb-2">成本明细（从定价规则自动计算）</div>
+      {% if draft.pricing_json %}
+        {% set pricing = draft.pricing_json %}
+        <div class="text-muted">{{ pricing }}</div>
+      {% else %}
+        <div class="text-muted">暂未计算，请先配置<a href="{{ url_for('ozon.pricing') }}">定价规则</a></div>
+      {% endif %}
+      <div class="mt-2 pt-2 border-top">
+        建议 RUB 售价：<span class="fs-4 fw-bold text-primary">{{ draft.pricing_json or '—' }}</span>
+      </div>
+    </div>
+    <div class="d-flex gap-3 align-items-center">
+      <div>
+        <label class="form-label fw-bold">手动售价 RUB（发布用）</label>
+        <input type="number" name="manual_price_rub" class="form-control" placeholder="输入最终售价" style="width:200px;font-size:18px;font-weight:600">
+      </div>
+      <div class="form-check mt-4">
+        <input class="form-check-input" type="checkbox" name="price_manual_confirmed" value="1" id="priceConfirmed" {{ 'checked' if draft.price_manual_confirmed }}>
+        <label class="form-check-label fw-bold" for="priceConfirmed">价格已人工确认</label>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Validation -->
+<div class="card mb-3 {% if validation and validation.blocking_count > 0 %}border-danger{% else %}border-success{% endif %}">
+  <div class="card-header fw-bold d-flex justify-content-between
+    {% if validation and validation.blocking_count > 0 %}bg-danger bg-opacity-10{% else %}bg-success bg-opacity-10{% endif %}">
+    ✅ 发布前校验
+    {% if validation and validation.blocking_count > 0 %}
+    <span class="badge bg-danger">{{ validation.blocking_count }} 项阻断</span>
+    {% elif validation %}
+    <span class="badge bg-success">全部通过</span>
+    {% endif %}
+  </div>
+  <div class="card-body">
+    {% if validation and validation.checks %}
+    <ul class="list-unstyled mb-0">
+      {% for check in validation.checks %}
+      <li class="mb-1 {% if check.pass %}text-success{% elif check.blocking %}text-danger{% else %}text-warning{% endif %}">
+        {{ '✓' if check.pass else '✗' if check.blocking else '⚠' }} {{ check.label }}
+        {% if check.blocking %}<b>— 阻断</b>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-muted mb-0 small">点击"发布前校验"按钮执行检查</p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Image Status -->
+<div class="card mb-3">
+  <div class="card-header fw-bold d-flex justify-content-between">
+    🖼 图片
+    <a href="{{ url_for('ozon.image_plan', draft_id=draft.id) }}" class="btn btn-sm btn-outline-primary">管理图片方案</a>
+  </div>
+  <div class="card-body">
+    <div class="d-flex align-items-center gap-2">
+      <div class="progress flex-grow-1" style="height:20px">
+        <div class="progress-bar bg-success" style="width:{{ (approved_slots / total_slots * 100) if total_slots > 0 else 0 }}%">
+          {{ approved_slots }}/{{ total_slots }}
+        </div>
+      </div>
+      <small class="text-muted">已审核通过</small>
+    </div>
+  </div>
+</div>
+
+<!-- Actions -->
+<div class="d-flex gap-2 justify-content-end mb-4">
+  <button type="submit" class="btn btn-outline-secondary">💾 保存</button>
+  <a href="{{ url_for('ozon.listing_validate', draft_id=draft.id) }}" class="btn btn-outline-secondary">🔍 发布前校验</a>
+  <a href="{{ url_for('ozon.listing_approve', draft_id=draft.id) }}" class="btn btn-warning btn-lg">✅ 审核通过</a>
+  {% if draft.status == 'approved' %}
+  <button type="submit" formaction="{{ url_for('ozon.listing_publish', draft_id=draft.id) }}" class="btn btn-primary btn-lg">🚀 提交测试店发布</button>
+  {% else %}
+  <button type="button" class="btn btn-primary btn-lg" disabled>🚀 提交测试店发布</button>
+  {% endif %}
+</div>
+</form>
+
+{% include 'ozon/_category_selector.html' %}
+
+<script>
+function onCategorySelected(sel) {
+  var info = document.getElementById('categoryInfo');
+  info.innerHTML = '<div style="font-size:13px"><strong>路径：</strong>' + sel.path + '</div>' +
+    '<div style="font-size:12px" class="mt-1"><code>dcid: ' + sel.description_category_id + '</code> <code class="ms-2">type_id: ' + sel.type_id + '</code>' +
+    '<span class="ms-2 badge bg-info">' + sel.type_name + '</span></div>' +
+    '<p class="text-success small mt-2">✅ 已选择。保存草稿后生效。</p>';
+
+  fetch('/ozon/api/draft/{{ draft.id }}/set-category-type', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      description_category_id: sel.description_category_id,
+      type_id: sel.type_id,
+      type_name_cn: sel.type_name
+    })
+  }).then(function(r){return r.json()}).then(function(d){
+    if (d.ok) {
+      document.querySelector('input[name="ozon_category_id"]').value = d.description_category_id;
+      document.querySelector('input[name="type_id"]').value = d.type_id;
+    }
+  });
+}
+</script>
+{% endblock %}

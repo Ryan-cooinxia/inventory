@@ -201,4 +201,94 @@
         </table>
     </div>
 </div>
+
+<!-- 客户订货对账表 -->
+<div class="card mb-4">
+    <div class="card-header fw-bold">
+        📤 {{ reconcile_start }} 至 {{ reconcile_end }} 客户订货对账表
+        <span class="text-muted fw-normal ms-3">本时段发货 ¥{{ "%.2f"|format(total_customer_shipped_in_period_value) }}</span>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-bordered table-sm mb-0 align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>SKU</th>
+                    <th>产品</th>
+                    <th class="text-center">客户订货量</th>
+                    <th class="text-center">已发货</th>
+                    <th class="text-center">未发货</th>
+                    <th class="text-center">本时段发货</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in customer_rows %}
+            {% if row.pending_total > 0 or row.shipped_in_period > 0 %}
+            <tr>
+                <td><code>{{ row.sku }}</code></td>
+                <td>{{ row.product }}</td>
+                <td class="text-center">{{ row.total_qty }}</td>
+                <td class="text-center">{{ row.shipped_total }}</td>
+                <td class="text-center">
+                    {% if row.pending_total > 0 %}
+                    <span class="text-danger fw-bold">{{ row.pending_total }}</span>
+                    {% else %}
+                    <span class="badge bg-success">✓ 全部发完</span>
+                    {% endif %}
+                </td>
+                <td class="text-center">
+                    {% if row.shipped_in_period > 0 %}
+                    <span class="text-success fw-bold">+{{ row.shipped_in_period }}</span>
+                    {% else %}
+                    <span class="text-muted">0</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 仓库订货对账表：供货商订购 - 客户订货 -->
+<div class="card mb-4">
+    <div class="card-header fw-bold">
+        🏭 仓库订货对账表（供货商订购 - 客户订货）
+        <small class="text-muted ms-2">正值=供货商订多了，负值=客户订多了</small>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-bordered table-sm mb-0 align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>SKU</th>
+                    <th>产品</th>
+                    <th class="text-center">供货商订购量</th>
+                    <th class="text-center">客户订货量</th>
+                    <th class="text-center">差值</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in warehouse_rows %}
+            {% if row.supply_qty > 0 or row.demand_qty > 0 %}
+            <tr>
+                <td><code>{{ row.sku }}</code></td>
+                <td>{{ row.product }}</td>
+                <td class="text-center">{{ row.supply_qty }}</td>
+                <td class="text-center">{{ row.demand_qty }}</td>
+                <td class="text-center">
+                    {% if row.diff > 0 %}
+                    <span class="text-primary fw-bold">+{{ row.diff }}</span>
+                    {% elif row.diff < 0 %}
+                    <span class="text-danger fw-bold">{{ row.diff }}</span>
+                    {% else %}
+                    <span class="badge bg-success">✓ 刚好平衡</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
 {% endblock %}

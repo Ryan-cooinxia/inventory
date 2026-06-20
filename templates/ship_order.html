@@ -59,7 +59,17 @@
         </tbody>
     </table>
     <button type="button" class="btn btn-secondary" id="add-extra-row">添加一行产品</button>
-    <br><br>
+
+    <!-- 替代品抵扣计算 -->
+    <div class="alert alert-info py-2 mt-2 d-none" id="offset-info" style="font-size:13px">
+        <div>订单剩余应发：<strong>¥<span id="remaining-value">{{ "%.2f"|format(remaining_order_value) }}</span></strong></div>
+        <div>替代品合计：<strong>¥<span id="substitute-total">0.00</span></strong></div>
+        <div id="offset-diff-line" class="d-none">
+            差额：<strong id="offset-diff"></strong>
+            <span id="offset-hint"></span>
+        </div>
+    </div>
+    <br>
 
     <!-- 发货信息 -->
     <div class="row mb-3">
@@ -94,6 +104,21 @@
         <div class="col-md-6">
             <label>备注</label>
             <input type="text" name="remark" class="form-control">
+        </div>
+    </div>
+
+    <div class="border rounded p-3 mb-3 bg-light">
+        <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="cancel_remaining" id="cancelRemaining" checked>
+            <label class="form-check-label" for="cancelRemaining">
+                <strong>取消剩余未发</strong> — 本次未发完的数量将直接从订货量中扣除，订单不再挂起
+            </label>
+        </div>
+        <div class="form-check mt-1">
+            <input class="form-check-input" type="checkbox" name="extra_as_new_order" id="extraAsNewOrder" checked>
+            <label class="form-check-label" for="extraAsNewOrder">
+                <strong>替代品独立订单</strong> — 下方额外添加的产品将自动生成新客户订单并完成发货
+            </label>
         </div>
     </div>
 
@@ -220,15 +245,61 @@ function bindExtraRowEvents(row) {
     row.querySelector('.extra-remove-row').addEventListener('click', () => {
         if (extraTbody.rows.length > 1) row.remove();
         else alert('至少保留一行');
+        updateOffsetCalc();
     });
-    row.querySelector('.extra-quantity').addEventListener('input', () => updateExtraSubtotal(row));
-    row.querySelector('.extra-unit-price').addEventListener('input', () => updateExtraSubtotal(row));
+    row.querySelector('.extra-quantity').addEventListener('input', () => { updateExtraSubtotal(row); updateOffsetCalc(); });
+    row.querySelector('.extra-unit-price').addEventListener('input', () => { updateExtraSubtotal(row); updateOffsetCalc(); });
 }
 function updateExtraSubtotal(row) {
     const qty = parseFloat(row.querySelector('.extra-quantity').value) || 0;
     const price = parseFloat(row.querySelector('.extra-unit-price').value) || 0;
     row.querySelector('.extra-subtotal').innerText = (qty * price).toFixed(2);
 }
+
+// 替代品抵扣计算
+function updateOffsetCalc() {
+    const remaining = parseFloat(document.getElementById('remaining-value').textContent.replace(/,/g, '')) || 0;
+    let subTotal = 0;
+    document.querySelectorAll('.extra-subtotal').forEach(function(el) {
+        subTotal += parseFloat(el.innerText) || 0;
+    });
+    document.getElementById('substitute-total').textContent = subTotal.toFixed(2);
+
+    const diffLine = document.getElementById('offset-diff-line');
+    const diffEl = document.getElementById('offset-diff');
+    const hintEl = document.getElementById('offset-hint');
+    const infoBox = document.getElementById('offset-info');
+
+    if (subTotal > 0) {
+        infoBox.classList.remove('d-none');
+        const diff = subTotal - remaining;
+        if (Math.abs(diff) < 0.01) {
+            diffLine.classList.add('d-none');
+        } else {
+            diffLine.classList.remove('d-none');
+            if (diff > 0) {
+                diffEl.textContent = '+' + diff.toFixed(2) + '（客户需补）';
+                diffEl.className = 'text-danger';
+                hintEl.textContent = '';
+            } else {
+                diffEl.textContent = diff.toFixed(2) + '（需退客户）';
+                diffEl.className = 'text-warning';
+                hintEl.textContent = '';
+            }
+        }
+        // 自动填入备注
+        const remarkInput = document.querySelector('input[name="remark"]');
+        if (remarkInput && !remarkInput.dataset.autoFilled) {
+            if (Math.abs(diff) > 0.01) {
+                remarkInput.value = (diff > 0 ? '客户需补 ' : '需退客户 ') + Math.abs(diff).toFixed(2) + ' 元';
+                remarkInput.dataset.autoFilled = '1';
+            }
+        }
+    } else {
+        infoBox.classList.add('d-none');
+    }
+}
+
 document.querySelectorAll('.extra-item-row').forEach(row => bindExtraRowEvents(row));
 
 // ========== 拍照识别运单号 ==========

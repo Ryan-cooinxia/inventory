@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>商品适配工作台 — 仓库记账系统</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  body { background: #f5f6fa; }
+  .adaptation-container { display: flex; gap: 12px; min-height: calc(100vh - 120px); }
+  .col-panel { flex: 1; min-width: 0; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); display: flex; flex-direction: column; }
+  .col-panel.middle { flex: 1.15; }
+  .col-panel.right { flex: 1.1; }
+  .panel-header { padding: 12px 16px; border-bottom: 1px solid #e9ecef; font-weight: 600; font-size: 14px; display: flex; align-items: center; justify-content: space-between; }
+  .panel-body { flex: 1; overflow-y: auto; padding: 12px 16px; font-size: 13px; }
+  .section-label { font-size: 11px; color: #6c757d; text-transform: uppercase; letter-spacing: .5px; margin: 12px 0 6px; font-weight: 600; }
+  .section-label:first-child { margin-top: 0; }
+  .field-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #f0f0f0; }
+  .field-row .label { color: #6c757d; font-size: 12px; }
+  .field-row .value { font-weight: 500; font-size: 13px; max-width: 60%; text-align: right; }
+  .badge-confidence { font-size: 10px; padding: 2px 6px; }
+  .badge-confidence.high { background: #d4edda; color: #155724; }
+  .badge-confidence.medium { background: #fff3cd; color: #856404; }
+  .badge-confidence.low { background: #f8d7da; color: #721c24; }
+  .adaptation-relation { display: flex; gap: 8px; margin: 10px 0; }
+  .adaptation-relation .btn { font-size: 12px; }
+  .sku-fact-item { padding: 8px 10px; margin: 4px 0; background: #f8f9fa; border-radius: 4px; border-left: 3px solid #0d6efd; }
+  .gap-item { padding: 6px 10px; margin: 4px 0; border-radius: 4px; font-size: 12px; }
+  .gap-item.blocking { background: #f8d7da; border-left: 3px solid #dc3545; }
+  .gap-item.warning { background: #fff3cd; border-left: 3px solid #ffc107; }
+  .source-img-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+  .source-img-grid img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px; background: #e9ecef; }
+  .evidence-tag { font-size: 10px; padding: 1px 5px; border-radius: 3px; margin-left: 4px; }
+  .evidence-tag.source { background: #cfe2ff; color: #084298; }
+  .evidence-tag.ocr { background: #d1ecf1; color: #0c5460; }
+  .evidence-tag.ai { background: #fff3cd; color: #856404; }
+  .evidence-tag.manual { background: #d4edda; color: #155724; }
+</style>
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-2">
+  <div class="container-fluid">
+    <a class="navbar-brand" href="#">仓库记账</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <ul class="navbar-nav">
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">基础资料</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#">产品管理</a></li>
+            <li><a class="dropdown-item" href="#">客户管理</a></li>
+            <li><a class="dropdown-item" href="#">供应商管理</a></li>
+          </ul>
+        </li>
+        <li class="nav-item"><a class="nav-link" href="#">供应商订单</a></li>
+        <li class="nav-item"><a class="nav-link" href="#">客户订单</a></li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle active" href="#" data-bs-toggle="dropdown">OZON 运营</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="ozon_dashboard.v1.html">📊 工作台</a></li>
+            <li><a class="dropdown-item" href="#">⚙️ 平台接口</a></li>
+            <li><a class="dropdown-item" href="ozon_vision_model_config.v1.html">🔮 模型接口</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📥 采集列表</a></li>
+            <li><a class="dropdown-item active" href="#">🔄 商品适配</a></li>
+            <li><a class="dropdown-item" href="#">📝 刊登草稿</a></li>
+            <li><a class="dropdown-item" href="#">🚀 发布任务</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📋 类目属性字典</a></li>
+            <li><a class="dropdown-item" href="#">💬 提示词库</a></li>
+            <li><a class="dropdown-item" href="#">💰 定价规则</a></li>
+          </ul>
+        </li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">统计报表</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#">每日进出货</a></li>
+            <li><a class="dropdown-item" href="#">客户订货统计</a></li>
+          </ul>
+        </li>
+      </ul>
+      <ul class="navbar-nav ms-auto">
+        <li class="nav-item"><span class="nav-link">👤 管理员</span></li>
+        <li class="nav-item"><a class="nav-link" href="#">退出</a></li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<div class="container-fluid px-3">
+  <!-- 顶部工具栏 -->
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <div>
+      <h5 class="mb-0">🔄 商品适配工作台</h5>
+      <small class="text-muted">源商品 → 商品事实库 → OZON Listing 草稿</small>
+    </div>
+    <div class="adaptation-relation">
+      <span class="text-muted me-2" style="font-size:12px">适配关系：</span>
+      <button class="btn btn-primary btn-sm active">一对一</button>
+      <button class="btn btn-outline-secondary btn-sm">一对多</button>
+      <button class="btn btn-outline-secondary btn-sm">多对一</button>
+    </div>
+  </div>
+
+  <!-- 三栏布局 -->
+  <div class="adaptation-container">
+    <!-- 左栏：源商品资料 -->
+    <div class="col-panel">
+      <div class="panel-header">
+        <span>📥 源商品资料</span>
+        <span class="badge bg-secondary">1688</span>
+      </div>
+      <div class="panel-body">
+        <div class="section-label">基本信息</div>
+        <div class="field-row"><span class="label">源标题</span></div>
+        <div style="font-size:13px; font-weight:500; margin-bottom:8px;">DJI Mic Mini 2 无线麦克风 一拖二 含充电盒 安卓苹果通用</div>
+        <div class="field-row"><span class="label">来源链接</span><span class="value"><a href="#" style="font-size:11px">detail.1688.com/...</a></span></div>
+        <div class="field-row"><span class="label">供应商</span><span class="value">DJI大疆官方旗舰店</span></div>
+        <div class="field-row"><span class="label">采集时间</span><span class="value">2026-06-14 10:30</span></div>
+        <div class="field-row"><span class="label">采购价（最低）</span><span class="value text-danger">¥199.00</span></div>
+
+        <div class="section-label">源 SKU 列表 <span class="badge bg-secondary" style="font-size:10px">6</span></div>
+        <div class="sku-fact-item" style="border-left-color:#6c757d">
+          <div style="font-weight:500;font-size:12px">【相机+手机可用】一拖二（含充电盒）</div>
+          <div style="color:#6c757d;font-size:11px">颜色: 黑色 | 套餐: 官方标配</div>
+        </div>
+        <div class="sku-fact-item" style="border-left-color:#6c757d">
+          <div style="font-weight:500;font-size:12px">【相机+手机可用】一拖二（含充电盒）</div>
+          <div style="color:#6c757d;font-size:11px">颜色: 黑色 | 套餐: 含Lightning转接头</div>
+        </div>
+        <div class="sku-fact-item" style="border-left-color:#6c757d; opacity:.6">
+          <div style="font-weight:500;font-size:12px">【手机可用】一拖一（含充电盒）</div>
+          <div style="color:#6c757d;font-size:11px">颜色: 黑色 | 套餐: 官方标配</div>
+        </div>
+        <div style="font-size:11px;color:#6c757d;text-align:center;padding:4px">... 共 6 个 SKU</div>
+
+        <div class="section-label">源图片 <span class="badge bg-secondary" style="font-size:10px">19</span></div>
+        <div class="source-img-grid">
+          <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Crect fill='%23dee2e6' width='80' height='80'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%236c757d' font-size='10'%3E主图%3C/text%3E%3C/svg%3E" alt="主图">
+          <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Crect fill='%23dee2e6' width='80' height='80'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%236c757d' font-size='10'%3ESKU1%3C/text%3E%3C/svg%3E" alt="SKU1">
+          <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Crect fill='%23dee2e6' width='80' height='80'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%236c757d' font-size='10'%3ESKU2%3C/text%3E%3C/svg%3E" alt="SKU2">
+          <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Crect fill='%23dee2e6' width='80' height='80'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%236c757d' font-size='10'%3E详情%3C/text%3E%3C/svg%3E" alt="详情">
+        </div>
+
+        <div class="section-label">源属性参数</div>
+        <div class="field-row"><span class="label">品牌</span><span class="value">DJI</span></div>
+        <div class="field-row"><span class="label">型号</span><span class="value">Mic Mini 2</span></div>
+        <div class="field-row"><span class="label">颜色</span><span class="value">黑色</span></div>
+        <div class="field-row"><span class="label">适用机型</span><span class="value">相机/手机</span></div>
+        <div class="field-row"><span class="label">连接方式</span><span class="value">无线</span></div>
+        <div class="field-row"><span class="label">包装清单</span><span class="value" style="font-size:11px">发射器×2, 接收器×1, 充电盒×1</span></div>
+      </div>
+    </div>
+
+    <!-- 中栏：商品事实库 -->
+    <div class="col-panel middle">
+      <div class="panel-header">
+        <span>📋 商品事实库</span>
+        <div>
+          <button class="btn btn-outline-secondary btn-sm me-1" style="font-size:11px">🔍 视觉识别结果</button>
+          <button class="btn btn-outline-primary btn-sm" style="font-size:11px">✏️ 编辑</button>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="section-label">标准商品名</div>
+        <div class="input-group input-group-sm mb-2">
+          <input type="text" class="form-control" value="DJI Mic Mini 2 无线麦克风 一拖二含充电盒">
+          <button class="btn btn-outline-secondary">🔒</button>
+        </div>
+        <div class="d-flex gap-2 mb-2">
+          <span class="badge bg-info">商品类型: 无线麦克风</span>
+          <span class="badge bg-info">品类: 3C数码 > 音频配件</span>
+        </div>
+
+        <div class="section-label">SKU 拆解与事实确认</div>
+        <div class="sku-fact-item">
+          <div class="d-flex justify-content-between align-items-start">
+            <div>
+              <strong style="font-size:12px">SKU 1</strong>
+              <span class="badge-confidence high">置信度 95%</span>
+            </div>
+            <div class="form-check form-switch" style="font-size:11px">
+              <input class="form-check-input" type="checkbox" checked style="width:32px;height:18px">
+              <label class="form-check-label">已确认</label>
+            </div>
+          </div>
+          <div class="row mt-1" style="font-size:12px">
+            <div class="col-4"><span class="text-muted">颜色:</span> 黑色 <span class="evidence-tag source">源页面</span></div>
+            <div class="col-4"><span class="text-muted">尺寸:</span> —</div>
+            <div class="col-4"><span class="text-muted">款式:</span> 一拖二含充电盒 <span class="evidence-tag source">源</span></div>
+          </div>
+          <div style="font-size:12px;margin-top:3px">
+            <span class="text-muted">包装内容:</span> 发射器×2, 接收器×1, 充电盒×1, 充电线×1 <span class="evidence-tag ocr">图片OCR</span>
+          </div>
+          <div style="font-size:12px"><span class="text-muted">套装数量:</span> 1</div>
+          <div style="font-size:12px"><span class="text-muted">采购价:</span> ¥249.00</div>
+        </div>
+
+        <div class="sku-fact-item">
+          <div class="d-flex justify-content-between align-items-start">
+            <div>
+              <strong style="font-size:12px">SKU 2</strong>
+              <span class="badge-confidence high">置信度 92%</span>
+            </div>
+            <div class="form-check form-switch" style="font-size:11px">
+              <input class="form-check-input" type="checkbox" checked style="width:32px;height:18px">
+              <label class="form-check-label">已确认</label>
+            </div>
+          </div>
+          <div class="row mt-1" style="font-size:12px">
+            <div class="col-4"><span class="text-muted">颜色:</span> 黑色</div>
+            <div class="col-4"><span class="text-muted">尺寸:</span> —</div>
+            <div class="col-4"><span class="text-muted">款式:</span> 一拖二含充电盒+Lightning转接头</div>
+          </div>
+          <div style="font-size:12px;margin-top:3px">
+            <span class="text-muted">包装内容:</span> 发射器×2, 接收器×1, 充电盒×1, Lightning转接头×1
+          </div>
+          <div style="font-size:12px"><span class="text-muted">采购价:</span> ¥259.00</div>
+        </div>
+
+        <div class="sku-fact-item" style="border-left-color:#ffc107">
+          <div class="d-flex justify-content-between align-items-start">
+            <div>
+              <strong style="font-size:12px">SKU 3</strong>
+              <span class="badge-confidence medium">置信度 68%</span>
+            </div>
+            <div class="form-check form-switch" style="font-size:11px">
+              <input class="form-check-input" type="checkbox" style="width:32px;height:18px">
+              <label class="form-check-label text-warning">待确认</label>
+            </div>
+          </div>
+          <div style="font-size:12px"><span class="text-muted">颜色:</span> 黑色 <span class="evidence-tag ai">AI推测</span></div>
+          <div style="font-size:12px"><span class="text-muted">款式:</span> 一拖一含充电盒</div>
+          <div style="font-size:11px;color:#856404;margin-top:2px">⚠️ 图片中主体与SKU2差异小，颜色/配件需人工确认</div>
+        </div>
+        <div style="font-size:11px;color:#6c757d;text-align:center;padding:4px">... 共 6 个 SKU</div>
+
+        <div class="section-label">商品级事实</div>
+        <div class="field-row"><span class="label">品牌</span><span class="value">DJI <span class="evidence-tag source">源</span> <span class="badge-confidence high ms-1">95%</span></span></div>
+        <div class="field-row"><span class="label">材质</span><span class="value text-warning">待确认 <span class="evidence-tag ai">AI推测:塑料+金属</span> <span class="badge-confidence low ms-1">35%</span></span></div>
+        <div class="field-row"><span class="label">功能</span><span class="value" style="font-size:11px">无线收音, 降噪, 长续航 <span class="evidence-tag source">源页面</span></span></div>
+        <div class="field-row"><span class="label">适配型号</span><span class="value">安卓/苹果/相机</span></div>
+        <div class="field-row"><span class="label">尺寸重量</span><span class="value text-warning">待确认 <span class="badge-confidence low">0%</span></span></div>
+        <div class="field-row"><span class="label">电池容量</span><span class="value text-danger">未知 <span class="badge-confidence low">0%</span></span></div>
+        <div class="field-row"><span class="label">产地</span><span class="value text-warning">待确认</span></div>
+
+        <div class="section-label">⚠️ 待确认字段 (unknown_fields)</div>
+        <div class="gap-item warning">
+          <strong>material</strong> — 仅凭图片无法确认具体材质，需人工补充
+        </div>
+        <div class="gap-item warning">
+          <strong>dimensions / weight</strong> — 源数据未提供，OZON 物流必填
+        </div>
+        <div class="gap-item warning">
+          <strong>battery_capacity</strong> — 电子品类常见必填字段，源数据缺失
+        </div>
+        <div class="gap-item warning">
+          <strong>brand 授权状态</strong> — DJI 品牌需确认授权或按OZON类目规则处理
+        </div>
+      </div>
+    </div>
+
+    <!-- 右栏：OZON Listing 草稿 -->
+    <div class="col-panel right">
+      <div class="panel-header">
+        <span>🎯 OZON Listing 草稿</span>
+        <button class="btn btn-primary btn-sm" style="font-size:11px">生成草稿</button>
+      </div>
+      <div class="panel-body">
+        <div class="section-label">适配策略</div>
+        <div class="d-flex gap-2 mb-2">
+          <span class="badge bg-primary">一对一</span>
+          <span style="font-size:12px">1 个源商品 → 1 个 OZON Listing</span>
+        </div>
+
+        <div class="section-label">OZON 类目候选</div>
+        <select class="form-select form-select-sm mb-2">
+          <option selected>Электроника > Аудио > Микрофоны (置信度 85%)</option>
+          <option>Электроника > Аксессуары > Аудио аксессуары (置信度 62%)</option>
+          <option>Электроника > Видео > Аксессуары для видео (置信度 45%)</option>
+        </select>
+        <div style="font-size:11px;color:#6c757d">类目 ID: 123456 | 推荐理由: 商品类型匹配"无线麦克风"</div>
+
+        <div class="section-label">字段缺口检查</div>
+        <div style="font-size:12px;margin-bottom:6px">
+          必填属性: <strong>8/12</strong> 已满足
+          <span class="badge bg-danger ms-1">4 个阻断缺口</span>
+        </div>
+        <div class="gap-item blocking">
+          <strong>Бренд (品牌)</strong> — 该类目必填，需人工选择: 无品牌/其他/DJI
+          <div style="font-size:10px;color:#721c24">建议操作: 如无法确认授权，选择"无品牌"或咨询类目规则</div>
+        </div>
+        <div class="gap-item blocking">
+          <strong>Гарантия (保修)</strong> — 必填，源数据缺失
+          <div style="font-size:10px;color:#721c24">建议操作: 人工填写保修期限</div>
+        </div>
+        <div class="gap-item blocking">
+          <strong>Вес (重量)</strong> — 物流必填，源数据缺失
+          <div style="font-size:10px;color:#721c24">建议操作: 实测后填写净重和毛重</div>
+        </div>
+        <div class="gap-item blocking">
+          <strong>Размеры (尺寸)</strong> — 物流必填，源数据缺失
+          <div style="font-size:10px;color:#721c24">建议操作: 实测后填写包装尺寸</div>
+        </div>
+
+        <div class="section-label">属性映射预览</div>
+        <table class="table table-sm" style="font-size:11px">
+          <thead><tr><th>OZON 属性</th><th>本地字段</th><th>策略</th><th>状态</th></tr></thead>
+          <tbody>
+            <tr><td>Бренд</td><td>brand.name</td><td><span class="badge bg-warning">manual_required</span></td><td>⚠️</td></tr>
+            <tr><td>Тип</td><td>product_type</td><td><span class="badge bg-success">source_required</span></td><td>✅</td></tr>
+            <tr><td>Цвет</td><td>skus[].color_cn</td><td><span class="badge bg-success">source_required</span></td><td>✅</td></tr>
+            <tr><td>Комплектация</td><td>package_contents</td><td><span class="badge bg-info">source_or_empty</span></td><td>✅</td></tr>
+            <tr><td>Материал</td><td>material</td><td><span class="badge bg-warning">manual_required</span></td><td>⚠️</td></tr>
+            <tr><td>Гарантия</td><td>—</td><td><span class="badge bg-danger">missing</span></td><td>❌</td></tr>
+          </tbody>
+        </table>
+
+        <div class="section-label">俄语标题草稿</div>
+        <textarea class="form-control form-control-sm mb-2" rows="2" style="font-size:12px">Беспроводной микрофон DJI Mic Mini 2, комплект с двумя передатчиками и зарядным кейсом</textarea>
+        <div style="font-size:10px;color:#6c757d">AI 生成 | 置信度 82% | 基于已确认商品事实</div>
+
+        <div class="d-grid gap-1 mt-2">
+          <button class="btn btn-success btn-sm">✅ 保存草稿并进入刊登草稿</button>
+          <button class="btn btn-outline-secondary btn-sm">📋 查看字段缺口详情</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

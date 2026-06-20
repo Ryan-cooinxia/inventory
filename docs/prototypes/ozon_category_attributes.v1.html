@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>类目属性字典 — 仓库记账系统</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  body { background: #f5f6fa; }
+  .attr-table { font-size: 12px; }
+  .attr-table th { font-size: 11px; color: #6c757d; font-weight: 600; white-space: nowrap; }
+  .required-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+  .required-dot.yes { background: #dc3545; }
+  .required-dot.no { background: #adb5bd; }
+  .badge-fill-policy { font-size: 10px; padding: 2px 6px; }
+  .mapping-cell { cursor: pointer; }
+  .mapping-cell:hover { background: #f0f4ff; }
+  .dictionary-preview { max-height: 200px; overflow-y: auto; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-3">
+  <div class="container-fluid">
+    <a class="navbar-brand" href="#">仓库记账</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <ul class="navbar-nav">
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">基础资料</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#">产品管理</a></li>
+            <li><a class="dropdown-item" href="#">客户管理</a></li>
+            <li><a class="dropdown-item" href="#">供应商管理</a></li>
+          </ul>
+        </li>
+        <li class="nav-item"><a class="nav-link" href="#">供应商订单</a></li>
+        <li class="nav-item"><a class="nav-link" href="#">客户订单</a></li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle active" href="#" data-bs-toggle="dropdown">OZON 运营</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="ozon_dashboard.v1.html">📊 工作台</a></li>
+            <li><a class="dropdown-item" href="#">⚙️ 平台接口</a></li>
+            <li><a class="dropdown-item" href="ozon_vision_model_config.v1.html">🔮 模型接口</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📥 采集列表</a></li>
+            <li><a class="dropdown-item" href="ozon_adaptation_workspace.v1.html">🔄 商品适配</a></li>
+            <li><a class="dropdown-item" href="#">📝 刊登草稿</a></li>
+            <li><a class="dropdown-item" href="#">🚀 发布任务</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item active" href="#">📋 类目属性字典</a></li>
+            <li><a class="dropdown-item" href="#">💬 提示词库</a></li>
+            <li><a class="dropdown-item" href="#">💰 定价规则</a></li>
+          </ul>
+        </li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">统计报表</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#">每日进出货</a></li>
+          </ul>
+        </li>
+      </ul>
+      <ul class="navbar-nav ms-auto">
+        <li class="nav-item"><span class="nav-link">👤 管理员</span></li>
+        <li class="nav-item"><a class="nav-link" href="#">退出</a></li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<div class="container-fluid px-3">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h5 class="mb-0">📋 类目属性字典</h5>
+      <small class="text-muted">管理 OZON 类目属性要求、字段映射和缺口检查规则</small>
+    </div>
+    <div>
+      <button class="btn btn-outline-primary btn-sm me-1">🔄 拉取类目树</button>
+      <button class="btn btn-outline-primary btn-sm me-1">📥 拉取类目属性</button>
+      <button class="btn btn-primary btn-sm">+ 手动添加映射</button>
+    </div>
+  </div>
+
+  <!-- 类目列表 -->
+  <div class="card mb-3">
+    <div class="card-header" style="font-size:13px;font-weight:600">📂 已配置类目</div>
+    <div class="card-body p-0">
+      <table class="table table-hover mb-0" style="font-size:12px">
+        <thead class="table-light">
+          <tr>
+            <th>本地品类</th>
+            <th>OZON 类目 ID</th>
+            <th>OZON 类目路径</th>
+            <th>属性数</th>
+            <th>必填</th>
+            <th>已映射</th>
+            <th>缺口</th>
+            <th>最近同步</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="badge bg-info">3C数码 > 音频配件</span></td>
+            <td><code>123456</code></td>
+            <td style="font-size:11px">Электроника > Аудио > Микрофоны</td>
+            <td>18</td>
+            <td><span class="text-danger fw-bold">12</span></td>
+            <td><span class="text-success">8</span></td>
+            <td><span class="badge bg-danger">4</span></td>
+            <td style="font-size:11px">2026-06-14 09:00</td>
+            <td><button class="btn btn-sm btn-outline-primary" style="font-size:11px">查看属性 ▸</button></td>
+          </tr>
+          <tr>
+            <td><span class="badge bg-info">车载工具</span></td>
+            <td><code>789012</code></td>
+            <td style="font-size:11px">Авто > Инструменты > Аварийные</td>
+            <td>14</td>
+            <td><span class="text-danger fw-bold">8</span></td>
+            <td><span class="text-success">6</span></td>
+            <td><span class="badge bg-warning text-dark">2</span></td>
+            <td style="font-size:11px">2026-06-13 15:30</td>
+            <td><button class="btn btn-sm btn-outline-primary" style="font-size:11px">查看属性 ▸</button></td>
+          </tr>
+          <tr>
+            <td><span class="badge bg-info">摄影配件</span></td>
+            <td><code>345678</code></td>
+            <td style="font-size:11px">Электроника > Фото > Аксессуары</td>
+            <td>22</td>
+            <td><span class="text-danger fw-bold">15</span></td>
+            <td><span class="text-success">10</span></td>
+            <td><span class="badge bg-danger">5</span></td>
+            <td style="font-size:11px">2026-06-13 16:00</td>
+            <td><button class="btn btn-sm btn-outline-primary" style="font-size:11px">查看属性 ▸</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 类目属性详情（展开状态：音频配件 > Микрофоны） -->
+  <div class="card mb-3">
+    <div class="card-header" style="font-size:13px;font-weight:600;background:#f0f4ff">
+      🔍 类目属性详情：<strong>Электроника > Аудио > Микрофоны</strong>
+      <span class="badge bg-secondary ms-2">18 个属性</span>
+      <span class="badge bg-danger ms-1">12 必填</span>
+      <span class="badge bg-success ms-1">8 已映射</span>
+    </div>
+    <div class="card-body p-0">
+      <table class="table table-sm attr-table mb-0">
+        <thead class="table-light">
+          <tr>
+            <th style="width:40px">#</th>
+            <th style="width:100px">属性 ID</th>
+            <th>属性名 (RU)</th>
+            <th>属性名 (CN)</th>
+            <th style="width:50px">必填</th>
+            <th style="width:60px">类型</th>
+            <th style="width:60px">字典</th>
+            <th>本地字段映射</th>
+            <th style="width:80px">填充策略</th>
+            <th style="width:60px">状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td><code>85</code></td>
+            <td>Бренд</td>
+            <td>品牌</td>
+            <td><span class="required-dot yes"></span><strong>是</strong></td>
+            <td>枚举</td>
+            <td><a href="#" data-bs-toggle="collapse" data-bs-target="#dict85">查看 ▼</a></td>
+            <td class="mapping-cell"><code>brand.name</code></td>
+            <td><span class="badge-fill-policy badge bg-warning text-dark">manual_required</span></td>
+            <td><span class="text-warning">⚠️</span></td>
+          </tr>
+          <tr class="collapse" id="dict85"><td colspan="10"><div class="dictionary-preview bg-light p-2">字典值: Apple, DJI, RØDE, Shure, Sony, Sennheiser, ... （共 200+ 条目，支持自定义"Нет бренда"）</div></td></tr>
+          <tr>
+            <td>2</td>
+            <td><code>10096</code></td>
+            <td>Тип</td>
+            <td>产品类型</td>
+            <td><span class="required-dot yes"></span><strong>是</strong></td>
+            <td>枚举</td>
+            <td><a href="#">查看 ▼</a></td>
+            <td class="mapping-cell"><code>product_type</code></td>
+            <td><span class="badge-fill-policy badge bg-success">source_required</span></td>
+            <td><span class="text-success">✅</span></td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td><code>10097</code></td>
+            <td>Цвет</td>
+            <td>颜色</td>
+            <td><span class="required-dot yes"></span><strong>是</strong></td>
+            <td>枚举</td>
+            <td><a href="#">查看 ▼</a></td>
+            <td class="mapping-cell"><code>skus[].color_cn</code></td>
+            <td><span class="badge-fill-policy badge bg-success">source_required</span></td>
+            <td><span class="text-success">✅</span></td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td><code>10098</code></td>
+            <td>Комплектация</td>
+            <td>包装内容</td>
+            <td><span class="required-dot no"></span>否</td>
+            <td>文本</td>
+            <td>—</td>
+            <td class="mapping-cell"><code>package_contents</code></td>
+            <td><span class="badge-fill-policy badge bg-info">source_or_empty</span></td>
+            <td><span class="text-success">✅</span></td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td><code>10099</code></td>
+            <td>Материал</td>
+            <td>材质</td>
+            <td><span class="required-dot yes"></span><strong>是</strong></td>
+            <td>枚举</td>
+            <td><a href="#">查看 ▼</a></td>
+            <td class="mapping-cell"><code>material</code></td>
+            <td><span class="badge-fill-policy badge bg-warning text-dark">manual_required</span></td>
+            <td><span class="text-warning">⚠️</span></td>
+          </tr>
+          <tr>
+            <td>6</td>
+            <td><code>10100</code></td>
+            <td>Гарантия</td>
+            <td>保修</td>
+            <td><span class="required-dot yes"></span><strong>是</strong></td>
+            <td>文本</td>
+            <td>—</td>
+            <td class="mapping-cell"><span class="text-muted">— 未映射 —</span></td>
+            <td><span class="badge-fill-policy badge bg-danger">missing</span></td>
+            <td><span class="text-danger">❌</span></td>
+          </tr>
+          <tr>
+            <td>7</td>
+            <td><code>10101</code></td>
+            <td>Вес</td>
+            <td>重量</td>
+            <td><span class="required-dot yes"></span><strong>是</strong></td>
+            <td>数值+单位</td>
+            <td>—</td>
+            <td class="mapping-cell"><code>weight</code></td>
+            <td><span class="badge-fill-policy badge bg-warning text-dark">manual_required</span></td>
+            <td><span class="text-warning">⚠️</span></td>
+          </tr>
+          <tr>
+            <td>8</td>
+            <td><code>10102</code></td>
+            <td>Размеры</td>
+            <td>尺寸</td>
+            <td><span class="required-dot yes"></span><strong>是</strong></td>
+            <td>数值+单位</td>
+            <td>—</td>
+            <td class="mapping-cell"><code>dimensions</code></td>
+            <td><span class="badge-fill-policy badge bg-warning text-dark">manual_required</span></td>
+            <td><span class="text-warning">⚠️</span></td>
+          </tr>
+          <tr>
+            <td>9</td>
+            <td><code>10103</code></td>
+            <td>Страна производитель</td>
+            <td>产地</td>
+            <td><span class="required-dot yes"></span><strong>是</strong></td>
+            <td>枚举</td>
+            <td><a href="#">查看 ▼</a></td>
+            <td class="mapping-cell"><code>origin</code></td>
+            <td><span class="badge-fill-policy badge bg-info">source_or_empty</span></td>
+            <td><span class="text-secondary">—</span></td>
+          </tr>
+          <tr>
+            <td>10</td>
+            <td><code>10104</code></td>
+            <td>Количество</td>
+            <td>数量</td>
+            <td><span class="required-dot yes"></span><strong>是</strong></td>
+            <td>数值</td>
+            <td>—</td>
+            <td class="mapping-cell"><code>bundle_quantity</code></td>
+            <td><span class="badge-fill-policy badge bg-success">source_required</span></td>
+            <td><span class="text-success">✅</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 填充策略说明 -->
+  <div class="card">
+    <div class="card-header" style="font-size:13px;font-weight:600">📖 填充策略说明</div>
+    <div class="card-body" style="font-size:12px">
+      <div class="row">
+        <div class="col-md-3"><span class="badge-fill-policy badge bg-success">source_required</span> — 必须来自源数据，无源数据时阻断发布</div>
+        <div class="col-md-3"><span class="badge-fill-policy badge bg-info">source_or_empty</span> — 有来源则填，无来源留空不阻断</div>
+        <div class="col-md-3"><span class="badge-fill-policy badge bg-warning text-dark">manual_required</span> — 必须人工填写，不可自动生成</div>
+        <div class="col-md-3"><span class="badge-fill-policy badge bg-danger">missing</span> — 未配置映射，必须处理</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

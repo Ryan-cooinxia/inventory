@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>在线商品详情 — 仓库记账系统</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  body { font-size: 14px; }
+  .detail-label { font-size: 11px; color: #6c757d; margin-bottom: 1px; }
+  .section-card { margin-bottom: 16px; }
+  .editable { border: 1px dashed transparent; padding: 2px 4px; border-radius: 3px; cursor: pointer; }
+  .editable:hover { border-color: #0d6efd; background: #f0f7ff; }
+  .editable.editing { border-color: #0d6efd; background: #fff; cursor: text; }
+  .json-block { max-height: 400px; overflow-y: auto; font-size: 11px; background: #1e293b; color: #e2e8f0; }
+  .change-badge { font-size: 10px; }
+  .pending-change { background: #fff3cd !important; }
+  .preview-diff { font-size: 11px; }
+</style>
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-3">
+  <div class="container">
+    <a class="navbar-brand" href="#">仓库记账</a>
+    <div class="collapse navbar-collapse">
+      <ul class="navbar-nav">
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle active" href="#" data-bs-toggle="dropdown">OZON 运营</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#">在线商品</a></li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+  <!-- 顶部栏 -->
+  <nav aria-label="breadcrumb" style="font-size:12px">
+    <ol class="breadcrumb">
+      <li class="breadcrumb-item"><a href="#">OZON 运营</a></li>
+      <li class="breadcrumb-item"><a href="#">在线商品</a></li>
+      <li class="breadcrumb-item active">OM7-BLACK</li>
+    </ol>
+  </nav>
+
+  <div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+      <h5 class="mb-1 editable" id="title-display" onclick="editField('title')" title="点击编辑标题">DJI Osmo Mobile 7 (OM7) 手机云台稳定器 三轴防抖</h5>
+      <div class="d-flex gap-2 align-items-center mt-1">
+        <span class="badge bg-success">active</span>
+        <span class="text-success" style="font-size:12px">VISIBLE</span>
+        <code style="font-size:11px">offer_id: OM7-BLACK</code>
+        <code style="font-size:11px">OZON ID: 3101768205</code>
+        <span class="text-muted" style="font-size:11px">同步: 06-14 22:30</span>
+      </div>
+    </div>
+    <div class="d-flex gap-2">
+      <!-- 未修改时显示 -->
+      <div id="actions-normal">
+        <button class="btn btn-outline-primary btn-sm" onclick="enterEditMode()">✏️ 编辑</button>
+        <button class="btn btn-outline-success btn-sm" onclick="syncDetail()">🔄 同步</button>
+        <button class="btn btn-outline-warning btn-sm">📁 归档</button>
+      </div>
+      <!-- 编辑中显示 -->
+      <div id="actions-editing" style="display:none">
+        <button class="btn btn-warning btn-sm" onclick="previewChanges()">👁️ 预览变更</button>
+        <button class="btn btn-danger btn-sm" onclick="pushToOzon()">🚀 推送至 OZON</button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="cancelEdit()">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 变更提示条 -->
+  <div id="change-bar" class="alert alert-warning py-1 mb-3 d-none" style="font-size:12px">
+    ⚠️ 有 <span id="change-count">0</span> 处未推送的修改。
+  </div>
+
+  <!-- 推送确认弹窗 -->
+  <div class="modal fade" id="pushModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header py-2 bg-warning bg-opacity-10">
+          <strong>🚀 确认推送至 OZON</strong>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body py-2">
+          <p style="font-size:12px">以下修改将被推送到 OZON 平台。请仔细核对。</p>
+          <table class="table table-sm table-bordered preview-diff">
+            <thead class="table-light"><tr><th>字段</th><th style="width:40%">当前值 (OZON)</th><th style="width:40%">新值</th></tr></thead>
+            <tbody id="diff-table">
+              <tr><td>标题</td><td class="text-muted">DJI Osmo Mobile 7 (OM7)...</td><td>DJI Osmo Mobile 7 (OM7) 手机云台稳定器 三轴防抖 2024新款</td></tr>
+              <tr><td>售价</td><td class="text-muted">12,990.00 ₽</td><td class="text-danger">11,990.00 ₽</td></tr>
+              <tr><td>库存</td><td class="text-muted">5</td><td class="text-success">15</td></tr>
+            </tbody>
+          </table>
+          <div class="form-check mt-2">
+            <input class="form-check-input" type="checkbox" id="confirmPush" required>
+            <label class="form-check-label" for="confirmPush" style="font-size:12px">我确认以上修改正确，推送到 OZON</label>
+          </div>
+        </div>
+        <div class="modal-footer py-1">
+          <button class="btn btn-danger btn-sm" id="btnConfirmPush" disabled onclick="doPush()">确认推送</button>
+          <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">关闭</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====================== 正文 ====================== -->
+  <div class="row g-3">
+    <!-- 左栏 -->
+    <div class="col-lg-8">
+      <!-- 1. 基础信息 -->
+      <div class="card section-card">
+        <div class="card-header py-2 d-flex justify-content-between">
+          <strong>📋 基础信息</strong>
+        </div>
+        <div class="card-body py-2">
+          <table class="table table-sm mb-0" style="font-size:12px">
+            <tr>
+              <td class="detail-label" style="width:120px">商品标题</td>
+              <td class="editable" id="field-title" onclick="editField('title')">DJI Osmo Mobile 7 (OM7) 手机云台稳定器 三轴防抖</td>
+            </tr>
+            <tr>
+              <td class="detail-label">offer_id</td>
+              <td><code>OM7-BLACK</code> <span class="text-muted" style="font-size:10px">（不可修改）</span></td>
+            </tr>
+            <tr>
+              <td class="detail-label">OZON 商品 ID</td>
+              <td><code>3101768205</code></td>
+            </tr>
+            <tr>
+              <td class="detail-label">条码</td>
+              <td class="editable" id="field-barcode" onclick="editField('barcode')">6941565901234</td>
+            </tr>
+            <tr>
+              <td class="detail-label">商品描述</td>
+              <td>
+                <div class="editable" id="field-description" onclick="editField('description')" style="max-height:150px;overflow-y:auto">
+                  <p>DJI Osmo Mobile 7 (OM7) — профессиональный трёхосевой стабилизатор для смартфона.</p>
+                  <ul><li>3-осевая стабилизация</li><li>Аккумулятор 2600 мАч (10 ч)</li><li>Вес 450 г</li><li>ActiveTrack 6.0</li></ul>
+                </div>
+              </td>
+            </tr>
+            <tr><td class="detail-label">类目</td><td>电子产品 > 拍摄设备 > 手机云台 (71107562)</td></tr>
+            <tr><td class="detail-label">关联草稿</td><td><a href="#">刊登草稿 #42</a></td></tr>
+          </table>
+        </div>
+      </div>
+
+      <!-- 2. 规格参数 -->
+      <div class="card section-card">
+        <div class="card-header py-2"><strong>📏 规格参数</strong> <span class="text-muted" style="font-size:11px">（可编辑）</span></div>
+        <div class="card-body py-2">
+          <div class="row g-2">
+            <div class="col-sm-3">
+              <div class="detail-label">重量 (g)</div>
+              <div class="editable fw-bold" id="field-weight" onclick="editField('weight')">450</div>
+            </div>
+            <div class="col-sm-3">
+              <div class="detail-label">长度 (mm)</div>
+              <div class="editable" id="field-depth" onclick="editField('depth')">170</div>
+            </div>
+            <div class="col-sm-3">
+              <div class="detail-label">宽度 (mm)</div>
+              <div class="editable" id="field-width" onclick="editField('width')">100</div>
+            </div>
+            <div class="col-sm-3">
+              <div class="detail-label">高度 (mm)</div>
+              <div class="editable" id="field-height" onclick="editField('height')">50</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. 价格 -->
+      <div class="card section-card">
+        <div class="card-header py-2"><strong>💰 价格</strong> <span class="text-muted" style="font-size:11px">（可编辑，点击数字修改）</span></div>
+        <div class="card-body py-2">
+          <table class="table table-sm mb-0" style="font-size:13px">
+            <tr>
+              <td class="detail-label">售价</td>
+              <td><span class="editable fw-bold fs-5" id="field-price" onclick="editField('price')">12,990.00</span> ₽</td>
+            </tr>
+            <tr>
+              <td class="detail-label">原价</td>
+              <td><span class="editable text-muted text-decoration-line-through" id="field-old_price" onclick="editField('old_price')">14,990.00</span> ₽</td>
+            </tr>
+            <tr>
+              <td class="detail-label">最低价</td>
+              <td><span class="editable" id="field-min_price" onclick="editField('min_price')">12,490.00</span> ₽</td>
+            </tr>
+            <tr><td class="detail-label">增值税</td><td>0%</td></tr>
+            <tr><td class="detail-label">折算人民币</td><td><span style="font-size:12px">≈ 1,026 ¥ (@12.66 RUB/CNY)</span></td></tr>
+          </table>
+        </div>
+      </div>
+
+      <!-- 4. 库存 -->
+      <div class="card section-card">
+        <div class="card-header py-2"><strong>📦 库存</strong> <span class="text-muted" style="font-size:11px">（可编辑）</span></div>
+        <div class="card-body py-2">
+          <div class="row g-2">
+            <div class="col-sm-6">
+              <div class="detail-label">当前可售</div>
+              <div class="editable fw-bold fs-5" id="field-stock" onclick="editField('stock')">5</div>
+            </div>
+            <div class="col-sm-6">
+              <div class="detail-label">仓库类型</div>
+              <div>FBS <span class="text-muted" style="font-size:10px">（不可修改）</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. 类目属性 -->
+      <div class="card section-card">
+        <div class="card-header py-2 d-flex justify-content-between">
+          <strong>📐 类目属性</strong>
+          <span class="text-muted" style="font-size:11px">可编辑属性值</span>
+        </div>
+        <div class="card-body py-2">
+          <table class="table table-sm table-striped mb-0" style="font-size:12px">
+            <thead class="table-light">
+              <tr><th style="width:30%">属性名</th><th>当前值</th><th style="width:60px">必填</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Бренд (品牌)</td>
+                <td class="editable" id="attr-85" onclick="editAttr(85)">без бренда</td>
+                <td>-</td>
+              </tr>
+              <tr>
+                <td>Модель (型号)</td>
+                <td class="editable" id="attr-9048" onclick="editAttr(9048)"><b>Osmo Mobile 7</b></td>
+                <td>-</td>
+              </tr>
+              <tr>
+                <td>Тип (类型)</td>
+                <td class="editable" id="attr-8229" onclick="editAttr(8229)">ручной стабилизатор</td>
+                <td>-</td>
+              </tr>
+              <tr>
+                <td>Цвет</td>
+                <td class="editable" id="attr-6030" onclick="editAttr(6030)">чёрный</td>
+                <td>-</td>
+              </tr>
+              <tr>
+                <td>Страна-производитель</td>
+                <td class="editable" id="attr-4381" onclick="editAttr(4381)">Китай</td>
+                <td>-</td>
+              </tr>
+              <tr class="table-danger">
+                <td><b>Пол (性别)</b></td>
+                <td class="editable" id="attr-5948" onclick="editAttr(5948)" style="color:#dc3545">— 未填写 —</td>
+                <td><span class="badge bg-danger">必填</span></td>
+              </tr>
+              <tr>
+                <td>Гарантия</td>
+                <td class="editable" id="attr-9024" onclick="editAttr(9024)">12 месяцев</td>
+                <td>-</td>
+              </tr>
+              <tr>
+                <td>Комплектация</td>
+                <td class="editable" id="attr-9782" onclick="editAttr(9782)">стабилизатор, кабель USB-C, чехол</td>
+                <td>-</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右栏 -->
+    <div class="col-lg-4">
+      <!-- 推送状态 -->
+      <div class="card section-card">
+        <div class="card-header py-2"><strong>📡 OZON 同步状态</strong></div>
+        <div class="card-body py-2">
+          <table class="table table-sm mb-0" style="font-size:12px">
+            <tr><td>最后同步</td><td>2026-06-14 22:30</td></tr>
+            <tr><td>数据来源</td><td>OZON API v4</td></tr>
+            <tr><td>本地状态</td><td><span class="badge bg-success">已同步</span></td></tr>
+            <tr><td>平台校验</td><td><span class="badge bg-warning text-dark">1 项必填缺失</span></td></tr>
+          </table>
+        </div>
+      </div>
+
+      <!-- 图片 -->
+      <div class="card section-card">
+        <div class="card-header py-2 d-flex justify-content-between">
+          <strong>🖼️ 商品图片 (6)</strong>
+          <button class="btn btn-outline-primary btn-sm" style="font-size:11px" onclick="addImage()">+ 添加图片</button>
+        </div>
+        <div class="card-body py-2">
+          <div class="row g-2" id="image-grid">
+            <div class="col-4 position-relative">
+              <img src="https://placehold.co/200x200/e2e8f0/64748b?text=主图" class="img-fluid rounded">
+              <span class="position-absolute top-0 start-0 badge bg-primary" style="font-size:9px">主图</span>
+              <button class="btn btn-sm btn-danger position-absolute top-0 end-0" style="font-size:9px;padding:0 4px;border-radius:50%" title="删除" onclick="deleteImage(0)">✕</button>
+              <button class="btn btn-sm btn-outline-secondary position-absolute bottom-0 end-0" style="font-size:9px;padding:0 4px" title="替换" onclick="replaceImage(0)">替换</button>
+            </div>
+            <div class="col-4 position-relative">
+              <img src="https://placehold.co/200x200/e2e8f0/64748b?text=图2" class="img-fluid rounded">
+              <button class="btn btn-sm btn-danger position-absolute top-0 end-0" style="font-size:9px;padding:0 4px;border-radius:50%" title="删除" onclick="deleteImage(1)">✕</button>
+              <button class="btn btn-sm btn-outline-secondary position-absolute bottom-0 end-0" style="font-size:9px;padding:0 4px" title="替换" onclick="replaceImage(1)">替换</button>
+            </div>
+            <div class="col-4 position-relative">
+              <img src="https://placehold.co/200x200/e2e8f0/64748b?text=图3" class="img-fluid rounded">
+              <button class="btn btn-sm btn-danger position-absolute top-0 end-0" style="font-size:9px;padding:0 4px;border-radius:50%" title="删除" onclick="deleteImage(2)">✕</button>
+              <button class="btn btn-sm btn-outline-secondary position-absolute bottom-0 end-0" style="font-size:9px;padding:0 4px" title="替换" onclick="replaceImage(2)">替换</button>
+            </div>
+            <div class="col-4 position-relative">
+              <img src="https://placehold.co/200x200/e2e8f0/64748b?text=图4" class="img-fluid rounded">
+              <button class="btn btn-sm btn-danger position-absolute top-0 end-0" style="font-size:9px;padding:0 4px;border-radius:50%" title="删除" onclick="deleteImage(3)">✕</button>
+              <button class="btn btn-sm btn-outline-secondary position-absolute bottom-0 end-0" style="font-size:9px;padding:0 4px" title="替换" onclick="replaceImage(3)">替换</button>
+            </div>
+            <div class="col-4 position-relative">
+              <img src="https://placehold.co/200x200/e2e8f0/64748b?text=图5" class="img-fluid rounded">
+              <button class="btn btn-sm btn-danger position-absolute top-0 end-0" style="font-size:9px;padding:0 4px;border-radius:50%" title="删除" onclick="deleteImage(4)">✕</button>
+              <button class="btn btn-sm btn-outline-secondary position-absolute bottom-0 end-0" style="font-size:9px;padding:0 4px" title="替换" onclick="replaceImage(4)">替换</button>
+            </div>
+            <div class="col-4 position-relative">
+              <img src="https://placehold.co/200x200/e2e8f0/64748b?text=360" class="img-fluid rounded">
+              <button class="btn btn-sm btn-danger position-absolute top-0 end-0" style="font-size:9px;padding:0 4px;border-radius:50%" title="删除" onclick="deleteImage(5)">✕</button>
+              <button class="btn btn-sm btn-outline-secondary position-absolute bottom-0 end-0" style="font-size:9px;padding:0 4px" title="替换" onclick="replaceImage(5)">替换</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 操作日志 -->
+      <div class="card section-card">
+        <div class="card-header py-2"><strong>📝 最近操作</strong></div>
+        <div class="list-group list-group-flush" style="font-size:11px;max-height:200px;overflow-y:auto">
+          <div class="list-group-item py-1"><span class="badge bg-info">sync</span> 同步成功 <span class="text-muted float-end">22:30</span></div>
+          <div class="list-group-item py-1"><span class="badge bg-primary">publish</span> 发布 #42 <span class="text-muted float-end">18:00</span></div>
+          <div class="list-group-item py-1"><span class="badge bg-info">sync</span> 同步 <span class="text-muted float-end">10:00</span></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+var editMode = false;
+var changes = {};
+
+function enterEditMode() {
+  editMode = true;
+  document.getElementById('actions-normal').style.display = 'none';
+  document.getElementById('actions-editing').style.display = '';
+  document.querySelectorAll('.editable').forEach(el => {
+    el.classList.add('editing');
+    el.title = '点击编辑，回车保存到本地';
+  });
+}
+
+function cancelEdit() {
+  if (Object.keys(changes).length > 0) {
+    if (!confirm('有未推送的修改，确定放弃？')) return;
+  }
+  editMode = false;
+  changes = {};
+  document.getElementById('actions-normal').style.display = '';
+  document.getElementById('actions-editing').style.display = 'none';
+  document.getElementById('change-bar').classList.add('d-none');
+  document.querySelectorAll('.editable').forEach(el => el.classList.remove('editing', 'pending-change'));
+}
+
+function editField(fieldId) {
+  if (!editMode) return;
+  var el = document.getElementById('field-' + fieldId);
+  var current = el.innerText.trim();
+  var newVal = prompt('修改 ' + fieldId + ':', current);
+  if (newVal !== null && newVal !== current) {
+    el.innerText = newVal;
+    el.classList.add('pending-change');
+    changes[fieldId] = { old: current, new: newVal };
+    updateChangeBar();
+  }
+}
+
+function editAttr(attrId) {
+  if (!editMode) return;
+  var el = document.getElementById('attr-' + attrId);
+  var current = el.innerText.trim();
+  var newVal = prompt('修改属性 ' + attrId + ':', current);
+  if (newVal !== null && newVal !== current) {
+    el.innerText = newVal;
+    el.classList.add('pending-change');
+    changes['attr_' + attrId] = { old: current, new: newVal };
+    updateChangeBar();
+  }
+}
+
+function updateChangeBar() {
+  var cnt = Object.keys(changes).length;
+  document.getElementById('change-count').textContent = cnt;
+  var bar = document.getElementById('change-bar');
+  if (cnt > 0) bar.classList.remove('d-none');
+  else bar.classList.add('d-none');
+}
+
+function previewChanges() {
+  if (Object.keys(changes).length === 0) { alert('没有修改'); return; }
+  var tbody = document.getElementById('diff-table');
+  tbody.innerHTML = '';
+  for (var [key, val] of Object.entries(changes)) {
+    var label = key.replace('field-', '').replace('attr_', '属性 ');
+    tbody.innerHTML += '<tr><td>' + label + '</td><td class="text-muted">' + val.old + '</td><td><b>' + val.new + '</b></td></tr>';
+  }
+  document.getElementById('confirmPush').checked = false;
+  document.getElementById('btnConfirmPush').disabled = true;
+  new bootstrap.Modal(document.getElementById('pushModal')).show();
+}
+
+function pushToOzon() {
+  if (Object.keys(changes).length === 0) { alert('没有修改需要推送'); return; }
+  previewChanges();
+}
+
+function doPush() {
+  // 模拟推送到 OZON API
+  alert('API 调用:\n\nPOST /v3/product/import\n\n' +
+    JSON.stringify({
+      items: [{
+        offer_id: 'OM7-BLACK',
+        name: document.getElementById('field-title').innerText,
+        price: document.getElementById('field-price').innerText,
+        old_price: document.getElementById('field-old_price').innerText,
+        stock: parseInt(document.getElementById('field-stock').innerText),
+        category_id: 71107562,
+        type_id: 96538,
+      }]
+    }, null, 2) +
+    '\n\n✅ 推送成功！task_id: 4811481500');
+
+  changes = {};
+  cancelEdit();
+  bootstrap.Modal.getInstance(document.getElementById('pushModal')).hide();
+}
+
+function syncDetail() {
+  alert('🔄 从 OZON API 重新拉取商品详情...\n\n✅ 同步完成，数据已更新');
+  location.reload();
+}
+
+function deleteImage(idx) {
+  if (!editMode) return;
+  if (confirm('确定删除第 ' + (idx + 1) + ' 张图片？')) {
+    changes['image_delete_' + idx] = { old: '图片 ' + (idx + 1), new: '[已删除]' };
+    updateChangeBar();
+    alert('图片已标记删除。推送后将从 OZON 移除。');
+  }
+}
+
+function replaceImage(idx) {
+  if (!editMode) return;
+  var url = prompt('输入新图片 URL（或粘贴本地路径）：');
+  if (url) {
+    changes['image_replace_' + idx] = { old: '图片 ' + (idx + 1), new: url };
+    updateChangeBar();
+    alert('图片已标记替换。推送后将更新。');
+  }
+}
+
+function addImage() {
+  if (!editMode) return;
+  var url = prompt('输入新图片 URL：');
+  if (url) {
+    changes['image_add'] = { old: '-', new: url };
+    updateChangeBar();
+    alert('新图片已加入。推送后将上传到 OZON。');
+  }
+}
+
+// 推送确认复选框联动
+document.addEventListener('DOMContentLoaded', function() {
+  document.getElementById('confirmPush').addEventListener('change', function() {
+    document.getElementById('btnConfirmPush').disabled = !this.checked;
+  });
+});
+</script>
+</body>
+</html>

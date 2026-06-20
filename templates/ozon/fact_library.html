@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}商品事实库 — 仓库记账系统{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0">📋 商品事实库</h5>
+  <a href="{{ url_for('ozon.sources') }}" class="btn btn-primary btn-sm">📥 从采集列表新建</a>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <div class="row g-2 align-items-center">
+      <div class="col-auto"><label class="form-label mb-0" style="font-size:12px">商品类型</label></div>
+      <div class="col-auto">
+        <select class="form-select form-select-sm" id="filterProductType" onchange="filter()" style="width:160px">
+          <option value="">全部</option>
+          {% set types = facts|map(attribute='product_type')|reject('none')|unique|list %}
+          {% for t in types %}
+          <option value="{{ t }}" {% if request.args.get('product_type') == t %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto"><label class="form-label mb-0" style="font-size:12px">审核状态</label></div>
+      <div class="col-auto">
+        <select class="form-select form-select-sm" id="filterStatus" onchange="filter()" style="width:140px">
+          <option value="">全部</option>
+          <option value="pending" {% if request.args.get('review_status') == 'pending' %}selected{% endif %}>待审核</option>
+          <option value="approved" {% if request.args.get('review_status') == 'approved' %}selected{% endif %}>已通过</option>
+          <option value="needs_changes" {% if request.args.get('review_status') == 'needs_changes' %}selected{% endif %}>需修改</option>
+        </select>
+      </div>
+      <div class="col-auto ms-auto"><span class="text-muted" style="font-size:12px">共 {{ facts|length }} 条</span></div>
+    </div>
+  </div>
+</div>
+
+{% if facts %}
+<div class="mb-2 d-flex gap-2">
+  <form method="POST" action="{{ url_for('ozon.fact_batch_delete') }}" id="batchDeleteForm" onsubmit="return confirmBatchDelete()">
+    <input type="hidden" name="ids" id="batchIds">
+    <button type="submit" class="btn btn-sm btn-outline-danger" id="btnBatchDelete" disabled>🗑️ 批量删除</button>
+  </form>
+  <span class="text-muted" style="font-size:11px;line-height:31px" id="batchCount"></span>
+</div>
+<div class="table-responsive">
+<table class="table table-hover align-middle" style="font-size:13px">
+  <thead class="table-light">
+    <tr>
+      <th style="width:36px"><input type="checkbox" id="selectAll" onchange="toggleAll(this)" title="全选"></th>
+      <th>标准商品名</th>
+      <th>类型</th>
+      <th>SKU</th>
+      <th>品牌</th>
+      <th>置信度</th>
+      <th>审核状态</th>
+      <th>更新时间</th>
+      <th>操作</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for f in facts %}
+    <tr>
+      <td class="text-center"><input type="checkbox" class="row-checkbox" value="{{ f.id }}" onchange="updateBatch()"></td>
+      <td><strong>{{ f.standard_name_cn[:50] }}{% if f.standard_name_cn|length > 50 %}...{% endif %}</strong></td>
+      <td><span class="badge bg-info">{{ f.product_type or '-' }}</span></td>
+      <td>{{ f.fact_skus.count() }}</td>
+      <td>{{ f.brand_name or '-' }}</td>
+      <td>
+        {% if f.confidence %}
+        <div class="progress" style="height:6px;width:60px"><div class="progress-bar {% if f.confidence >= 0.8 %}bg-success{% elif f.confidence >= 0.5 %}bg-warning{% else %}bg-danger{% endif %}" style="width:{{ '{:.0%}'.format(f.confidence) }}"></div></div>
+        <span style="font-size:10px">{{ '{:.0%}'.format(f.confidence) }}</span>
+        {% else %}-{% endif %}
+      </td>
+      <td>
+        {% if f.review_status == 'approved' %}<span class="badge bg-success">已通过</span>
+        {% elif f.review_status == 'needs_changes' %}<span class="badge bg-warning text-dark">需修改</span>
+        {% elif f.review_status == 'partial_confirmed' %}<span class="badge bg-info">部分确认</span>
+        {% else %}<span class="badge bg-secondary">待审核</span>{% endif %}
+      </td>
+      <td style="font-size:11px;color:#6c757d">{{ f.updated_at.strftime('%m-%d %H:%M') if f.updated_at else '' }}</td>
+      <td>
+        {% if f.group %}
+          {% set items = f.group.items %}
+          {% if items|length > 0 %}
+          <a href="{{ url_for('ozon.adaptation_workspace', source_id=items[0].source.id) }}" class="btn btn-sm btn-outline-primary">进入适配 ▸</a>
+          {% endif %}
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="text-center py-5">
+  <div style="font-size:48px">📋</div>
+  <h5 class="text-muted mt-3">暂无商品事实</h5>
+  <p class="text-muted">从采集列表进入适配工作台，系统会自动创建商品事实</p>
+  <a href="{{ url_for('ozon.sources') }}" class="btn btn-primary">📥 进入采集列表</a>
+</div>
+{% endif %}
+
+<script>
+function filter() {
+  const params = new URLSearchParams();
+  const t = document.getElementById('filterProductType').value;
+  const s = document.getElementById('filterStatus').value;
+  if (t) params.set('product_type', t);
+  if (s) params.set('review_status', s);
+  window.location.search = params.toString();
+}
+
+function toggleAll(el) { document.querySelectorAll('.row-checkbox').forEach(function(cb) { cb.checked = el.checked; }); updateBatch(); }
+function updateBatch() {
+  var ids = []; document.querySelectorAll('.row-checkbox:checked').forEach(function(cb) { ids.push(cb.value); });
+  document.getElementById('batchIds').value = ids.join(','); document.getElementById('btnBatchDelete').disabled = ids.length === 0;
+  document.getElementById('batchCount').textContent = ids.length ? '已选 ' + ids.length + ' 条' : '';
+}
+function confirmBatchDelete() { var ids = document.getElementById('batchIds').value; if (!ids) { alert('请先选择记录'); return false; } return confirm('确认删除 ' + ids.split(',').length + ' 条记录？'); }
+</script>
+{% endblock %}

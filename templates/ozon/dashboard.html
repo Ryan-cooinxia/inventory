@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}OZON 工作台 — 仓库记账系统{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2 class="mb-0">📊 OZON 工作台</h2>
+  <span class="text-muted small">数据更新于 {{ now.strftime('%m-%d %H:%M') if now else '' }}</span>
+</div>
+
+<!-- 统计卡片 -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-4 col-lg">
+    <a href="{{ url_for('ozon.accounts') }}" class="text-decoration-none">
+      <div class="card border-primary h-100">
+        <div class="card-body text-center py-3">
+          <div class="fs-3 fw-bold text-primary">{{ stats.account_count }}</div>
+          <small class="text-muted">已配置店铺</small>
+        </div>
+      </div>
+    </a>
+  </div>
+  <div class="col-6 col-md-4 col-lg">
+    <a href="{{ url_for('ozon.sources') }}" class="text-decoration-none">
+      <div class="card border-warning h-100">
+        <div class="card-body text-center py-3">
+          <div class="fs-3 fw-bold text-warning">{{ stats.source_pending }}</div>
+          <small class="text-muted">采集待处理</small>
+        </div>
+      </div>
+    </a>
+  </div>
+  <div class="col-6 col-md-4 col-lg">
+    <a href="{{ url_for('ozon.listings') }}?status=needs_review" class="text-decoration-none">
+      <div class="card border-info h-100">
+        <div class="card-body text-center py-3">
+          <div class="fs-3 fw-bold text-info">{{ stats.draft_pending }}</div>
+          <small class="text-muted">草稿待审核</small>
+        </div>
+      </div>
+    </a>
+  </div>
+  <div class="col-6 col-md-4 col-lg">
+    <a href="{{ url_for('ozon.listings') }}?status=approved" class="text-decoration-none">
+      <div class="card border-success h-100">
+        <div class="card-body text-center py-3">
+          <div class="fs-3 fw-bold text-success">{{ stats.draft_approved }}</div>
+          <small class="text-muted">可发布</small>
+        </div>
+      </div>
+    </a>
+  </div>
+  <div class="col-6 col-md-4 col-lg">
+    <div class="card border-secondary h-100">
+      <div class="card-body text-center py-3">
+        <div class="fs-3 fw-bold">{{ stats.publishing_count }}</div>
+        <small class="text-muted">发布中</small>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-4 col-lg">
+    <a href="{{ url_for('ozon.publish_jobs') }}?status=failed" class="text-decoration-none">
+      <div class="card border-danger h-100">
+        <div class="card-body text-center py-3">
+          <div class="fs-3 fw-bold text-danger">{{ stats.failed_count }}</div>
+          <small class="text-muted">发布失败</small>
+        </div>
+      </div>
+    </a>
+  </div>
+  <div class="col-6 col-md-4 col-lg">
+    <div class="card border-success h-100">
+      <div class="card-body text-center py-3">
+        <div class="fs-3 fw-bold text-success">{{ stats.published_count }}</div>
+        <small class="text-muted">已发布</small>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row">
+  <!-- 最近失败 -->
+  <div class="col-lg-6 mb-3">
+    <div class="card h-100">
+      <div class="card-header fw-bold">⚠ 最近失败原因</div>
+      <div class="card-body p-0">
+        {% if recent_failures %}
+        <table class="table table-sm table-borderless mb-0">
+          <tbody>
+            {% for job in recent_failures %}
+            <tr>
+              <td class="text-danger small" style="width:90px">{{ job.created_at.strftime('%m-%d %H:%M') if job.created_at else '' }}</td>
+              <td>
+                <a href="{{ url_for('ozon.listing_review', draft_id=job.draft_id) if job.draft_id else '#' }}" class="small">
+                  {{ job.draft.title_ru or '未知草稿' }}
+                </a>
+              </td>
+              <td class="text-muted small">{{ job.error_message or '未知错误' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="text-center text-muted py-3">
+          <small>暂无失败记录 ✓</small>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- 快捷操作 -->
+  <div class="col-lg-6 mb-3">
+    <div class="card h-100">
+      <div class="card-header fw-bold">⚡ 快捷操作</div>
+      <div class="card-body">
+        <div class="d-grid gap-2">
+          <a href="{{ url_for('ozon.sources') }}" class="btn btn-outline-primary btn-lg">📥 采集商品</a>
+          <a href="{{ url_for('ozon.listings') }}?status=needs_review" class="btn btn-outline-warning btn-lg">📝 查看待审核草稿 ({{ stats.draft_pending }})</a>
+          <a href="{{ url_for('ozon.publish_jobs') }}" class="btn btn-outline-secondary">🚀 查看发布任务</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

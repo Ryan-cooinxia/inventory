@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}发布任务 — 仓库记账系统{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2 class="mb-0">🚀 发布任务</h2>
+  <span class="text-muted">共 {{ jobs|length if jobs else 0 }} 条</span>
+</div>
+
+<!-- Filters -->
+<form class="row g-2 mb-3 align-items-end" method="GET">
+  <div class="col-auto">
+    <label class="form-label fw-bold">状态</label>
+    <select name="status" class="form-select" style="width:130px">
+      <option value="">全部</option>
+      <option value="pending" {% if request.args.get('status') == 'pending' %}selected{% endif %}>待处理</option>
+      <option value="processing" {% if request.args.get('status') == 'processing' %}selected{% endif %}>进行中</option>
+      <option value="success" {% if request.args.get('status') == 'success' %}selected{% endif %}>成功</option>
+      <option value="failed" {% if request.args.get('status') == 'failed' %}selected{% endif %}>失败</option>
+    </select>
+  </div>
+  <div class="col-auto">
+    <label class="form-label fw-bold">店铺</label>
+    <select name="account_id" class="form-select" style="width:150px">
+      <option value="">全部</option>
+      {% for acc in accounts %}
+      <option value="{{ acc.id }}" {% if request.args.get('account_id')|string == acc.id|string %}selected{% endif %}>{{ acc.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-auto"><button type="submit" class="btn btn-outline-primary">筛选</button></div>
+</form>
+
+{% if jobs %}
+<div class="mb-2 d-flex gap-2">
+  <form method="POST" action="{{ url_for('ozon.publish_job_batch_delete') }}" id="batchDeleteForm" onsubmit="return confirmBatchDelete()">
+    <input type="hidden" name="ids" id="batchIds">
+    <button type="submit" class="btn btn-sm btn-outline-danger" id="btnBatchDelete" disabled>🗑️ 批量删除</button>
+  </form>
+  <span class="text-muted" style="font-size:11px;line-height:31px" id="batchCount"></span>
+</div>
+{% endif %}
+<div class="table-responsive-mobile">
+  <table class="table table-bordered table-sm align-middle">
+    <thead class="table-light">
+      <tr><th style="width:36px"><input type="checkbox" id="selectAll" onchange="toggleAll(this)" title="全选"></th><th>任务 ID</th><th>店铺</th><th>草稿标题</th><th>操作类型</th><th>状态</th><th>创建时间</th><th style="width:100px">操作</th></tr>
+    </thead>
+    <tbody>
+      {% for job in jobs %}
+      <tr>
+        <td class="text-center"><input type="checkbox" class="row-checkbox" value="{{ job.id }}" onchange="updateBatch()"></td>
+        <td><code>{{ job.id }}</code></td>
+        <td>{{ job.account.name if job.account else '—' }}</td>
+        <td>{{ job.draft.title_ru if job.draft else '—' }}</td>
+        <td>
+          {% if job.action == 'create_product' %}<span class="badge bg-primary">创建商品</span>
+          {% elif job.action == 'update_product' %}<span class="badge bg-info">更新商品</span>
+          {% elif job.action == 'update_price' %}<span class="badge bg-warning text-dark">更新价格</span>
+          {% elif job.action == 'update_stock' %}<span class="badge bg-secondary">更新库存</span>
+          {% elif job.action == 'upload_image' %}<span class="badge bg-success">上传图片</span>
+          {% else %}<span class="badge bg-secondary">{{ job.action }}</span>{% endif %}
+        </td>
+        <td>
+          {% if job.status == 'pending' %}<span class="badge bg-secondary">待处理</span>
+          {% elif job.status == 'processing' %}<span class="badge bg-info">进行中</span>
+          {% elif job.status == 'success' %}<span class="badge bg-success">成功</span>
+          {% elif job.status == 'failed' %}<span class="badge bg-danger">失败</span>
+          {% endif %}
+        </td>
+        <td>{{ job.created_at.strftime('%m-%d %H:%M') if job.created_at else '' }}</td>
+        <td>
+          <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#job{{ job.id }}">详情</button>
+          {% if job.status == 'failed' %}
+          <form method="POST" action="{{ url_for('ozon.publish_job_retry', job_id=job.id) }}" style="display:inline">
+            <button class="btn btn-sm btn-outline-warning">重试</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      <tr class="collapse" id="job{{ job.id }}">
+        <td colspan="7" class="bg-light">
+          <div class="row">
+            <div class="col-md-6">
+              <h6>📤 请求</h6>
+              <pre class="bg-dark text-light p-2 rounded small" style="max-height:200px;overflow:auto">{{ job.request_json or '(无)' }}</pre>
+            </div>
+            <div class="col-md-6">
+              <h6>📥 响应</h6>
+              <pre class="bg-dark text-light p-2 rounded small" style="max-height:200px;overflow:auto">{{ job.response_json or '(无)' }}</pre>
+            </div>
+          </div>
+          {% if job.ozon_task_id %}<small class="text-muted">OZON Task ID: {{ job.ozon_task_id }}</small>{% endif %}
+          {% if job.error_message %}
+          <div class="alert alert-danger py-1 px-2 mb-0 mt-2 small">
+            ⚠ {{ job.error_message }}
+          </div>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not jobs %}
+      <tr><td colspan="7" class="text-center text-muted py-4">
+        <p class="mb-2">暂无发布任务</p>
+        <p class="small">在<a href="{{ url_for('ozon.listings') }}">刊登草稿</a>中审核通过后可提交发布</p>
+      </td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+function toggleAll(el) { document.querySelectorAll('.row-checkbox').forEach(function(cb) { cb.checked = el.checked; }); updateBatch(); }
+function updateBatch() {
+  var ids = []; document.querySelectorAll('.row-checkbox:checked').forEach(function(cb) { ids.push(cb.value); });
+  document.getElementById('batchIds').value = ids.join(','); document.getElementById('btnBatchDelete').disabled = ids.length === 0;
+  document.getElementById('batchCount').textContent = ids.length ? '已选 ' + ids.length + ' 条' : '';
+}
+function confirmBatchDelete() { var ids = document.getElementById('batchIds').value; if (!ids) { alert('请先选择记录'); return false; } return confirm('确认删除 ' + ids.split(',').length + ' 条记录？'); }
+</script>
+{% endblock %}

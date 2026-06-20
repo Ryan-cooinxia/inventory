@@ -39,25 +39,6 @@
             }
         }
 
-        /* 强制清除所有遮罩层（临时修复） */
-        .modal-backdrop,
-        .fade.show,
-        .fade.in,
-        [class*="backdrop"],
-        [class*="overlay"] {
-            display: none !important;
-            visibility: hidden !important;
-            opacity: 0 !important;
-            pointer-events: none !important;
-        }
-        body {
-            overflow: auto !important;
-            pointer-events: auto !important;
-            padding-right: 0 !important;
-        }
-        body.modal-open {
-            overflow: auto !important;
-        }
     </style>
     {% block head %}{% endblock %}
 </head>
@@ -77,6 +58,16 @@
                             <li><a class="dropdown-item" href="/customers">客户管理</a></li>
                             <li><a class="dropdown-item" href="/suppliers">供应商管理</a></li>
                             <li><a class="dropdown-item" href="/data">数据导入导出</a></li>
+                        </ul>
+                    </li>
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">库存工具</a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="/inventory/split-rules">📦 拆包规则</a></li>
+                            <li><a class="dropdown-item" href="/inventory/split-orders">📋 拆包单</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="/inventory/assembly-rules">🔧 组合规则</a></li>
+                            <li><a class="dropdown-item" href="/inventory/assembly-orders">🔩 组合单</a></li>
                         </ul>
                     </li>
                     <li class="nav-item"><a class="nav-link" href="/supplier_orders">供应商订单</a></li>
@@ -106,6 +97,25 @@
                             <li><a class="dropdown-item" href="/report/inventory_trend">库存趋势图</a></li>
                             <li><a class="dropdown-item" href="/refunds">退款管理</a></li>
                             <li><a class="dropdown-item" href="/customer/finance">客户资金总览</a></li>
+                        </ul>
+                    </li>
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">OZON 运营</a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="/ozon/dashboard">📊 工作台</a></li>
+                            <li><a class="dropdown-item" href="/ozon/accounts">⚙️ 平台接口</a></li>
+                            <li><a class="dropdown-item" href="/ozon/models">🔮 模型接口</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="/ozon/sources">📥 采集列表</a></li>
+                            <li><a class="dropdown-item" href="/ozon/adaptation">🔄 商品适配</a></li>
+                            <li><a class="dropdown-item" href="/ozon/listings">📝 刊登草稿</a></li>
+                            <li><a class="dropdown-item" href="/ozon/online-products">📦 在线商品</a></li>
+                            <li><a class="dropdown-item" href="/ozon/publish-jobs">🚀 发布任务</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="/ozon/fact-library">📋 商品事实库</a></li>
+                            <li><a class="dropdown-item" href="/ozon/category-attributes">📋 类目属性字典</a></li>
+                            <li><a class="dropdown-item" href="/ozon/prompts">💬 提示词库</a></li>
+                            <li><a class="dropdown-item" href="/ozon/pricing">💰 定价规则</a></li>
                         </ul>
                     </li>
                     <li class="nav-item dropdown">
@@ -321,10 +331,6 @@
         });
     </script>
 
-    <style>
-        .modal-backdrop { display: none !important; }
-        .modal-open { overflow: auto !important; }
-    </style>
 
     <!-- PWA Service Worker 注册 -->
     <script>

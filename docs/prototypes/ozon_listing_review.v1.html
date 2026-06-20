@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>刊登草稿审核 — 仓库记账系统</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+  <div class="container">
+    <a class="navbar-brand" href="#">仓库记账</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <ul class="navbar-nav">
+        <li class="nav-item dropdown"><a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">基础资料</a><ul class="dropdown-menu"><li><a class="dropdown-item" href="#">产品管理</a></li></ul></li>
+        <li class="nav-item"><a class="nav-link" href="#">供应商订单</a></li>
+        <li class="nav-item"><a class="nav-link" href="#">客户订单</a></li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle active" href="#" data-bs-toggle="dropdown">OZON 运营</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#">📊 工作台</a></li><li><a class="dropdown-item" href="#">⚙️ 平台接口</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📥 采集列表</a></li>
+            <li><a class="dropdown-item active" href="#">📝 刊登草稿</a></li>
+            <li><a class="dropdown-item" href="#">🚀 发布任务</a></li>
+          </ul>
+        </li>
+      </ul>
+      <ul class="navbar-nav ms-auto"><li class="nav-item"><span class="nav-link">👤 管理员</span></li></ul>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+  <nav aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="#">刊登草稿</a></li><li class="breadcrumb-item active">草稿审核</li></ol></nav>
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0">刊登草稿审核</h2>
+    <span class="badge bg-warning text-dark fs-6">待审核</span>
+  </div>
+  <p class="text-muted small">源商品：<a href="#">15合1车载应急手电筒</a> | 来源：1688 | 采集：2026-06-12</p>
+
+  <!-- Content -->
+  <div class="card mb-3">
+    <div class="card-header fw-bold">📝 内容</div>
+    <div class="card-body">
+      <div class="row mb-2">
+        <div class="col-md-6 mb-2">
+          <label class="form-label fw-bold">🇷🇺 俄语标题</label>
+          <input class="form-control" value="Многофункциональный аварийный фонарь для автомобиля 15 в 1">
+        </div>
+        <div class="col-md-6 mb-2">
+          <label class="form-label fw-bold">📌 俄语卖点</label>
+          <textarea class="form-control" rows="2">• Подходит для аварийных ситуаций в дороге
+• Компактный корпус, несколько режимов работы</textarea>
+        </div>
+      </div>
+      <div class="mb-2">
+        <label class="form-label fw-bold">📄 俄语描述</label>
+        <textarea class="form-control" rows="2">Многофункциональный аварийный фонарь 15 в 1 — незаменимый помощник в дороге.</textarea>
+      </div>
+    </div>
+  </div>
+
+  <!-- Category & Attributes -->
+  <div class="card mb-3">
+    <div class="card-header fw-bold">📂 类目 & 属性</div>
+    <div class="card-body">
+      <div class="mb-2"><label class="form-label fw-bold">OZON 类目</label>
+        <select class="form-select"><option>Автотовары > Аварийное оборудование > Фонари аварийные</option></select>
+      </div>
+      <div class="table-responsive-mobile">
+        <table class="table table-bordered table-sm mb-0">
+          <thead class="table-light"><tr><th>属性 (RU)</th><th>必填</th><th>AI 值</th><th>置信度</th><th>人工确认值</th><th>来源</th></tr></thead>
+          <tbody>
+            <tr><td>Бренд</td><td class="text-danger">✅</td><td class="table-warning">—</td><td><span class="badge bg-danger">低</span></td><td><input class="form-control form-control-sm" placeholder="⚠️ 待确认"></td><td>—</td></tr>
+            <tr><td>Тип</td><td class="text-danger">✅</td><td>аварийный фонарь</td><td><span class="badge bg-success">高</span></td><td>аварийный фонарь</td><td>源标题</td></tr>
+            <tr><td>Материал корпуса</td><td></td><td class="table-warning">—</td><td><span class="badge bg-danger">低</span></td><td><input class="form-control form-control-sm" value="ABS"></td><td>人工</td></tr>
+            <tr><td>Количество функций</td><td></td><td>15</td><td><span class="badge bg-success">高</span></td><td>15</td><td>源标题</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- SKU -->
+  <div class="card mb-3">
+    <div class="card-header fw-bold d-flex justify-content-between">
+      📦 SKU
+      <span class="badge bg-success">顺序与源一致 ✓</span>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive-mobile">
+        <table class="table table-bordered table-sm mb-0">
+          <thead class="table-light"><tr><th>#</th><th>源名称</th><th>颜色 (RU)</th><th>款式 (RU)</th><th>套装量</th><th>采购价 ¥</th><th>图片</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>1</td><td>黄色 标配</td>
+              <td><input class="form-control form-control-sm" value="Желтый" style="width:100px"></td>
+              <td><input class="form-control form-control-sm" value="Стандарт" style="width:100px"></td>
+              <td>1</td><td>19.80</td>
+              <td>🖼 🖼</td>
+            </tr>
+            <tr>
+              <td>2</td><td>黑色 高配</td>
+              <td><input class="form-control form-control-sm" value="Черный" style="width:100px"></td>
+              <td><input class="form-control form-control-sm" value="Премиум" style="width:100px"></td>
+              <td>1</td><td>24.50</td>
+              <td>🖼 🖼</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pricing -->
+  <div class="card mb-3">
+    <div class="card-header fw-bold d-flex justify-content-between">
+      💰 定价
+      <span class="badge bg-danger">⚠ 需人工确认</span>
+    </div>
+    <div class="card-body">
+      <div class="bg-light rounded p-3 small mb-3">
+        <div>采购成本：¥19.80 + 国内运费 ¥3.00 + 包装 ¥1.50 + 国际运费 ¥15.00 + 风险缓冲 ¥3.00 = <b>¥42.30</b></div>
+        <div>汇率：1 CNY = 12.50 RUB | 扣减：佣金10% + 广告5% + 利润35% = 50%</div>
+        <div class="mt-2 pt-2 border-top">
+          建议 RUB 售价：<span class="fs-4 fw-bold text-primary">1,057.50 ₽</span>
+          <small class="text-muted"> (42.30 × 12.50 / 0.50)</small>
+        </div>
+      </div>
+      <div><label class="form-label fw-bold">手动售价 RUB（发布用）</label>
+        <input type="number" class="form-control" placeholder="输入最终售价" style="width:200px;font-size:18px;font-weight:600">
+      </div>
+    </div>
+  </div>
+
+  <!-- Validation -->
+  <div class="card mb-3 border-danger">
+    <div class="card-header fw-bold d-flex justify-content-between bg-danger bg-opacity-10">
+      ✅ 发布前校验
+      <span class="badge bg-danger">3 项阻断</span>
+    </div>
+    <div class="card-body">
+      <ul class="list-unstyled mb-0">
+        <li class="mb-1 text-danger">✗ 类目必填属性 "Бренд" 未填写 — <b>阻断</b></li>
+        <li class="mb-1 text-danger">✗ 价格未人工确认 — <b>阻断</b></li>
+        <li class="mb-1 text-danger">✗ 图片未审核通过 (0/8) — <b>阻断</b></li>
+        <li class="mb-1 text-success">✓ 俄语标题已填写</li>
+        <li class="mb-1 text-success">✓ OZON 类目已选择</li>
+        <li class="mb-1 text-success">✓ SKU 顺序与源商品一致</li>
+        <li class="mb-1 text-warning">⚠ 买家可见内容未检测到禁止词</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Actions -->
+  <div class="d-flex gap-2 justify-content-end mb-4">
+    <button class="btn btn-outline-secondary">💾 保存</button>
+    <button class="btn btn-outline-secondary">🔍 发布前校验</button>
+    <button class="btn btn-warning btn-lg">✅ 审核通过</button>
+    <button class="btn btn-primary btn-lg" disabled>🚀 提交测试店发布</button>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

@@ -50,9 +50,10 @@ def customer_finance_overview():
         # 剩余未退款 = 预计退款 - 实际退款
         remaining_refund = max(planned_refund - actual_refund, 0)
 
-        # 财务指标拆分（避免语义混淆）
+        # 财务指标拆分
         pending_shipment = max(order_total - total_shipped, 0)   # 待发货金额
         net_receivable = total_shipped - actual_refund            # 已发货净应收
+        balance = order_total - total_shipped - actual_refund     # 客户余额 = 订货总额 - 已发货 - 已退款
 
         rows.append({
             'customer': customer,
@@ -63,7 +64,7 @@ def customer_finance_overview():
             'planned_refund': planned_refund,
             'remaining_refund': remaining_refund,
             'net_receivable': net_receivable,
-            'balance': net_receivable        # 保留兼容，语义改为"净应收"
+            'balance': balance
         })
 
     return render_template('customer_finance.html', rows=rows)

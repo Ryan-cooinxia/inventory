@@ -1,5 +1,5 @@
 # blueprints/supplier_orders.py
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from flask_login import login_required, current_user
 from models import (
     Supplier, SupplierOrder, SupplierOrderItem,
@@ -9,6 +9,7 @@ from peewee import fn
 from helpers import parse_non_negative_float, parse_positive_float
 from models import db
 from log_utils import log_action
+from .inventory_split import auto_create_split_order
 import datetime
 
 supplier_orders_bp = Blueprint('supplier_orders', __name__)
@@ -386,6 +387,50 @@ def delete_supplier_order(order_id):
     return redirect(url_for('supplier_orders.list_supplier_orders'))
 
 
+@supplier_orders_bp.route('/supplier_orders/item/<int:item_id>/delete', methods=['POST'])
+@login_required
+def delete_supplier_order_item(item_id):
+    """删除单个供应商订单明细"""
+    item = SupplierOrderItem.get_or_none(
+        (SupplierOrderItem.id == item_id) &
+        (SupplierOrderItem.user == current_user)
+    )
+    if not item:
+        return jsonify({'ok': False, 'error': '明细不存在或无权访问'}), 404
+
+    order = item.order
+    # 检查是否已有收货记录
+    if PurchaseOrder.select().where(
+        (PurchaseOrder.supplier_order == order) &
+        (PurchaseOrder.user == current_user)
+    ).exists():
+        return jsonify({'ok': False, 'error': '该订单已有收货记录，无法删除明细'}), 400
+
+    # 检查是否是最后一条明细
+    remaining = (SupplierOrderItem
+                 .select()
+                 .where((SupplierOrderItem.order == order) &
+                        (SupplierOrderItem.id != item_id))
+                 .count())
+    if remaining == 0:
+        return jsonify({'ok': False, 'error': '这是最后一条明细。如需删除整单，请使用删除订单功能。'}), 400
+
+    item.delete_instance()
+
+    # 重算订单总金额
+    new_total = (SupplierOrderItem
+                 .select(fn.SUM(SupplierOrderItem.subtotal))
+                 .where(SupplierOrderItem.order == order)
+                 .scalar()) or 0
+    order.total_amount = new_total
+    order.save()
+
+    log_action(current_user, 'delete', 'SupplierOrderItem', item_id,
+               f'删除供应商订单 #{order.id} 明细 (产品: {item.product_id})', request.remote_addr)
+
+    return jsonify({'ok': True, 'message': '明细已删除'})
+
+
 @supplier_orders_bp.route('/supplier_orders/receive/<int:order_id>', methods=['GET'])
 @login_required
 def receive_order_form(order_id):
@@ -491,6 +536,13 @@ def create_receipt(order_id):
                 subtotal=data['subtotal'],
                 user=current_user
             )
+
+        # 自动拆包：检查收货产品是否有拆包规则
+        for product_id, data in receive_quantities.items():
+            product = Product.get_by_id(product_id)
+            split_order = auto_create_split_order(product, data['quantity'], data['unit_price'], current_user)
+            if split_order:
+                flash(f'已自动生成拆包单 {split_order.split_no}（{product.name} x{data["quantity"]}），请前往 <a href="/inventory/split-orders">拆包单</a> 确认', 'info')
 
         all_received = True
         for item in order.items:

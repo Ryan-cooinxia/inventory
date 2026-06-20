@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>提示词库 — 仓库记账系统</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+  <div class="container">
+    <a class="navbar-brand" href="#">仓库记账</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <ul class="navbar-nav">
+        <li class="nav-item dropdown"><a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">基础资料</a><ul class="dropdown-menu"><li><a class="dropdown-item" href="#">产品管理</a></li><li><a class="dropdown-item" href="#">客户管理</a></li><li><a class="dropdown-item" href="#">供应商管理</a></li></ul></li>
+        <li class="nav-item"><a class="nav-link" href="#">供应商订单</a></li>
+        <li class="nav-item"><a class="nav-link" href="#">客户订单</a></li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle active" href="#" data-bs-toggle="dropdown">OZON 运营</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#">📊 工作台</a></li><li><a class="dropdown-item" href="#">⚙️ 平台接口</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📥 采集列表</a></li>
+            <li><a class="dropdown-item" href="#">📝 刊登草稿</a></li><li><a class="dropdown-item" href="#">🚀 发布任务</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item active" href="#">📋 提示词库</a></li><li><a class="dropdown-item" href="#">💰 定价规则</a></li>
+          </ul>
+        </li>
+        <li class="nav-item dropdown"><a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">统计报表</a><ul class="dropdown-menu"><li><a class="dropdown-item" href="#">每日进出货</a></li></ul></li>
+      </ul>
+      <ul class="navbar-nav ms-auto">
+        <li class="nav-item"><span class="nav-link">👤 管理员</span></li>
+        <li class="nav-item"><a class="nav-link" href="#">退出</a></li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+  <!-- Header + Tabs -->
+  <ul class="nav nav-tabs mb-3">
+    <li class="nav-item"><a class="nav-link active" href="#">提示词模板</a></li>
+    <li class="nav-item"><a class="nav-link" href="#">规则文档</a></li>
+  </ul>
+
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div class="d-flex gap-2 align-items-center">
+      <h2 class="mb-0">提示词模板</h2>
+      <select class="form-select form-select-sm" style="width:160px">
+        <option>全部品类</option>
+        <option>车载工具</option>
+        <option>消费电子</option>
+        <option>配件</option>
+        <option>家居</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#promptModal">+ 新增模板</button>
+  </div>
+
+  <!-- Prompt Cards -->
+  <div class="row">
+    <!-- Card 1 -->
+    <div class="col-lg-6 mb-3">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span class="fw-bold">🇷🇺 俄语标题生成</span>
+          <span class="badge bg-primary">标题</span>
+        </div>
+        <div class="card-body">
+          <div class="mb-2">
+            <span class="badge bg-light text-dark border">车载工具</span>
+            <span class="badge bg-light text-dark border">消费电子</span>
+            <span class="badge bg-light text-dark border">通用</span>
+          </div>
+          <div class="bg-light rounded p-2 small mb-2" style="max-height:120px;overflow:auto">
+            <code>Ты профессиональный копирайтер для OZON. Напиши заголовок товара на русском языке. Правила: 1) длина 50-150 символов 2) включи ключевые слова: тип товара, основная функция, материал 3) избегай Caps Lock, лишних знаков 4) не использовать субъективные оценки ("лучший", "самый") Источник: {source_title} | {source_description}</code>
+          </div>
+          <div class="mb-2">
+            <small class="text-muted">变量：</small>
+            <span class="badge bg-secondary">{source_title}</span>
+            <span class="badge bg-secondary">{source_description}</span>
+            <span class="badge bg-secondary">{category}</span>
+          </div>
+          <div class="d-flex gap-1">
+            <button class="btn btn-sm btn-outline-secondary">编辑</button>
+            <button class="btn btn-sm btn-outline-success">复制</button>
+            <button class="btn btn-sm btn-outline-danger">删除</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 2 -->
+    <div class="col-lg-6 mb-3">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span class="fw-bold">📌 俄语卖点生成</span>
+          <span class="badge bg-success">卖点</span>
+        </div>
+        <div class="card-body">
+          <div class="mb-2">
+            <span class="badge bg-light text-dark border">通用</span>
+          </div>
+          <div class="bg-light rounded p-2 small mb-2" style="max-height:120px;overflow:auto">
+            <code>Выдели 3-5 ключевых преимуществ товара на русском языке. Каждое начинай с "•". Формат: коротко, по делу. Правила: 1) только фактические характеристики 2) избегай повторов с заголовком 3) не более 100 символов на пункт. Товар: {source_title} | Характеристики: {attributes}</code>
+          </div>
+          <div class="mb-2">
+            <small class="text-muted">变量：</small>
+            <span class="badge bg-secondary">{source_title}</span>
+            <span class="badge bg-secondary">{attributes}</span>
+          </div>
+          <div class="d-flex gap-1">
+            <button class="btn btn-sm btn-outline-secondary">编辑</button>
+            <button class="btn btn-sm btn-outline-success">复制</button>
+            <button class="btn btn-sm btn-outline-danger">删除</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 3 -->
+    <div class="col-lg-6 mb-3">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span class="fw-bold">📄 俄语描述生成</span>
+          <span class="badge bg-info">描述</span>
+        </div>
+        <div class="card-body">
+          <div class="mb-2">
+            <span class="badge bg-light text-dark border">通用</span>
+          </div>
+          <div class="bg-light rounded p-2 small mb-2" style="max-height:120px;overflow:auto">
+            <code>Напиши подробное описание товара для OZON на русском языке. Структура: 1) Введение (1-2 предложения) 2) Основные характеристики 3) Комплектация 4) Применение. Правила: не использовать HTML-теги, избегать субъективных оценок. Товар: {source_title} | Характеристики: {attributes} | Комплектация: {package_content}</code>
+          </div>
+          <div class="mb-2">
+            <small class="text-muted">变量：</small>
+            <span class="badge bg-secondary">{source_title}</span>
+            <span class="badge bg-secondary">{attributes}</span>
+            <span class="badge bg-secondary">{package_content}</span>
+          </div>
+          <div class="d-flex gap-1">
+            <button class="btn btn-sm btn-outline-secondary">编辑</button>
+            <button class="btn btn-sm btn-outline-success">复制</button>
+            <button class="btn btn-sm btn-outline-danger">删除</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 4 -->
+    <div class="col-lg-6 mb-3">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span class="fw-bold">🖼 主图提示词</span>
+          <span class="badge bg-warning text-dark">图片</span>
+        </div>
+        <div class="card-body">
+          <div class="mb-2">
+            <span class="badge bg-light text-dark border">通用</span>
+          </div>
+          <div class="bg-light rounded p-2 small mb-2" style="max-height:120px;overflow:auto">
+            <code>Создай изображение товара для маркетплейса. Стиль: {style}. Формат: 3:4. Фон: белый. Товар: {product_name}, цвет {color}. Запрещено: китайский текст, логотипы, цены, водяные знаки, QR-коды.</code>
+          </div>
+          <div class="mb-2">
+            <small class="text-muted">变量：</small>
+            <span class="badge bg-secondary">{style}</span>
+            <span class="badge bg-secondary">{product_name}</span>
+            <span class="badge bg-secondary">{color}</span>
+          </div>
+          <div class="d-flex gap-1">
+            <button class="btn btn-sm btn-outline-secondary">编辑</button>
+            <button class="btn btn-sm btn-outline-success">复制</button>
+            <button class="btn btn-sm btn-outline-danger">删除</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Empty state placeholder -->
+  <div class="text-center text-muted py-4 d-none">
+    <p class="fs-4">📋</p>
+    <p>暂无自定义模板，系统将使用内置默认规则</p>
+    <button class="btn btn-outline-primary">+ 新增模板</button>
+  </div>
+
+  <!-- Pagination -->
+  <nav><ul class="pagination pagination-sm justify-content-center">
+    <li class="page-item disabled"><a class="page-link" href="#">上一页</a></li>
+    <li class="page-item active"><a class="page-link" href="#">1</a></li>
+    <li class="page-item"><a class="page-link" href="#">下一页</a></li>
+  </ul></nav>
+</div>
+
+<!-- Add/Edit Modal -->
+<div class="modal fade" id="promptModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">新增提示词模板</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row mb-3">
+          <div class="col-md-6">
+            <label class="form-label fw-bold">模板名称</label>
+            <input type="text" class="form-control" placeholder="如：车载工具类标题">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-bold">类型</label>
+            <select class="form-select"><option>标题</option><option>卖点</option><option>描述</option><option>图片</option></select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-bold">适用品类</label>
+            <select class="form-select"><option>通用</option><option>车载工具</option><option>消费电子</option><option>配件</option><option>家居</option></select>
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">提示词内容</label>
+          <textarea class="form-control" rows="8" style="font-family:monospace;font-size:13px" placeholder="输入提示词，使用 {变量名} 作为占位符..."></textarea>
+          <small class="text-muted">可用变量：{source_title} {source_description} {attributes} {category} {style} {product_name} {color} {package_content}</small>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+        <button type="button" class="btn btn-primary">保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

@@ -1,0 +1,594 @@
+{% extends "base.html" %}
+{% block title %}类目属性字典 — 仓库记账系统{% endblock %}
+{% block head %}
+<style>
+.tree-node { cursor: pointer; white-space: nowrap; }
+.tree-node:hover { background: #f0f7ff; }
+.tree-indent { display: inline-block; width: 16px; }
+.tree-toggle { cursor: pointer; display: inline-block; width: 14px; font-size: 10px; color: #6c757d; }
+.tree-spacer { display: inline-block; width: 14px; }
+.tree-icon { font-size: 12px; }
+.tree-label { cursor: pointer; }
+.tree-label:hover { text-decoration: underline; }
+.tree-children { padding-left: 0; }
+/* 同步状态区 */
+#syncStatus { display:none; }
+.sync-log-entry { font-size: 11px; padding: 4px 8px; border-bottom: 1px solid #f0f0f0; }
+.sync-log-entry:last-child { border-bottom: none; }
+/* 类目过宽提示 */
+.too-broad-warning { background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 12px; font-size: 13px; }
+/* 按钮禁用态 */
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+</style>
+{% endblock %}
+{% block content %}
+
+<!-- 提示/状态区（非弹窗） -->
+<div id="syncStatus" class="mb-2"></div>
+
+<!-- 顶部工具栏 -->
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0">📋 类目属性字典</h5>
+  <div class="d-flex gap-1 flex-wrap justify-content-end">
+    <button class="btn btn-outline-success btn-sm" id="btnTranslate" onclick="translateAll()">🌐 翻译全部</button>
+    <button class="btn btn-outline-primary btn-sm" id="btnSyncTree" onclick="syncCategoryTree()">🔄 同步类目树</button>
+    <button class="btn btn-outline-secondary btn-sm" id="btnSyncTypes" onclick="syncTypes()" disabled title="请先选择一个叶子类目">📋 同步当前类目 type</button>
+    <button class="btn btn-primary btn-sm" id="btnSyncTypeFull" onclick="syncCurrentTypeFull()" disabled title="请先选择 type_id">📥 当前 type 一键同步</button>
+    <button class="btn btn-outline-primary btn-sm" id="btnBatchSync" onclick="batchSyncCurrentCategory()" disabled title="请先选择类目">📦 批量同步当前类目</button>
+    <button class="btn btn-outline-info btn-sm" id="btnSyncUsed" onclick="syncUsedTypes()" title="同步草稿/在线商品/收藏的常用 type">⭐ 同步我的常用 type</button>
+  </div>
+</div>
+
+<div class="row g-3">
+  <!-- 左侧：多级类目树 -->
+  <div class="col-lg-3">
+    <div class="card">
+      <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <strong style="font-size:13px">类目树</strong>
+        <button class="btn btn-outline-secondary btn-sm" onclick="loadTreeRoot()" title="刷新类目树">🔄</button>
+      </div>
+      <div id="catTree" style="max-height:70vh;overflow-y:auto;font-size:12px">
+        <div class="p-2 text-muted">加载中...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右侧主区域 -->
+  <div class="col-lg-9">
+    <!-- 当前选择 -->
+    <div class="card mb-2" id="selectionBar" style="display:none">
+      <div class="card-body py-1 px-2" style="font-size:12px">
+        <strong>当前类目：</strong><span id="selPath"></span>
+        <code class="ms-2" id="selId"></code>
+        <span id="selType" class="ms-2"></span>
+      </div>
+    </div>
+
+    <!-- 类目过宽提示 -->
+    <div id="tooBroadWarn" class="too-broad-warning mb-2" style="display:none"></div>
+
+    <div class="row g-2">
+      <!-- type_id 列表 -->
+      <div class="col-md-5">
+        <div class="card">
+          <div class="card-header py-2 d-flex justify-content-between align-items-center">
+            <strong style="font-size:13px">商品类型 (type_id)</strong>
+            <span id="typeCount" class="badge bg-secondary" style="display:none"></span>
+          </div>
+          <div id="typeListPanel" style="max-height:60vh;overflow-y:auto;font-size:12px">
+            <div class="p-3 text-muted">选择左侧类目后自动加载</div>
+          </div>
+        </div>
+      </div>
+      <!-- 属性 Schema -->
+      <div class="col-md-7">
+        <div class="card">
+          <div class="card-header py-2 d-flex justify-content-between">
+            <strong style="font-size:13px"><span id="attrTypeLabel">属性 Schema</span></strong>
+            <span class="badge bg-secondary" id="attrCount" style="display:none"></span>
+          </div>
+          <div id="attrPanel" style="max-height:60vh;overflow-y:auto;font-size:12px">
+            <div class="text-center py-4 text-muted">
+              <p>选择 type_id 后点 📥 一键同步</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 最近同步记录 -->
+    <div class="card mt-2">
+      <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <strong style="font-size:13px">最近同步记录</strong>
+        <button class="btn btn-outline-secondary btn-sm" onclick="loadSyncJobs()">🔄</button>
+      </div>
+      <div id="syncJobsPanel" style="max-height:160px;overflow-y:auto;font-size:12px">
+        <div class="p-2 text-muted">加载中...</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var selCatId = null;
+var selCatPath = '';
+var selTypeId = null;
+var selTypeName = '';
+
+// ═══════════════════════════ 类目树 ═══════════════════════════
+var treeData = {};
+
+function loadTreeRoot() {
+  var tree = document.getElementById('catTree');
+  tree.innerHTML = '<div class="p-2 text-muted">加载中...</div>';
+  fetch('/ozon/api/category/root').then(function(r){return r.json()}).then(function(d){
+    if (d.ok) {
+      treeData = {};
+      d.items.forEach(function(it){ treeData[it.id] = it; });
+      tree.innerHTML = d.items.map(function(it){ return renderTreeNode(it, 0); }).join('');
+    }
+  });
+}
+
+function renderTreeNode(it, depth) {
+  var hasKids = it.has_children;
+  var name = it.name_cn || it.name;
+  var indent = '';
+  for (var i = 0; i < depth; i++) indent += '<span class="tree-indent"></span>';
+
+  var typeBadge = '';
+  if (it.type_count && it.type_count > 0) {
+    typeBadge = ' <span class="badge bg-warning text-dark" style="font-size:9px">' + it.type_count + '</span>';
+  }
+
+  return '<div class="tree-node" data-id="' + it.id + '" data-depth="' + depth + '" data-has-kids="' + (hasKids ? '1' : '0') + '">'
+    + indent
+    + (hasKids ? '<span class="tree-toggle">▶</span>' : '<span class="tree-spacer"></span>')
+    + (hasKids ? '<span class="tree-icon">📁</span>' : '<span class="tree-icon">📄</span>')
+    + '<span class="tree-label">' + name + '</span>'
+    + typeBadge
+    + '<div class="tree-children" style="display:none"></div>'
+    + '</div>';
+}
+
+// 事件委托
+document.getElementById('catTree').addEventListener('click', function(e) {
+  var target = e.target;
+  var node = target.closest('.tree-node');
+  if (!node) return;
+
+  var id = node.dataset.id;
+  var hasKids = node.dataset.hasKids === '1';
+  var depth = parseInt(node.dataset.depth || '0');
+
+  if (target.classList.contains('tree-toggle')) {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleTreeNode(node, id, depth);
+    return;
+  }
+
+  if (target.classList.contains('tree-label') || target.classList.contains('tree-icon')) {
+    e.preventDefault();
+    e.stopPropagation();
+    var it = treeData[id] || {id:id, name:node.querySelector('.tree-label').textContent};
+    selectCategory(id, it.name_cn || it.name, it.name_cn, it.name);
+    return;
+  }
+});
+
+function toggleTreeNode(node, id, depth) {
+  var childrenDiv = node.querySelector('.tree-children');
+  var toggle = node.querySelector('.tree-toggle');
+  var icon = node.querySelector('.tree-icon');
+
+  if (childrenDiv.style.display === 'none') {
+    if (childrenDiv.children.length === 0) {
+      childrenDiv.innerHTML = '<div class="ps-4 py-1 text-muted" style="font-size:11px">⏳</div>';
+      fetch('/ozon/api/category/children?parent_id=' + id).then(function(r){return r.json()}).then(function(d){
+        if (!d.ok) {
+          childrenDiv.innerHTML = '<div class="ps-4 py-1 text-danger" style="font-size:11px">加载失败，请重试</div>';
+          return;
+        }
+        if (!d.items || d.items.length === 0) {
+          childrenDiv.innerHTML = '<div class="ps-4 py-1 text-muted" style="font-size:11px">无更多子类目，可在右侧同步当前类目 type</div>';
+          // 将节点改为不可展开状态
+          if (toggle) { toggle.className = 'tree-spacer'; toggle.textContent = ''; }
+          if (icon) icon.textContent = '📄';
+          node.dataset.hasKids = '0';
+          return;
+        }
+        childrenDiv.innerHTML = d.items.map(function(c){
+          treeData[c.id] = c;
+          return renderTreeNode(c, depth + 1);
+        }).join('');
+      }).catch(function(){
+        childrenDiv.innerHTML = '<div class="ps-4 py-1 text-danger" style="font-size:11px">网络错误，请重试</div>';
+      });
+    }
+    childrenDiv.style.display = 'block';
+    if (toggle && toggle.classList.contains('tree-toggle')) toggle.textContent = '▼';
+    if (icon) icon.textContent = '📂';
+  } else {
+    childrenDiv.style.display = 'none';
+    if (toggle && toggle.classList.contains('tree-toggle')) toggle.textContent = '▶';
+    if (icon) icon.textContent = '📁';
+  }
+}
+
+function selectCategory(id, name, nameCn, origName) {
+  selCatId = id;
+  selTypeId = null;
+  selTypeName = '';
+
+  document.querySelectorAll('.tree-node').forEach(function(n){ n.style.background = ''; n.style.color = ''; });
+  var target = document.querySelector('.tree-node[data-id="' + id + '"]');
+  if (target) { target.style.background = '#0d6efd'; target.style.color = '#fff'; }
+
+  var bar = document.getElementById('selectionBar');
+  bar.style.display = '';
+  document.getElementById('selPath').textContent = (nameCn || name);
+  document.getElementById('selId').textContent = 'dcid=' + id;
+  document.getElementById('selType').innerHTML = '';
+
+  // 更新按钮状态
+  document.getElementById('btnSyncTypes').disabled = false;
+  document.getElementById('btnBatchSync').disabled = false;
+  document.getElementById('btnSyncTypeFull').disabled = true;
+  document.getElementById('tooBroadWarn').style.display = 'none';
+
+  loadTypeList(id);
+  document.getElementById('attrPanel').innerHTML = '<div class="text-center py-4 text-muted"><p>点击 <b>📥 当前 type 一键同步</b>，获取属性 Schema 和字典值。</p></div>';
+  document.getElementById('attrCount').style.display = 'none';
+  document.getElementById('attrTypeLabel').textContent = '属性 Schema';
+}
+
+// ═══════════════════════════ type 列表 ═══════════════════════════
+function loadTypeList(catId) {
+  var panel = document.getElementById('typeListPanel');
+  panel.innerHTML = '<div class="p-2 text-muted">加载中...</div>';
+
+  fetch('/ozon/api/category/' + catId + '/types')
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (!d.ok) {
+        panel.innerHTML = '<div class="p-3 text-danger">加载失败</div>';
+        return;
+      }
+
+      if (!d.items || d.items.length === 0) {
+        panel.innerHTML = '<div class="p-3 text-muted">'
+          + '暂无 type_id。<br>'
+          + '<small>点击 <b>📋 同步当前类目 type</b> 从 OZON 拉取</small>'
+          + '</div>';
+        document.getElementById('typeCount').style.display = 'none';
+        return;
+      }
+
+      var types = d.items;
+      document.getElementById('typeCount').style.display = '';
+      document.getElementById('typeCount').textContent = types.length;
+
+      var html = '';
+      types.forEach(function(t){ html += renderTypeItem(t); });
+      panel.innerHTML = html;
+    })
+    .catch(function(){
+      panel.innerHTML = '<div class="p-3 text-danger">加载失败</div>';
+    });
+}
+
+function renderTypeItem(t) {
+  var nm = t.name_cn || t.name;
+  var desc = t.description_category_id || '';
+  return '<a href="javascript:void(0)" class="list-group-item list-group-item-action py-1"'
+    + ' onclick="selectTypeId(\'' + t.id + '\',\'' + nm.replace(/'/g,"\\'") + '\',\'' + desc + '\')">'
+    + '<div><strong>' + nm + '</strong>'
+    + ' <button class="btn btn-outline-warning btn-sm py-0 px-1" style="font-size:10px" title="收藏" onclick="event.stopPropagation();toggleFavorite(\'' + t.id + '\',\'' + nm.replace(/'/g,"\\'") + '\',\'' + desc + '\')">☆</button>'
+    + '</div>'
+    + '<div><code>' + t.id + '</code></div></a>';
+}
+
+function selectTypeId(tid, tname, dcid) {
+  selTypeId = tid;
+  selTypeName = tname;
+
+  document.querySelectorAll('#typeListPanel .list-group-item').forEach(function(el){el.classList.remove('active')});
+  var items = document.querySelectorAll('#typeListPanel .list-group-item');
+  items.forEach(function(el){ if(el.textContent.indexOf(tid)>=0) el.classList.add('active'); });
+
+  document.getElementById('selType').innerHTML = '<span class="badge bg-success">type_id: ' + tid + ' (' + tname + ')</span>';
+  document.getElementById('attrTypeLabel').textContent = '属性 Schema (' + tid + ')';
+
+  // 启用"当前 type 一键同步"
+  document.getElementById('btnSyncTypeFull').disabled = false;
+
+  // 显示引导
+  document.getElementById('attrPanel').innerHTML = '<div class="text-center py-4 text-muted">'
+    + '<p>已选择 type <b>' + tname + '</b></p>'
+    + '<p>点击 <b style="color:#0d6efd">📥 当前 type 一键同步</b><br>获取属性 Schema 和字典值</p>'
+    + '</div>';
+  document.getElementById('attrCount').style.display = 'none';
+}
+
+function loadAttributes() {
+  if (!selCatId || !selTypeId) return;
+  var panel = document.getElementById('attrPanel');
+  panel.innerHTML = '<div class="text-center py-3"><div class="spinner-border spinner-border-sm"></div></div>';
+
+  fetch('/ozon/api/category/' + selCatId + '/get-attributes?type_id=' + selTypeId)
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (!d.ok || !d.attrs.length) {
+        panel.innerHTML = '<div class="p-3 text-muted text-center">暂无属性数据。<br><small>点击 <b>📥 当前 type 一键同步</b> 从 OZON 拉取。</small></div>';
+        document.getElementById('attrCount').style.display = 'none';
+        return;
+      }
+      document.getElementById('attrCount').style.display = '';
+      document.getElementById('attrCount').textContent = d.attrs.length + ' 个';
+
+      var html = '<div class="table-responsive"><table class="table table-sm mb-0" style="font-size:12px">';
+      html += '<thead class="table-light"><tr>'
+        + '<th>属性 ID</th><th>属性名</th><th>必填</th><th>字典</th><th>字典值</th><th>状态</th>'
+        + '</tr></thead><tbody>';
+      d.attrs.forEach(function(a){
+        html += '<tr>';
+        html += '<td><code>' + a.attribute_id + '</code></td>';
+        html += '<td><strong>' + (a.name_cn || a.name) + '</strong>';
+        if (a.name_cn && a.name_cn !== a.name) html += '<br><small class="text-muted">' + a.name + '</small>';
+        html += '</td>';
+        html += '<td>' + (a.is_required ? '<span class="badge bg-danger">必填</span>' : '<span class="text-muted">选填</span>') + '</td>';
+        html += '<td>' + (a.is_dictionary ? '<span class="badge bg-info">字典</span>' : '-') + '</td>';
+        html += '<td>';
+        if (a.is_dictionary) {
+          if (a.values && a.values.length > 0) {
+            html += '<span class="text-success"><b>' + a.values.length + '</b> 个选项</span>';
+          } else {
+            html += '<span class="text-warning">0 个（未拉取）</span>';
+          }
+        } else { html += '-'; }
+        html += '</td>';
+        html += '<td>';
+        if (a.is_dictionary) {
+          if (a.values && a.values.length > 0) {
+            html += '<span class="badge bg-success">已同步</span>';
+          } else {
+            html += '<span class="badge bg-warning text-dark">未拉取</span>';
+          }
+        } else {
+          html += '-';
+        }
+        html += '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+      panel.innerHTML = html;
+    })
+    .catch(function(){
+      panel.innerHTML = '<div class="p-3 text-danger">加载失败</div>';
+    });
+}
+
+// ═══════════════════════════ 同步操作（无 alert） ═══════════════════════════
+
+function showStatus(type, msg) {
+  var el = document.getElementById('syncStatus');
+  el.style.display = '';
+  el.innerHTML = '<div class="alert alert-' + type + ' alert-dismissible fade show py-2 mb-0" style="font-size:13px">'
+    + msg + '<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>';
+}
+
+function showStatusJson(d) {
+  if (!d.ok) {
+    showStatus('danger', '<strong>失败</strong>: ' + (d.error || '未知错误'));
+    return;
+  }
+  // 构建消息
+  var parts = [];
+  if (d.attributes_synced !== undefined) parts.push('属性 ' + d.attributes_synced + ' 个');
+  if (d.required_count) parts.push('必填 ' + d.required_count + ' 个');
+  if (d.dictionary_values_synced) parts.push('字典值 ' + d.dictionary_values_synced + ' 条');
+  if (d.types_processed) parts.push('type ' + d.types_processed + ' 个');
+  if (d.attrs_total) parts.push('属性 ' + d.attrs_total + ' 个');
+  if (d.values_total) parts.push('字典值 ' + d.values_total + ' 条');
+  if (d.tree_synced) parts.push('类目树 ' + d.tree_synced + ' 个');
+
+  var msg = '<strong>完成</strong>: ' + (parts.length ? parts.join('，') : d.message || 'OK');
+  if (d.elapsed) msg += ' (耗时 ' + d.elapsed + 's)';
+
+  var alertType = 'success';
+  if (d.warnings && d.warnings.length > 0) alertType = 'warning';
+  if (d.errors && d.errors.length > 0) alertType = 'danger';
+
+  showStatus(alertType, msg);
+
+  // 如果有警告，追加显示
+  if (d.warnings && d.warnings.length > 0) {
+    var warnDiv = document.getElementById('syncStatus');
+    warnDiv.innerHTML += '<div class="alert alert-warning py-1 mt-1" style="font-size:11px">'
+      + d.warnings.slice(0, 5).join('<br>') + '</div>';
+  }
+}
+
+function syncCategoryTree() {
+  var btn = document.getElementById('btnSyncTree');
+  btn.disabled = true; btn.textContent = '⏳ ...';
+  showStatus('info', '正在同步类目树...');
+
+  fetch('/ozon/api/category/sync-all?phase=tree', {method:'POST'})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      btn.disabled = false; btn.textContent = '🔄 同步类目树';
+      showStatusJson(d);
+      if (d.ok) loadTreeRoot();
+    })
+    .catch(function(e){
+      btn.disabled = false; btn.textContent = '🔄 同步类目树';
+      showStatus('danger', '网络错误: ' + e);
+    });
+}
+
+function syncTypes() {
+  if (!selCatId) { showStatus('warning', '请先选择类目'); return; }
+  var btn = document.getElementById('btnSyncTypes');
+  btn.disabled = true; btn.textContent = '⏳ ...';
+  showStatus('info', '正在同步当前类目 type...');
+
+  fetch('/ozon/api/category/' + selCatId + '/sync-types', {method:'POST'})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      btn.disabled = false; btn.textContent = '📋 同步当前类目 type';
+      var warn = document.getElementById('tooBroadWarn');
+
+      if (d.ok) {
+        if (d.status === 'has_children') {
+          // 有子类目 → 提示继续展开
+          warn.style.display = '';
+          warn.innerHTML = '<strong>请继续展开子类目</strong>: ' + d.message;
+          showStatus('info', d.message);
+        } else if (d.status === 'empty') {
+          warn.style.display = 'none';
+          showStatus('warning', d.message);
+        } else if (d.status === 'too_broad') {
+          // 直接 type 过多 → 提示缩小范围
+          warn.style.display = '';
+          warn.innerHTML = '<strong>类目范围过大</strong>: ' + d.message;
+          showStatus('warning', d.message);
+        } else {
+          // done
+          warn.style.display = 'none';
+          showStatusJson(d);
+          loadTypeList(selCatId);
+          loadTreeRoot();
+        }
+      } else {
+        showStatusJson(d);
+      }
+    })
+    .catch(function(e){
+      btn.disabled = false; btn.textContent = '📋 同步当前类目 type';
+      showStatus('danger', '网络错误: ' + e);
+    });
+}
+
+function syncCurrentTypeFull() {
+  if (!selCatId || !selTypeId) { showStatus('warning', '请先选择类目和 type_id'); return; }
+  var btn = document.getElementById('btnSyncTypeFull');
+  btn.disabled = true; btn.textContent = '⏳ ...';
+  showStatus('info', '正在同步属性+字典值...');
+
+  fetch('/ozon/api/category/' + selCatId + '/sync-current-type-full?type_id=' + selTypeId, {method:'POST'})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      btn.disabled = false; btn.textContent = '📥 当前 type 一键同步';
+      showStatusJson(d);
+      if (d.ok) { loadAttributes(); loadSyncJobs(); }
+    })
+    .catch(function(e){
+      btn.disabled = false; btn.textContent = '📥 当前 type 一键同步';
+      showStatus('danger', '网络错误: ' + e);
+    });
+}
+
+function batchSyncCurrentCategory() {
+  if (!selCatId) { showStatus('warning', '请先选择类目'); return; }
+  if (!confirm('将对当前类目执行批量同步（最多20个type）：\n\n1. 拉取直接 type\n2. 逐个提取属性\n3. 拉取字典值\n\n确定继续？')) return;
+
+  var btn = document.getElementById('btnBatchSync');
+  btn.disabled = true; btn.textContent = '⏳ 批量同步中...';
+  showStatus('info', '批量同步进行中，请耐心等待...');
+
+  fetch('/ozon/api/category/' + selCatId + '/batch-sync-current-category', {method:'POST'})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      btn.disabled = false; btn.textContent = '📦 批量同步当前类目';
+      showStatusJson(d);
+      if (d.ok) { loadTypeList(selCatId); loadTreeRoot(); loadSyncJobs(); }
+    })
+    .catch(function(e){
+      btn.disabled = false; btn.textContent = '📦 批量同步当前类目';
+      showStatus('danger', '网络错误: ' + e);
+    });
+}
+
+function syncUsedTypes() {
+  if (!confirm('将同步以下来源的常用 type（最多20个）：\n\n1. 草稿使用过的\n2. 在线商品使用过的\n3. 收藏的 type\n\n确定继续？')) return;
+
+  var btn = document.getElementById('btnSyncUsed');
+  btn.disabled = true; btn.textContent = '⏳ 同步中...';
+  showStatus('info', '正在同步常用 type...');
+
+  fetch('/ozon/api/category/sync-used-types', {method:'POST'})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      btn.disabled = false; btn.textContent = '⭐ 同步我的常用 type';
+      showStatusJson(d);
+      if (d.ok) { loadSyncJobs(); }
+    })
+    .catch(function(e){
+      btn.disabled = false; btn.textContent = '⭐ 同步我的常用 type';
+      showStatus('danger', '网络错误: ' + e);
+    });
+}
+
+function toggleFavorite(typeId, typeName, dcid) {
+  fetch('/ozon/api/category/type/' + typeId + '/favorite', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({description_category_id: dcid || selCatId, type_name: typeName, action: 'toggle'})
+  })
+    .then(function(r){return r.json()})
+    .then(function(d){
+      showStatus(d.favorited ? 'success' : 'info', d.message);
+    });
+}
+
+function translateAll() {
+  var btn = document.getElementById('btnTranslate');
+  btn.disabled = true; btn.textContent = '⏳ ...';
+  showStatus('info', '正在翻译...');
+
+  fetch('/ozon/api/category/translate', {method:'POST'})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      btn.disabled = false; btn.textContent = '🌐 翻译全部';
+      showStatusJson(d);
+      if (d.ok) loadTreeRoot();
+    })
+    .catch(function(e){
+      btn.disabled = false; btn.textContent = '🌐 翻译全部';
+      showStatus('danger', '网络错误: ' + e);
+    });
+}
+
+// ═══════════════════════════ 同步记录 ═══════════════════════════
+function loadSyncJobs() {
+  var panel = document.getElementById('syncJobsPanel');
+  fetch('/ozon/api/category/sync-jobs')
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (!d.ok || !d.jobs.length) {
+        panel.innerHTML = '<div class="p-2 text-muted">暂无同步记录</div>';
+        return;
+      }
+      var typeLabels = {tree:'类目树', current_type:'当前type', category_batch:'批量同步', used_types:'常用type'};
+      var statusColors = {done:'success', partial:'warning', failed:'danger', running:'info', pending:'secondary'};
+      panel.innerHTML = d.jobs.map(function(j){
+        var sc = statusColors[j.status] || 'secondary';
+        return '<div class="sync-log-entry">'
+          + '<span class="badge bg-' + sc + ' me-1">' + (typeLabels[j.job_type]||j.job_type) + '</span>'
+          + '<span class="badge bg-' + sc + '">' + j.status + '</span> '
+          + (j.message || '')
+          + ' <span class="text-muted">(' + j.success_count + '/' + (j.error_count||0) + ')</span>'
+          + '<span class="float-end text-muted">' + (j.finished_at ? j.finished_at.slice(0,16) : '') + '</span>'
+          + '</div>';
+      }).join('');
+    });
+}
+
+// ═══════════════════════════ 初始化 ═══════════════════════════
+loadTreeRoot();
+loadSyncJobs();
+</script>
+{% endblock %}

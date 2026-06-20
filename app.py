@@ -10,6 +10,10 @@ from flask_login import LoginManager           # 新增
 from models import (
     db, Product, Customer, Supplier,
     ProductBundle, ProductBundleItem,
+    ProductSplitRule, ProductSplitRuleItem,
+    ProductSplitOrder, ProductSplitOrderItem,
+    ProductAssemblyRule, ProductAssemblyRuleItem,
+    ProductAssemblyOrder, ProductAssemblyOrderItem,
     PurchaseOrder, PurchaseOrderItem,
     SalesOrder, SalesOrderItem,
     CustomerOrder, CustomerOrderItem,
@@ -17,7 +21,21 @@ from models import (
     CustomerRefund, CustomerTransaction,
     ExchangeRate, OperationLog,
     UserApiKey,        # 新增
-    User
+    User,
+    # OZON 模型
+    OzonAccount, OzonSource, OzonSourceSku, OzonSourceMedia,
+    OzonDraft, OzonDraftSku, OzonImageSlot, OzonPublishJob,
+    OzonPrompt, OzonPricingRule,
+    # OZON 适配层
+    SourceProductGroup, SourceProductGroupItem,
+    ProductFact, ProductFactSku, ProductFactEvidence,
+    ListingAdaptation,
+    # OZON 类目属性
+    OzonCategory, OzonCategoryAttribute, OzonCategoryType,
+    OzonAttributeMapping, OzonFieldGap, OzonAttributeValue,
+    # OZON 视觉模型
+    VisionModelConfig, ImageAnalysisJob, ImageFact,
+    OzonOnlineProduct, OzonOnlineProductAction,
 )
 
 # 导入扩展
@@ -43,6 +61,9 @@ from blueprints.auth import auth_bp
 from blueprints.logs import logs_bp             # 新增
 from blueprints.ai_import import ai_bp
 from blueprints.agent import agent_bp
+from blueprints.ozon import ozon_bp
+from blueprints.inventory_split import split_bp
+from blueprints.inventory_assembly import assembly_bp
 
 app = Flask(__name__)
 app.secret_key = (
@@ -90,6 +111,9 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(logs_bp)
 app.register_blueprint(ai_bp)  
 app.register_blueprint(agent_bp)           # 新增
+app.register_blueprint(ozon_bp)
+app.register_blueprint(split_bp)
+app.register_blueprint(assembly_bp)
 
 # 数据库连接管理
 @app.before_request
@@ -102,6 +126,29 @@ def after_request(response):
         db.close()
     return response
 
+@app.context_processor
+def inject_ozon_nav():
+    """注入 OZON 菜单和模型类到所有模板"""
+    return {
+        'ozon_nav': True,
+        'OzonSourceSku': OzonSourceSku,
+        'OzonSourceMedia': OzonSourceMedia,
+        'OzonDraftSku': OzonDraftSku,
+        'OzonImageSlot': OzonImageSlot,
+        'OzonPublishJob': OzonPublishJob,
+        'OzonPrompt': OzonPrompt,
+        'OzonPricingRule': OzonPricingRule,
+        # 新增
+        'SourceProductGroup': SourceProductGroup,
+        'ProductFact': ProductFact,
+        'ProductFactSku': ProductFactSku,
+        'ListingAdaptation': ListingAdaptation,
+        'OzonCategory': OzonCategory,
+        'OzonCategoryAttribute': OzonCategoryAttribute,
+        'OzonFieldGap': OzonFieldGap,
+        'VisionModelConfig': VisionModelConfig,
+    }
+
 def init_db():
     db.create_tables([Product, Customer, Supplier,
                       ProductBundle, ProductBundleItem,
@@ -111,8 +158,40 @@ def init_db():
                       SupplierOrder, SupplierOrderItem,
                       CustomerRefund, CustomerTransaction,
                       ExchangeRate, User,
-                      OperationLog, UserApiKey], safe=True)       # 新增 OperationLog 表
+                      OperationLog, UserApiKey,
+                      ProductSplitRule, ProductSplitRuleItem,
+                      ProductSplitOrder, ProductSplitOrderItem,
+                      ProductAssemblyRule, ProductAssemblyRuleItem,
+                      ProductAssemblyOrder, ProductAssemblyOrderItem,
+                      OzonDraft, OzonOnlineProduct, OzonOnlineProductAction,
+                      OzonCategoryAttribute, OzonCategoryType,
+                      OzonAttributeValue, OzonCategory,
+                      OzonOnlineProduct, OzonOnlineProductAction], safe=True)
+    migrate_ozon_source_quality_schema()
     migrate_product_bundle_schema()
+
+def migrate_ozon_source_quality_schema():
+    """Keep existing OZON source tables compatible with newly added quality fields."""
+    migrations = {
+        'ozonsource': [
+            ('quality_json', 'TEXT'),
+            ('detail_missing', 'INTEGER NOT NULL DEFAULT 0'),
+            ('price_manual_confirmed', 'INTEGER NOT NULL DEFAULT 0'),
+        ],
+        'ozonsourcemedia': [
+            ('compliance_status', 'VARCHAR(20)'),
+            ('reject_reason', 'VARCHAR(200)'),
+            ('raw_json', 'TEXT'),
+        ],
+    }
+
+    for table, columns in migrations.items():
+        existing = {row[1] for row in db.execute_sql(f'PRAGMA table_info({table})').fetchall()}
+        if not existing:
+            continue
+        for name, ddl in columns:
+            if name not in existing:
+                db.execute_sql(f'ALTER TABLE {table} ADD COLUMN {name} {ddl}')
 
 def migrate_product_bundle_schema():
     """兼容旧版套装组成表：bundle_product_id -> 独立 ProductBundle。"""

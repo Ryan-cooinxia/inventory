@@ -224,6 +224,120 @@ def index():
         total_received_value += received_value
         total_received_in_period_value += received_in_period_value
 
+    # ── 客户订货对账表：按产品聚合，按时段拆分发货 ──
+    customer_rows = []
+    total_customer_ordered_value = 0.0
+    total_customer_shipped_value = 0.0
+    total_customer_shipped_in_period_value = 0.0
+
+    co_filter = (CustomerOrder.user == current_user)
+    co_query = (CustomerOrderItem
+                .select(CustomerOrderItem.product,
+                        fn.SUM(CustomerOrderItem.quantity).alias('total_qty'),
+                        fn.SUM(CustomerOrderItem.subtotal).alias('total_amount'))
+                .join(CustomerOrder)
+                .where(co_filter)
+                .group_by(CustomerOrderItem.product)
+                .order_by(fn.SUM(CustomerOrderItem.subtotal).desc()))
+
+    for item in co_query:
+        product = item.product
+        total_qty = item.total_qty
+        total_amount = item.total_amount
+
+        co_ids = (CustomerOrderItem
+                  .select(CustomerOrderItem.order)
+                  .join(CustomerOrder)
+                  .where((CustomerOrderItem.product == product) & co_filter))
+
+        shipped_total = (SalesOrderItem
+                        .select(fn.SUM(SalesOrderItem.quantity))
+                        .join(SalesOrder)
+                        .where((SalesOrder.customer_order.in_(co_ids)) &
+                               (SalesOrderItem.product == product) &
+                               (SalesOrder.user == current_user))
+                        .scalar()) or 0
+
+        shipped_in_period = 0
+        shipped_before_total = 0
+
+        shipped_before = (SalesOrderItem
+                         .select(fn.SUM(SalesOrderItem.quantity))
+                         .join(SalesOrder)
+                         .where((SalesOrder.customer_order.in_(co_ids)) &
+                                (SalesOrderItem.product == product) &
+                                (SalesOrder.user == current_user) &
+                                (SalesOrder.order_date < reconcile_start))
+                         .scalar()) or 0
+        shipped_up_to_end = (SalesOrderItem
+                             .select(fn.SUM(SalesOrderItem.quantity))
+                             .join(SalesOrder)
+                             .where((SalesOrder.customer_order.in_(co_ids)) &
+                                    (SalesOrderItem.product == product) &
+                                    (SalesOrder.user == current_user) &
+                                    (SalesOrder.order_date <= reconcile_end))
+                             .scalar()) or 0
+        shipped_in_period = shipped_up_to_end - shipped_before
+        pending_total = total_qty - shipped_total
+        shipped_before_total += shipped_before
+
+        shipped_value = shipped_total * (total_amount / total_qty) if total_qty > 0 else 0
+        shipped_in_period_value = shipped_in_period * (total_amount / total_qty) if total_qty > 0 else 0
+
+        customer_rows.append({
+            'product': product.name,
+            'sku': product.sku or '',
+            'unit': product.unit,
+            'total_qty': total_qty,
+            'total_amount': total_amount,
+            'shipped_total': shipped_total,
+            'pending_total': pending_total,
+            'shipped_in_period': shipped_in_period,
+        })
+        total_customer_ordered_value += total_amount
+        total_customer_shipped_value += shipped_value
+        total_customer_shipped_in_period_value += shipped_in_period_value
+
+    # ── 仓库订货对账表：供货商订购 - 客户订货 ──
+    warehouse_rows = []
+    # 收集所有产品及其供需量
+    product_supply = {}   # product_id -> supplier ordered qty
+    product_demand = {}   # product_id -> customer ordered qty
+    all_product_ids = set()
+
+    sup_q = (SupplierOrderItem
+             .select(SupplierOrderItem.product, fn.SUM(SupplierOrderItem.quantity).alias('qty'))
+             .join(SupplierOrder)
+             .where(SupplierOrder.user == current_user)
+             .group_by(SupplierOrderItem.product))
+    for r in sup_q:
+        product_supply[r.product.id] = r.qty
+        all_product_ids.add(r.product.id)
+
+    cus_q = (CustomerOrderItem
+             .select(CustomerOrderItem.product, fn.SUM(CustomerOrderItem.quantity).alias('qty'))
+             .join(CustomerOrder)
+             .where(CustomerOrder.user == current_user)
+             .group_by(CustomerOrderItem.product))
+    for r in cus_q:
+        product_demand[r.product.id] = r.qty
+        all_product_ids.add(r.product.id)
+
+    for pid in all_product_ids:
+        sup_qty = product_supply.get(pid, 0)
+        cus_qty = product_demand.get(pid, 0)
+        diff = sup_qty - cus_qty
+        product = Product.get_by_id(pid)
+        warehouse_rows.append({
+            'product': product.name,
+            'sku': product.sku or '',
+            'unit': product.unit,
+            'supply_qty': sup_qty,
+            'demand_qty': cus_qty,
+            'diff': diff,
+        })
+    warehouse_rows.sort(key=lambda r: r['diff'])  # 最缺的排最前
+
     return render_template('index.html',
                            today=today,
                            reconcile_start=reconcile_start,
@@ -239,4 +353,9 @@ def index():
                            reconcile_rows=reconcile_rows,
                            total_ordered_value=total_ordered_value,
                            total_received_value=total_received_value,
-                           total_received_in_period_value=total_received_in_period_value)
+                           total_received_in_period_value=total_received_in_period_value,
+                           customer_rows=customer_rows,
+                           total_customer_ordered_value=total_customer_ordered_value,
+                           total_customer_shipped_value=total_customer_shipped_value,
+                           total_customer_shipped_in_period_value=total_customer_shipped_in_period_value,
+                           warehouse_rows=warehouse_rows)

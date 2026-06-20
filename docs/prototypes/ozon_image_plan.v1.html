@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>图片方案 — 仓库记账系统</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  .style-option { cursor:pointer; transition:all .15s; border:2px solid #dee2e6; }
+  .style-option:hover { border-color:#0d6efd; }
+  .style-option.selected { border-color:#0d6efd; background:#f0f5ff; }
+</style>
+</head>
+<body>
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+  <div class="container">
+    <a class="navbar-brand" href="#">仓库记账</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <ul class="navbar-nav">
+        <li class="nav-item dropdown"><a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">基础资料</a><ul class="dropdown-menu"><li><a class="dropdown-item" href="#">产品管理</a></li></ul></li>
+        <li class="nav-item"><a class="nav-link" href="#">供应商订单</a></li>
+        <li class="nav-item"><a class="nav-link" href="#">客户订单</a></li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle active" href="#" data-bs-toggle="dropdown">OZON 运营</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#">📊 工作台</a></li><li><a class="dropdown-item" href="#">⚙️ 平台接口</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📥 采集列表</a></li>
+            <li><a class="dropdown-item" href="#">📝 刊登草稿</a></li><li><a class="dropdown-item" href="#">🚀 发布任务</a></li>
+          </ul>
+        </li>
+      </ul>
+      <ul class="navbar-nav ms-auto"><li class="nav-item"><span class="nav-link">👤 管理员</span></li></ul>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+  <nav aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="#">草稿列表</a></li><li class="breadcrumb-item active">图片方案</li></ol></nav>
+  <h2 class="mb-1">图片方案</h2>
+  <p class="text-muted mb-3">草稿：15合1车载应急手电筒 | SKU：2</p>
+
+  <!-- Style Selection -->
+  <div class="card mb-3">
+    <div class="card-header fw-bold">🎨 视觉风格</div>
+    <div class="card-body">
+      <div class="row g-2">
+        <div class="col-3 col-md-2">
+          <div class="style-option selected rounded p-2 text-center">
+            <div class="fs-3">🔧</div><small class="fw-bold d-block">极简工具风</small>
+          </div>
+        </div>
+        <div class="col-3 col-md-2">
+          <div class="style-option rounded p-2 text-center">
+            <div class="fs-3">💡</div><small class="fw-bold d-block">科技照明</small>
+          </div>
+        </div>
+        <div class="col-3 col-md-2">
+          <div class="style-option rounded p-2 text-center">
+            <div class="fs-3">🚗</div><small class="fw-bold d-block">车载应急</small>
+          </div>
+        </div>
+        <div class="col-3 col-md-2">
+          <div class="style-option rounded p-2 text-center">
+            <div class="fs-3">📦</div><small class="fw-bold d-block">干净电商</small>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Image Slots -->
+  <div class="card mb-3">
+    <div class="card-header fw-bold">🖼 图片槽位 <span class="text-muted fw-normal ms-2">8 个槽位</span></div>
+    <div class="card-body p-0">
+      <div class="table-responsive-mobile">
+        <table class="table table-bordered table-sm mb-0 align-middle">
+          <thead class="table-light">
+            <tr><th>#</th><th>角色</th><th>适用范围</th><th>提示词 (中)</th><th>预览</th><th>状态</th><th>审核</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td><span class="badge bg-primary">主图</span></td>
+              <td>全部SKU</td>
+              <td><textarea class="form-control form-control-sm" rows="2">3:4 竖版，白底，15合1车载应急手电筒主体居中，功能指示灯亮起。负面：禁止中文、logo、价格、二维码</textarea></td>
+              <td><div class="bg-light rounded text-center" style="width:60px;height:80px;line-height:80px">🖼</div></td>
+              <td><span class="badge bg-warning text-dark">待生成</span></td>
+              <td><div class="d-flex gap-1"><button class="btn btn-sm btn-outline-success">✓</button><button class="btn btn-sm btn-outline-danger">✗</button></div></td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td><span class="badge bg-secondary">SKU图</span></td>
+              <td>黄色 SKU</td>
+              <td><textarea class="form-control form-control-sm" rows="2">3:4 竖版，白底，黄色款手电筒单独展示</textarea></td>
+              <td><div class="bg-light rounded text-center" style="width:60px;height:80px;line-height:80px">🖼</div></td>
+              <td><span class="badge bg-warning text-dark">待生成</span></td>
+              <td><div class="d-flex gap-1"><button class="btn btn-sm btn-outline-success">✓</button><button class="btn btn-sm btn-outline-danger">✗</button></div></td>
+            </tr>
+            <tr>
+              <td>3</td>
+              <td><span class="badge bg-secondary">SKU图</span></td>
+              <td>黑色 SKU</td>
+              <td><textarea class="form-control form-control-sm" rows="2">3:4 竖版，白底，黑色款手电筒单独展示</textarea></td>
+              <td><div class="bg-light rounded text-center" style="width:60px;height:80px;line-height:80px">🖼</div></td>
+              <td><span class="badge bg-warning text-dark">待生成</span></td>
+              <td><div class="d-flex gap-1"><button class="btn btn-sm btn-outline-success">✓</button><button class="btn btn-sm btn-outline-danger">✗</button></div></td>
+            </tr>
+            <tr>
+              <td>4</td>
+              <td><span class="badge bg-success">场景图</span></td>
+              <td>全部SKU</td>
+              <td><textarea class="form-control form-control-sm" rows="2">晚上道路场景，手电筒照亮前方路面，体现应急照明功能</textarea></td>
+              <td><div class="bg-light rounded text-center" style="width:60px;height:80px;line-height:80px">🖼</div></td>
+              <td><span class="badge bg-warning text-dark">待生成</span></td>
+              <td><div class="d-flex gap-1"><button class="btn btn-sm btn-outline-success">✓</button><button class="btn btn-sm btn-outline-danger">✗</button></div></td>
+            </tr>
+            <tr>
+              <td>5</td>
+              <td><span class="badge bg-info">功能图</span></td>
+              <td>全部SKU</td>
+              <td><textarea class="form-control form-control-sm" rows="2">展示15种功能模式，图标+简短俄语标注</textarea></td>
+              <td><div class="bg-light rounded text-center" style="width:60px;height:80px;line-height:80px">🖼</div></td>
+              <td><span class="badge bg-warning text-dark">待生成</span></td>
+              <td><div class="d-flex gap-1"><button class="btn btn-sm btn-outline-success">✓</button><button class="btn btn-sm btn-outline-danger">✗</button></div></td>
+            </tr>
+            <tr>
+              <td>6</td>
+              <td><span class="badge bg-info">细节图</span></td>
+              <td>全部SKU</td>
+              <td><textarea class="form-control form-control-sm" rows="2">Type-C充电口和电池仓细节特写</textarea></td>
+              <td><div class="bg-light rounded text-center" style="width:60px;height:80px;line-height:80px">🖼</div></td>
+              <td><span class="badge bg-warning text-dark">待生成</span></td>
+              <td><div class="d-flex gap-1"><button class="btn btn-sm btn-outline-success">✓</button><button class="btn btn-sm btn-outline-danger">✗</button></div></td>
+            </tr>
+            <tr>
+              <td>7</td>
+              <td><span class="badge bg-danger">尺寸图</span></td>
+              <td>全部SKU</td>
+              <td><textarea class="form-control form-control-sm" rows="2">产品尺寸标注图，俄语标注长宽高和重量</textarea></td>
+              <td><div class="bg-light rounded text-center" style="width:60px;height:80px;line-height:80px">🖼</div></td>
+              <td><span class="badge bg-warning text-dark">待生成</span></td>
+              <td><div class="d-flex gap-1"><button class="btn btn-sm btn-outline-success">✓</button><button class="btn btn-sm btn-outline-danger">✗</button></div></td>
+            </tr>
+            <tr>
+              <td>8</td>
+              <td><span class="badge bg-dark">包装清单</span></td>
+              <td>全部SKU</td>
+              <td><textarea class="form-control form-control-sm" rows="2">包装盒+配件平铺图：手电筒、Type-C线、说明书</textarea></td>
+              <td><div class="bg-light rounded text-center" style="width:60px;height:80px;line-height:80px">🖼</div></td>
+              <td><span class="badge bg-warning text-dark">待生成</span></td>
+              <td><div class="d-flex gap-1"><button class="btn btn-sm btn-outline-success">✓</button><button class="btn btn-sm btn-outline-danger">✗</button></div></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="d-flex gap-2 justify-content-end">
+    <button class="btn btn-outline-secondary">取消</button>
+    <button class="btn btn-primary">🤖 生成所有图片</button>
+    <button class="btn btn-outline-secondary">💾 保存并返回草稿</button>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

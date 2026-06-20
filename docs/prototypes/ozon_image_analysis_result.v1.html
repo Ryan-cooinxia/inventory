@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>图片识别结果 — 仓库记账系统</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  body { background: #f5f6fa; }
+  .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+  .image-card { background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08); cursor: pointer; transition: box-shadow .15s; }
+  .image-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,.15); }
+  .image-card img { width: 100%; aspect-ratio: 1; object-fit: cover; background: #e9ecef; }
+  .image-card .info { padding: 8px 10px; font-size: 11px; }
+  .image-card .status-badge { position: absolute; top: 6px; right: 6px; font-size: 10px; }
+  .analysis-panel { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); margin-top: 12px; }
+  .analysis-panel .panel-header { padding: 12px 16px; border-bottom: 1px solid #e9ecef; font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center; }
+  .analysis-panel .panel-body { padding: 16px; font-size: 12px; display: flex; gap: 16px; }
+  .analysis-panel .panel-body .preview { width: 240px; flex-shrink: 0; }
+  .analysis-panel .panel-body .preview img { width: 100%; border-radius: 4px; background: #e9ecef; }
+  .analysis-panel .panel-body .content { flex: 1; }
+  .fact-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; margin: 3px 0; background: #f8f9fa; border-radius: 4px; font-size: 12px; }
+  .fact-row.accepted { background: #d4edda; }
+  .fact-row.uncertain { background: #fff3cd; }
+  .fact-row .confidence-bar { width: 60px; height: 4px; background: #dee2e6; border-radius: 2px; overflow: hidden; }
+  .fact-row .confidence-bar .fill { height: 100%; border-radius: 2px; }
+  .tab-nav { display: flex; gap: 0; border-bottom: 2px solid #dee2e6; margin-bottom: 12px; }
+  .tab-nav .tab-btn { padding: 8px 16px; font-size: 13px; border: none; background: none; border-bottom: 2px solid transparent; margin-bottom: -2px; cursor: pointer; color: #6c757d; }
+  .tab-nav .tab-btn.active { color: #0d6efd; border-bottom-color: #0d6efd; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-3">
+  <div class="container-fluid">
+    <a class="navbar-brand" href="#">仓库记账</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <ul class="navbar-nav">
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">基础资料</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#">产品管理</a></li>
+            <li><a class="dropdown-item" href="#">客户管理</a></li>
+            <li><a class="dropdown-item" href="#">供应商管理</a></li>
+          </ul>
+        </li>
+        <li class="nav-item"><a class="nav-link" href="#">供应商订单</a></li>
+        <li class="nav-item"><a class="nav-link" href="#">客户订单</a></li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle active" href="#" data-bs-toggle="dropdown">OZON 运营</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="ozon_dashboard.v1.html">📊 工作台</a></li>
+            <li><a class="dropdown-item" href="#">⚙️ 平台接口</a></li>
+            <li><a class="dropdown-item" href="ozon_vision_model_config.v1.html">🔮 模型接口</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📥 采集列表</a></li>
+            <li><a class="dropdown-item" href="ozon_adaptation_workspace.v1.html">🔄 商品适配</a></li>
+            <li><a class="dropdown-item" href="#">📝 刊登草稿</a></li>
+            <li><a class="dropdown-item" href="#">🚀 发布任务</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📋 类目属性字典</a></li>
+            <li><a class="dropdown-item" href="#">💬 提示词库</a></li>
+            <li><a class="dropdown-item" href="#">💰 定价规则</a></li>
+          </ul>
+        </li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">统计报表</a>
+          <ul class="dropdown-menu"><li><a class="dropdown-item" href="#">每日进出货</a></li></ul>
+        </li>
+      </ul>
+      <ul class="navbar-nav ms-auto">
+        <li class="nav-item"><span class="nav-link">👤 管理员</span></li>
+        <li class="nav-item"><a class="nav-link" href="#">退出</a></li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<div class="container-fluid px-3">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h5 class="mb-0">🔍 图片识别结果</h5>
+      <small class="text-muted">商品：DJI Mic Mini 2 — 来自适配工作台</small>
+    </div>
+    <div>
+      <button class="btn btn-sm btn-outline-primary me-1">🔄 重新识别全部</button>
+      <button class="btn btn-sm btn-outline-secondary">返回适配工作台</button>
+    </div>
+  </div>
+
+  <!-- 统计条 -->
+  <div class="d-flex gap-3 mb-3" style="font-size:12px">
+    <span class="badge bg-info">总计: 19 张</span>
+    <span class="badge bg-success">已识别: 19</span>
+    <span class="badge bg-success">已接受: 12</span>
+    <span class="badge bg-warning text-dark">待确认: 5</span>
+    <span class="badge bg-danger">不合规: 2</span>
+    <span class="badge bg-secondary">未处理: 0</span>
+  </div>
+
+  <!-- 图片网格 + 展开详情 -->
+  <div class="row g-3">
+    <div class="col-lg-7">
+      <div class="tab-nav">
+        <button class="tab-btn active">全部图片</button>
+        <button class="tab-btn">主图 (1)</button>
+        <button class="tab-btn">SKU图 (6)</button>
+        <button class="tab-btn">详情图 (12)</button>
+      </div>
+
+      <div class="image-grid">
+        <!-- 主图 -->
+        <div class="image-card position-relative">
+          <span class="status-badge badge bg-success">✅</span>
+          <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Crect fill='%23444' width='160' height='160'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23fff' font-size='12'%3E主图%3C/text%3E%3C/svg%3E" alt="主图">
+          <div class="info">
+            <strong>主图</strong><br>
+            <span class="text-muted">合规 ✅ | OCR: 0字</span>
+          </div>
+        </div>
+
+        <!-- SKU 图 -->
+        <div class="image-card position-relative">
+          <span class="status-badge badge bg-success">✅</span>
+          <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Crect fill='%23333' width='160' height='160'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23fff' font-size='10'%3ESKU1%3C/text%3E%3C/svg%3E" alt="SKU1">
+          <div class="info">
+            <strong>SKU 1</strong><br>
+            <span class="text-muted">颜色:黑 | 置信度 95%</span>
+          </div>
+        </div>
+        <div class="image-card position-relative">
+          <span class="status-badge badge bg-success">✅</span>
+          <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Crect fill='%23333' width='160' height='160'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23fff' font-size='10'%3ESKU2%3C/text%3E%3C/svg%3E" alt="SKU2">
+          <div class="info">
+            <strong>SKU 2</strong><br>
+            <span class="text-muted">颜色:黑 | 置信度 92%</span>
+          </div>
+        </div>
+        <div class="image-card position-relative">
+          <span class="status-badge badge bg-warning text-dark">⚠️</span>
+          <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Crect fill='%23333' width='160' height='160'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23ffc107' font-size='10'%3ESKU3%3C/text%3E%3C/svg%3E" alt="SKU3">
+          <div class="info">
+            <strong>SKU 3</strong><br>
+            <span class="text-warning">配件差异小 68%</span>
+          </div>
+        </div>
+
+        <!-- 详情图 -->
+        <div class="image-card position-relative">
+          <span class="status-badge badge bg-success">✅</span>
+          <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Crect fill='%23f8f9fa' width='160' height='160'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%236c757d' font-size='10'%3E详情1%3C/text%3E%3C/svg%3E" alt="详情1">
+          <div class="info">
+            <strong>详情1-功能</strong><br>
+            <span class="text-muted">OCR: 23字 | 合规</span>
+          </div>
+        </div>
+        <div class="image-card position-relative">
+          <span class="status-badge badge bg-danger">❌</span>
+          <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Crect fill='%23f8d7da' width='160' height='160'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23721c24' font-size='10'%3E中文%3C/text%3E%3C/svg%3E" alt="不合规">
+          <div class="info">
+            <strong>详情5-参数</strong><br>
+            <span class="text-danger">含中文文字</span>
+          </div>
+        </div>
+        <div class="image-card position-relative">
+          <span class="status-badge badge bg-danger">❌</span>
+          <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Crect fill='%23f8d7da' width='160' height='160'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23721c24' font-size='10'%3E水印%3C/text%3E%3C/svg%3E" alt="水印">
+          <div class="info">
+            <strong>详情8-场景</strong><br>
+            <span class="text-danger">含平台水印</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右侧：详情面板 -->
+    <div class="col-lg-5">
+      <div class="analysis-panel">
+        <div class="panel-header">
+          <span>图片识别详情</span>
+          <span class="badge bg-info">SKU 1 — 黑色</span>
+        </div>
+        <div class="panel-body">
+          <div class="preview">
+            <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Crect fill='%23333' width='240' height='240'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23fff' font-size='14'%3ESKU 1%3C/text%3E%3C/svg%3E" alt="SKU 1 detail">
+          </div>
+          <div class="content">
+            <strong style="font-size:12px">🧠 检测对象</strong>
+            <ul style="font-size:11px;margin-bottom:8px;padding-left:16px">
+              <li>主体: 黑色无线麦克风发射器 (Φ 24mm)</li>
+              <li>颜色: #1a1a1a 黑色</li>
+              <li>可见配件: 充电触点、Type-C口</li>
+              <li>背景: 白色/浅灰 (#f5f5f5)</li>
+            </ul>
+
+            <strong style="font-size:12px">🛡️ 合规检查</strong>
+            <div style="font-size:11px;margin-bottom:8px">
+              <div class="text-success">✅ 无中文</div>
+              <div class="text-success">✅ 无水印</div>
+              <div class="text-success">✅ 无二维码</div>
+              <div class="text-success">✅ 无价格/折扣</div>
+              <div class="text-success">✅ 无平台Logo</div>
+              <div class="text-success">✅ OZON可用</div>
+            </div>
+
+            <strong style="font-size:12px">📊 提取事实</strong>
+            <div class="fact-row accepted">
+              <span>skus[0].color_cn = "黑色"</span>
+              <span class="text-success" style="font-size:11px">置信度 95% ✅</span>
+            </div>
+            <div class="fact-row accepted">
+              <span>主体含充电触点 + Type-C口</span>
+              <span class="text-success" style="font-size:11px">置信度 90% ✅</span>
+            </div>
+            <div class="fact-row uncertain">
+              <span>material = "塑料"</span>
+              <span class="text-warning" style="font-size:11px">置信度 35% ⚠️</span>
+            </div>
+
+            <div class="mt-2">
+              <button class="btn btn-sm btn-success me-1">✅ 全部接受</button>
+              <button class="btn btn-sm btn-outline-secondary me-1">✏️ 修正</button>
+              <button class="btn btn-sm btn-outline-danger">🗑️ 忽略高置信度项</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 不合规图片提醒 -->
+      <div class="analysis-panel mt-2">
+        <div class="panel-header">
+          <span>⚠️ 不合规图片</span>
+          <span class="badge bg-danger">2 张</span>
+        </div>
+        <div class="panel-body" style="flex-direction:column;font-size:12px">
+          <div class="fact-row" style="background:#f8d7da">
+            <span><strong>详情5-参数图</strong> — 含中文文字 ("产品参数"标题)
+              <br><small class="text-muted">建议: 删除或使用AI去文字处理</small></span>
+            <button class="btn btn-sm btn-outline-danger" style="font-size:10px">标记需处理</button>
+          </div>
+          <div class="fact-row" style="background:#f8d7da">
+            <span><strong>详情8-场景图</strong> — 含1688平台水印
+              <br><small class="text-muted">建议: 裁剪去除水印区域，或放弃该图</small></span>
+            <button class="btn btn-sm btn-outline-danger" style="font-size:10px">标记需处理</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

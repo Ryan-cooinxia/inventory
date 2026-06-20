@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}组合单 — 仓库记账系统{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0">🔧 组合单</h5>
+  <button class="btn btn-primary btn-sm" onclick="showAddForm()">+ 新建组合单</button>
+</div>
+<p class="text-muted" style="font-size:12px">组合 = 零件 → 套装。确认后零件库存减少，套装库存增加。</p>
+
+<!-- 新建组合单 -->
+<div class="card mb-3 d-none" id="addOrderCard">
+  <div class="card-header py-2"><strong>新建组合单</strong></div>
+  <div class="card-body py-2">
+    <form method="POST" action="/inventory/assembly-orders/add">
+      <div class="row g-2 align-items-end">
+        <div class="col-sm-3">
+          <label class="form-label" style="font-size:12px">组合规则</label>
+          <select name="rule_id" class="form-select form-select-sm" required onchange="showRulePreview(this.value)">
+            <option value="">-- 选择规则 --</option>
+            {% for r in rules %}
+            <option value="{{ r.id }}">{{ r.name }} → {{ r.bundle_product.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-sm-2">
+          <label class="form-label" style="font-size:12px">组装套数</label>
+          <input type="number" step="any" name="bundle_quantity" class="form-control form-control-sm" required min="0.01" value="1">
+        </div>
+        <div class="col-sm-2">
+          <label class="form-label" style="font-size:12px">备注</label>
+          <input type="text" name="remark" class="form-control form-control-sm">
+        </div>
+        <div class="col-sm-auto">
+          <button type="submit" class="btn btn-success btn-sm">创建</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" onclick="hideAddForm()">取消</button>
+        </div>
+      </div>
+      <div id="rulePreview" class="mt-2" style="font-size:12px"></div>
+    </form>
+  </div>
+</div>
+
+<!-- 组合单列表 -->
+<div class="table-responsive">
+  <table class="table table-sm table-hover" style="font-size:12px">
+    <thead class="table-light"><tr><th>单号</th><th>日期</th><th>产出套装</th><th>数量</th><th>消耗零件</th><th>总成本</th><th>状态</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for o in orders %}
+      <tr>
+        <td><strong>{{ o.assembly_no }}</strong></td>
+        <td>{{ o.assembly_date }}</td>
+        <td>{{ o.bundle_product.name }}</td>
+        <td>{{ o.bundle_quantity }}</td>
+        <td>
+          {% for item in o.items %}
+          <span class="badge bg-light text-dark me-1">{{ item.component_product.name }} -{{ item.quantity }}</span>
+          {% endfor %}
+        </td>
+        <td>{{ "%.2f"|format(o.total_cost) }}</td>
+        <td>
+          {% if o.status == 'draft' %}<span class="badge bg-warning text-dark">草稿</span>
+          {% elif o.status == 'confirmed' %}<span class="badge bg-success">已确认</span>
+          {% elif o.status == 'cancelled' %}<span class="badge bg-secondary">已撤销</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if o.status == 'draft' %}
+          <form method="POST" action="/inventory/assembly-orders/{{ o.id }}/confirm" style="display:inline" onsubmit="return confirm('确认此组合单？零件库存将减少，套装库存将增加。')">
+            <button class="btn btn-sm btn-outline-success" style="font-size:10px">确认</button>
+          </form>
+          {% endif %}
+          {% if o.status == 'confirmed' %}
+          <form method="POST" action="/inventory/assembly-orders/{{ o.id }}/cancel" style="display:inline" onsubmit="return confirm('撤销此组合单？库存将反向恢复。')">
+            <button class="btn btn-sm btn-outline-warning" style="font-size:10px">撤销</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="text-center text-muted py-3">暂无组合单。<br><small>请先创建组合规则，再创建组合单。</small></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var rulesData = [{% for r in rules %}{"id": {{ r.id }}, "name": {{ r.name | tojson }}, "bundle": {{ r.bundle_product.name | tojson }}}{% if not loop.last %}, {% endif %}{% endfor %}];
+
+function showAddForm(){ document.getElementById('addOrderCard').classList.remove('d-none'); }
+function hideAddForm(){ document.getElementById('addOrderCard').classList.add('d-none'); }
+
+function showRulePreview(ruleId){
+  var preview = document.getElementById('rulePreview');
+  if(!ruleId){ preview.innerHTML=''; return; }
+  var r = rulesData.find(function(x){return x.id == ruleId});
+  if(!r) { preview.innerHTML=''; return; }
+  var html = '<div class="alert alert-info py-1"><strong>产出：</strong>' + r.bundle;
+  html += '<br><small>确认后将消耗对应零件并增加套装库存</small></div>';
+  preview.innerHTML = html;
+}
+</script>
+{% endblock %}

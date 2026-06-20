@@ -5,6 +5,7 @@ from models import db, Supplier, Product, PurchaseOrder, PurchaseOrderItem
 from helpers import parse_non_negative_float, parse_positive_float
 from .crud_utils import paginate, get_or_none_user, parse_order_items_from_form
 from log_utils import log_action
+from .inventory_split import auto_create_split_order
 import datetime
 
 purchases_bp = Blueprint('purchases', __name__)
@@ -73,6 +74,14 @@ def add_purchase():
                     subtotal=it['subtotal'],
                     user=current_user
                 )
+
+            # 自动拆包：检查入库产品是否有拆包规则
+            for it in items:
+                product = Product.get_by_id(it['product_id'])
+                split_order = auto_create_split_order(product, it['quantity'], it['unit_price'], current_user)
+                if split_order:
+                    flash(f'已自动生成拆包单 {split_order.split_no}（{product.name} x{it["quantity"]}），请前往 <a href="/inventory/split-orders">拆包单</a> 确认', 'info')
+
         flash(f'入库单创建成功，总金额：{total_amount:.2f}', 'success')
         return redirect(url_for('purchases.add_purchase'))
 

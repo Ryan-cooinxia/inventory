@@ -1,7 +1,13 @@
 # blueprints/products.py
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from flask_login import login_required, current_user         # 新增
-from models import db, Product, ProductBundle, ProductBundleItem, PurchaseOrderItem, SalesOrderItem
+from models import (db, Product, ProductBundle, ProductBundleItem,
+    PurchaseOrderItem, SalesOrderItem,
+    CustomerOrderItem, SupplierOrderItem,
+    ProductSplitRule, ProductSplitRuleItem,
+    ProductSplitOrder, ProductSplitOrderItem,
+    ProductAssemblyRule, ProductAssemblyRuleItem,
+    ProductAssemblyOrder, ProductAssemblyOrderItem)
 from peewee import fn
 from helpers import generate_sku, parse_positive_float
 from log_utils import log_action
@@ -128,9 +134,9 @@ def edit_product(product_id):
     product.brand = request.form.get('brand', '') or None
     product.category1 = request.form.get('category1', '') or None
     product.category2 = request.form.get('category2', '') or None
-    product.name = request.form.get('name')
+    product.name = request.form.get('name') or product.name  # 防止空值触发 NOT NULL
     product.spec = request.form.get('spec', '') or None
-    product.unit = request.form.get('unit')
+    product.unit = request.form.get('unit') or product.unit
     product.save()
     flash('产品修改成功', 'success')
     return redirect(url_for('products.manage_products'))
@@ -149,13 +155,26 @@ def delete_product(product_id):
     used_in_bundle = ProductBundleItem.select().where(ProductBundleItem.component_product == product).exists()
     used_in_c_order = CustomerOrderItem.select().where(CustomerOrderItem.product == product).exists()
     used_in_s_order = SupplierOrderItem.select().where(SupplierOrderItem.product == product).exists()
-    if used_in_purchase or used_in_sales or used_in_bundle or used_in_c_order or used_in_s_order:
-        flash('该产品已存在于单据或套装组成中，无法删除。', 'danger')
+    used_in_split_source = ProductSplitRule.select().where(ProductSplitRule.source_product == product).exists()
+    used_in_split_target = ProductSplitRuleItem.select().where(ProductSplitRuleItem.target_product == product).exists()
+    used_in_split_order_src = ProductSplitOrder.select().where(ProductSplitOrder.source_product == product).exists()
+    used_in_split_order_tgt = ProductSplitOrderItem.select().where(ProductSplitOrderItem.target_product == product).exists()
+    used_in_assembly_bundle = ProductAssemblyRule.select().where(ProductAssemblyRule.bundle_product == product).exists()
+    used_in_assembly_comp = ProductAssemblyRuleItem.select().where(ProductAssemblyRuleItem.component_product == product).exists()
+    used_in_assembly_order_bdl = ProductAssemblyOrder.select().where(ProductAssemblyOrder.bundle_product == product).exists()
+    used_in_assembly_order_cmp = ProductAssemblyOrderItem.select().where(ProductAssemblyOrderItem.component_product == product).exists()
+    if (used_in_purchase or used_in_sales or used_in_bundle or used_in_c_order or used_in_s_order or
+        used_in_split_source or used_in_split_target or used_in_split_order_src or used_in_split_order_tgt or
+        used_in_assembly_bundle or used_in_assembly_comp or used_in_assembly_order_bdl or used_in_assembly_order_cmp):
+        flash('该产品已存在于单据、套装组成、拆包规则或组合规则中，无法删除。', 'danger')
         return redirect(url_for('products.manage_products'))
 
-    product.delete_instance()
-    log_action(current_user, 'delete', 'Product', product_id, f'删除产品：{product.name}', request.remote_addr)
-    flash('产品删除成功', 'success')
+    try:
+        product.delete_instance()
+        log_action(current_user, 'delete', 'Product', product_id, f'删除产品：{product.name}', request.remote_addr)
+        flash('产品删除成功', 'success')
+    except Exception as e:
+        flash(f'删除失败：{str(e)[:100]}', 'danger')
     return redirect(url_for('products.manage_products'))
 
 @products_bp.route('/products/batch-delete', methods=['POST'])

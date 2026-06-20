@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>发布任务 — 仓库记账系统</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+  <div class="container">
+    <a class="navbar-brand" href="#">仓库记账</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <ul class="navbar-nav">
+        <li class="nav-item dropdown"><a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">基础资料</a><ul class="dropdown-menu"><li><a class="dropdown-item" href="#">产品管理</a></li><li><a class="dropdown-item" href="#">客户管理</a></li><li><a class="dropdown-item" href="#">供应商管理</a></li></ul></li>
+        <li class="nav-item"><a class="nav-link" href="#">供应商订单</a></li>
+        <li class="nav-item"><a class="nav-link" href="#">客户订单</a></li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle active" href="#" data-bs-toggle="dropdown">OZON 运营</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#">📊 工作台</a></li><li><a class="dropdown-item" href="#">⚙️ 平台接口</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📥 采集列表</a></li>
+            <li><a class="dropdown-item" href="#">📝 刊登草稿</a></li>
+            <li><a class="dropdown-item active" href="#">🚀 发布任务</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#">📋 提示词库</a></li><li><a class="dropdown-item" href="#">💰 定价规则</a></li>
+          </ul>
+        </li>
+        <li class="nav-item dropdown"><a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">统计报表</a><ul class="dropdown-menu"><li><a class="dropdown-item" href="#">每日进出货</a></li></ul></li>
+      </ul>
+      <ul class="navbar-nav ms-auto">
+        <li class="nav-item"><span class="nav-link">👤 管理员</span></li>
+        <li class="nav-item"><a class="nav-link" href="#">退出</a></li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0">发布任务</h2>
+    <span class="text-muted">共 8 条</span>
+  </div>
+
+  <!-- Filters -->
+  <form class="row g-2 mb-3 align-items-end">
+    <div class="col-auto">
+      <label class="form-label fw-bold">状态</label>
+      <select class="form-select" style="width:130px">
+        <option>全部</option>
+        <option>待处理</option>
+        <option>进行中</option>
+        <option>成功</option>
+        <option>失败</option>
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label fw-bold">店铺</label>
+      <select class="form-select" style="width:150px">
+        <option>全部</option>
+        <option>OZON 测试店</option>
+        <option>OZON 正式店</option>
+      </select>
+    </div>
+    <div class="col-auto">
+      <button class="btn btn-outline-primary">筛选</button>
+    </div>
+  </form>
+
+  <!-- Table -->
+  <div class="table-responsive-mobile">
+    <table class="table table-bordered table-sm align-middle">
+      <thead class="table-light">
+        <tr>
+          <th>任务 ID</th>
+          <th>店铺</th>
+          <th>草稿标题</th>
+          <th>操作类型</th>
+          <th>状态</th>
+          <th>创建时间</th>
+          <th style="width:100px">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- Success -->
+        <tr>
+          <td><code>job_001</code></td>
+          <td>OZON 测试店</td>
+          <td>Кабель Type-C 100 Вт быстрая зарядка 1 м</td>
+          <td><span class="badge bg-primary">创建商品</span></td>
+          <td><span class="badge bg-success">成功</span></td>
+          <td>06-12 16:20</td>
+          <td>
+            <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#job001">详情</button>
+          </td>
+        </tr>
+        <tr class="collapse" id="job001">
+          <td colspan="7" class="bg-light">
+            <div class="row">
+              <div class="col-md-6">
+                <h6>📤 请求</h6>
+                <pre class="bg-dark text-light p-2 rounded small" style="max-height:200px;overflow:auto">{
+  "offer_id": "TC-100W-1M",
+  "name": "Кабель Type-C 100 Вт...",
+  "price": "850",
+  "vat": "0",
+  "barcode": "...",
+  "images": ["url1","url2",...]
+}</pre>
+              </div>
+              <div class="col-md-6">
+                <h6>📥 响应</h6>
+                <pre class="bg-dark text-light p-2 rounded small" style="max-height:200px;overflow:auto">{
+  "result": {
+    "task_id": 115272608,
+    "status": "created"
+  }
+}</pre>
+              </div>
+            </div>
+            <small class="text-muted">OZON Product ID: 115272608</small>
+          </td>
+        </tr>
+        <!-- Failed -->
+        <tr>
+          <td><code>job_002</code></td>
+          <td>OZON 测试店</td>
+          <td>Водонепроницаемая сумка для экшн-камеры</td>
+          <td><span class="badge bg-primary">创建商品</span></td>
+          <td><span class="badge bg-danger">失败</span></td>
+          <td>06-11 10:00</td>
+          <td>
+            <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#job002">详情</button>
+            <a href="#" class="btn btn-sm btn-outline-warning">重试</a>
+          </td>
+        </tr>
+        <tr class="collapse" id="job002">
+          <td colspan="7" class="bg-light">
+            <div class="row">
+              <div class="col-md-6">
+                <h6>📤 请求</h6>
+                <pre class="bg-dark text-light p-2 rounded small" style="max-height:200px;overflow:auto">{
+  "offer_id": "WP-EC-BAG",
+  "name": "Водонепроницаемая сумка...",
+  "price": "1200",
+  ...
+}</pre>
+              </div>
+              <div class="col-md-6">
+                <h6>📥 响应 / 错误</h6>
+                <pre class="bg-dark text-light p-2 rounded small" style="max-height:200px;overflow:auto">{
+  "error": {
+    "code": "INVALID_ATTRIBUTE",
+    "message": "Обязательный атрибут 'Бренд' не заполнен"
+  }
+}</pre>
+              </div>
+            </div>
+            <div class="alert alert-danger py-1 px-2 mb-0 mt-2 small">
+              ⚠ 必填属性 "Бренд" 未填写 — 请回到草稿审核页补全后重新发布
+            </div>
+          </td>
+        </tr>
+        <!-- In Progress -->
+        <tr>
+          <td><code>job_003</code></td>
+          <td>OZON 测试店</td>
+          <td>Светодиодная лампа для чтения USB перезаряжаемая</td>
+          <td><span class="badge bg-info">更新库存</span></td>
+          <td><span class="badge bg-info">进行中</span></td>
+          <td>06-13 11:00</td>
+          <td>
+            <span class="spinner-border spinner-border-sm text-muted"></span>
+          </td>
+        </tr>
+        <!-- Pending -->
+        <tr>
+          <td><code>job_004</code></td>
+          <td>OZON 正式店</td>
+          <td>Магнитный держатель для телефона в автомобиль</td>
+          <td><span class="badge bg-primary">创建商品</span></td>
+          <td><span class="badge bg-secondary">待处理</span></td>
+          <td>06-13 11:30</td>
+          <td>
+            <button class="btn btn-sm btn-outline-danger">取消</button>
+          </td>
+        </tr>
+        <!-- Another success -->
+        <tr>
+          <td><code>job_005</code></td>
+          <td>OZON 测试店</td>
+          <td>Магнитный держатель для телефона в автомобиль (тест)</td>
+          <td><span class="badge bg-primary">创建商品</span></td>
+          <td><span class="badge bg-success">成功</span></td>
+          <td>06-12 14:30</td>
+          <td>
+            <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#job005">详情</button>
+          </td>
+        </tr>
+        <tr class="collapse" id="job005">
+          <td colspan="7" class="bg-light">
+            <div class="row">
+              <div class="col-md-6">
+                <h6>📤 请求</h6>
+                <pre class="bg-dark text-light p-2 rounded small" style="max-height:200px;overflow:auto">{
+  "offer_id": "MP-001",
+  "name": "Магнитный держатель...",
+  "price": "650",
+  ...
+}</pre>
+              </div>
+              <div class="col-md-6">
+                <h6>📥 响应</h6>
+                <pre class="bg-dark text-light p-2 rounded small" style="max-height:200px;overflow:auto">{
+  "result": { "task_id": 115272650 }
+}</pre>
+              </div>
+            </div>
+            <small class="text-muted">OZON Product ID: 115272650</small>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pagination -->
+  <nav><ul class="pagination pagination-sm justify-content-center">
+    <li class="page-item disabled"><a class="page-link" href="#">上一页</a></li>
+    <li class="page-item active"><a class="page-link" href="#">1</a></li>
+    <li class="page-item"><a class="page-link" href="#">下一页</a></li>
+  </ul></nav>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

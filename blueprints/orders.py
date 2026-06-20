@@ -3,12 +3,12 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash
 from flask_login import login_required, current_user
 from models import (
     Customer, CustomerOrder, CustomerOrderItem,
-    SalesOrder, SalesOrderItem, Product
+    SalesOrder, SalesOrderItem, Product,
+    db
 )
 from peewee import fn
 from helpers import check_stock_before_ship, parse_non_negative_float, parse_positive_float
 from log_utils import log_action
-from models import db
 import datetime
 
 orders_bp = Blueprint('orders', __name__)
@@ -17,42 +17,154 @@ orders_bp = Blueprint('orders', __name__)
 @orders_bp.route('/orders')
 @login_required
 def list_orders():
-    orders = CustomerOrder.select().where(CustomerOrder.user == current_user).order_by(CustomerOrder.order_date.desc())
+    # 对账时段筛选参数（默认今天）
+    start_str = request.args.get('reconcile_start', '')
+    end_str = request.args.get('reconcile_end', '')
+    today = datetime.date.today()
+    if start_str:
+        try:
+            reconcile_start = datetime.datetime.strptime(start_str, '%Y-%m-%d').date()
+        except ValueError:
+            reconcile_start = today
+    else:
+        reconcile_start = today
+    if end_str:
+        try:
+            reconcile_end = datetime.datetime.strptime(end_str, '%Y-%m-%d').date()
+        except ValueError:
+            reconcile_end = today
+    else:
+        reconcile_end = today
+
+    # 客户筛选
+    customer_id = request.args.get('customer_id', '')
+    orders = CustomerOrder.select().where(CustomerOrder.user == current_user)
+    if customer_id:
+        orders = orders.where(CustomerOrder.customer == int(customer_id))
+    orders = orders.order_by(CustomerOrder.order_date.desc())
+
+    # 客户列表（用于下拉筛选）
+    customers = Customer.select().where(Customer.user == current_user)
+
+    # ── 自动截单：发货金额 >= 订货金额但明细数量不匹配的，自动修正 ──
+    auto_fixed = []
+    for order in orders:
+        items = list(order.items)
+        if not items:
+            continue
+        total_shipped_amt = (SalesOrderItem
+                            .select(fn.SUM(SalesOrderItem.subtotal))
+                            .join(SalesOrder)
+                            .where((SalesOrder.customer_order == order) &
+                                   (SalesOrder.user == current_user) &
+                                   (SalesOrder.is_settlement == False))
+                            .scalar()) or 0
+        if total_shipped_amt < order.total_amount - 0.01:
+            continue  # 金额不够，跳过
+
+        # 检查是否有明细不匹配
+        has_mismatch = False
+        for item in items:
+            shipped_qty = (SalesOrderItem
+                          .select(fn.SUM(SalesOrderItem.quantity))
+                          .join(SalesOrder)
+                          .where((SalesOrder.customer_order == order) &
+                                 (SalesOrderItem.product == item.product) &
+                                 (SalesOrder.user == current_user))
+                          .scalar()) or 0
+            if shipped_qty < item.quantity:
+                has_mismatch = True
+                break
+
+        if not has_mismatch:
+            continue
+
+        # 执行自动修正：缩减订货量到实发量
+        fixed_items = []
+        for item in items:
+            shipped_qty = (SalesOrderItem
+                          .select(fn.SUM(SalesOrderItem.quantity))
+                          .join(SalesOrder)
+                          .where((SalesOrder.customer_order == order) &
+                                 (SalesOrderItem.product == item.product) &
+                                 (SalesOrder.user == current_user))
+                          .scalar()) or 0
+            if shipped_qty < item.quantity:
+                fixed_items.append(f'{item.product.name}: {item.quantity}->{shipped_qty}')
+                item.quantity = shipped_qty
+                item.subtotal = shipped_qty * item.unit_price
+                item.save()
+        new_total = sum(it.quantity * it.unit_price for it in items)
+        order.total_amount = new_total
+        order.status = 'shipped'
+        order.save()
+        auto_fixed.append(f'#{order.id}({"; ".join(fixed_items)})')
+
+    if auto_fixed:
+        flash(f'已自动截单 {len(auto_fixed)} 笔：{" | ".join(auto_fixed)}', 'success')
+
     rows = []
     row_index = 0
     total_order_value = 0.0
     total_shipped_value = 0.0
+    total_shipped_in_period_value = 0.0
 
     for order in orders:
         items = list(order.items)
         order_product_ids = {item.product.id for item in items}
 
-        shipped_amount = (SalesOrder
-                          .select(fn.SUM(SalesOrder.total_amount))
-                          .where((SalesOrder.customer_order == order) & (SalesOrder.user == current_user))
-                          .scalar()) or 0.0
+        # 批量查询发货量（对账三段式），减少数据库查询
+        for item in items:
+            pid = item.product.id
+
+            # 截止当前总发货量
+            shipped_total = (SalesOrderItem
+                        .select(fn.SUM(SalesOrderItem.quantity))
+                        .join(SalesOrder)
+                        .where((SalesOrder.customer_order == order) &
+                               (SalesOrderItem.product == pid) &
+                               (SalesOrder.user == current_user))
+                        .scalar()) or 0
+
+            # 时段开始前的发货量
+            shipped_before = (SalesOrderItem
+                        .select(fn.SUM(SalesOrderItem.quantity))
+                        .join(SalesOrder)
+                        .where((SalesOrder.customer_order == order) &
+                               (SalesOrderItem.product == pid) &
+                               (SalesOrder.user == current_user) &
+                               (SalesOrder.order_date < reconcile_start))
+                        .scalar()) or 0
+
+            # 时段结束前的发货量（含结束日）
+            shipped_up_to_end = (SalesOrderItem
+                        .select(fn.SUM(SalesOrderItem.quantity))
+                        .join(SalesOrder)
+                        .where((SalesOrder.customer_order == order) &
+                               (SalesOrderItem.product == pid) &
+                               (SalesOrder.user == current_user) &
+                               (SalesOrder.order_date <= reconcile_end))
+                        .scalar()) or 0
+
+            # 时段内发货量
+            shipped_in_period = shipped_up_to_end - shipped_before
+
+            # 期初剩余 = 订单量 - 时段开始前已发
+            pending_before = item.quantity - shipped_before
+            # 期末剩余 = 订单量 - 时段结束前总发货
+            pending_after = item.quantity - shipped_up_to_end
+
+            item.shipped_total = shipped_total
+            item.shipped_before = shipped_before
+            item.shipped_in_period = shipped_in_period
+            item.pending_before = pending_before
+            item.pending_after = pending_after
+
+        # 订单级汇总（用于状态判断）
+        shipped_amount = sum(getattr(it, 'shipped_total', 0) * it.unit_price for it in items)
         total_shipped_value += shipped_amount
         total_order_value += order.total_amount
 
-        shipped_qty_total = 0.0
-        shipped_qty_map = {}
-        for item in items:
-            shipped = (SalesOrderItem
-                       .select(fn.SUM(SalesOrderItem.quantity))
-                       .join(SalesOrder)
-                       .where((SalesOrder.customer_order == order) &
-                              (SalesOrderItem.product == item.product) &
-                              (SalesOrder.user == current_user))
-                       .scalar()) or 0
-            shipped_qty_map[item.product.id] = shipped
-            shipped_qty_total += shipped
-
-        order_qty_total = sum(item.quantity for item in items)
-        remaining_qty_total = max(order_qty_total - shipped_qty_total, 0)
-
-        remaining_amount = max(order.total_amount - shipped_amount, 0)
-
-        has_swap = False
         if shipped_amount > 0:
             extra_items = (SalesOrderItem
                            .select()
@@ -62,6 +174,8 @@ def list_orders():
                                   SalesOrderItem.product.not_in(order_product_ids))
                            .exists())
             has_swap = extra_items
+        else:
+            has_swap = False
 
         if shipped_amount >= order.total_amount:
             status_text = '已完成'
@@ -71,10 +185,31 @@ def list_orders():
             status_text = '未发货'
 
         has_shipment = shipped_amount > 0
+        # 检查是否有明细的发货量 ≠ 订货量（替代品发货或历史遗留订单）
+        # 条件：有发货记录 + 存在某行产品发货量 < 订货量
+        needs_fix = (has_shipment and
+                     any(getattr(it, 'shipped_total', 0) < it.quantity for it in items))
         total_lines = len(items) if items else 1
 
         for idx, item in enumerate(items):
             product = item.product
+            qty_ordered = item.quantity
+            unit_price = item.unit_price
+            subtotal = item.subtotal
+
+            shipped_total = getattr(item, 'shipped_total', 0)
+            shipped_before = getattr(item, 'shipped_before', 0)
+            shipped_in_period = getattr(item, 'shipped_in_period', 0)
+            pending_before = getattr(item, 'pending_before', 0)
+            pending_after = getattr(item, 'pending_after', 0)
+
+            if shipped_total == 0:
+                item_status = '未发货'
+            elif shipped_total < qty_ordered:
+                item_status = '部分发货'
+            else:
+                item_status = '已完成'
+
             row_index += 1
             rows.append({
                 'row_no': row_index,
@@ -82,20 +217,22 @@ def list_orders():
                 'customer_name': order.customer.name,
                 'order_date': order.order_date,
                 'product_name': product.name,
-                'unit_price': item.unit_price,
-                'qty_ordered': item.quantity,
-                'subtotal': item.subtotal,
-                'shipped_qty_total': shipped_qty_total,
-                'remaining_qty_total': remaining_qty_total,
-                'shipped_amount': shipped_amount,
-                'remaining_amount': remaining_amount,
-                'status_text': status_text,
+                'unit_price': unit_price,
+                'qty_ordered': qty_ordered,
+                'subtotal': subtotal,
+                'shipped_before': shipped_before,
+                'pending_before': pending_before,
+                'shipped_in_period': shipped_in_period,
+                'shipped_total': shipped_total,
+                'pending_after': pending_after,
+                'status_text': item_status,
                 'invoice_required': '是' if order.invoice_required else '否',
                 'is_first_row': idx == 0,
                 'rowspan_count': total_lines,
                 'has_shipment': has_shipment,
-                'status': order.status
+                'needs_fix': needs_fix
             })
+            total_shipped_in_period_value += shipped_in_period * unit_price
 
         if not items:
             row_index += 1
@@ -108,23 +245,29 @@ def list_orders():
                 'unit_price': 0,
                 'qty_ordered': 0,
                 'subtotal': 0,
-                'shipped_qty_total': shipped_qty_total,
-                'remaining_qty_total': remaining_qty_total,
-                'shipped_amount': shipped_amount,
-                'remaining_amount': remaining_amount,
-                'status_text': status_text,
+                'shipped_before': 0,
+                'pending_before': 0,
+                'shipped_in_period': 0,
+                'shipped_total': 0,
+                'pending_after': 0,
+                'status_text': '-',
                 'invoice_required': '是' if order.invoice_required else '否',
                 'is_first_row': True,
                 'rowspan_count': 1,
                 'has_shipment': has_shipment,
-                'status': order.status
+                'needs_fix': False
             })
 
     total_unshipped_value = total_order_value - total_shipped_value
     return render_template('orders.html',
                            orders=rows,
+                           customers=customers,
+                           reconcile_start=reconcile_start,
+                           reconcile_end=reconcile_end,
+                           selected_customer=customer_id,
                            total_order_value=total_order_value,
                            total_shipped_value=total_shipped_value,
+                           total_shipped_in_period_value=total_shipped_in_period_value,
                            total_unshipped_value=total_unshipped_value)
 
 
@@ -334,6 +477,7 @@ def ship_order_form(order_id):
 
     order_items = list(CustomerOrderItem.select().where(CustomerOrderItem.order == order))
     shipped_qty_map = {}
+    shipped_amount_total = 0.0
     for item in order_items:
         shipped = (SalesOrderItem
                    .select(fn.SUM(SalesOrderItem.quantity))
@@ -343,8 +487,10 @@ def ship_order_form(order_id):
                           (SalesOrder.user == current_user))
                    .scalar()) or 0
         shipped_qty_map[item.product.id] = shipped
+        shipped_amount_total += shipped * item.unit_price
 
     items_data = []
+    remaining_order_value = order.total_amount - shipped_amount_total
     for item in order_items:
         pid = item.product.id
         qty_ordered = item.quantity
@@ -364,6 +510,7 @@ def ship_order_form(order_id):
     return render_template('ship_order.html',
                            order=order,
                            items_data=items_data,
+                           remaining_order_value=remaining_order_value,
                            today=datetime.date.today(),
                            products=products,
                            products_json=products_data)
@@ -424,6 +571,7 @@ def create_shipment(order_id):
             return redirect(url_for('orders.ship_order_form', order_id=order.id))
         extra_items.append({
             'product_id': int(pid),
+            'product': product,
             'quantity': qty,
             'unit_price': price,
             'subtotal': qty * price
@@ -432,6 +580,10 @@ def create_shipment(order_id):
     if not ship_quantities and not extra_items:
         flash('请至少填写发货数量或添加产品', 'danger')
         return redirect(url_for('orders.ship_order_form', order_id=order.id))
+
+    # 新增选项
+    cancel_remaining = request.form.get('cancel_remaining') == 'on'
+    extra_as_new = request.form.get('extra_as_new_order') == 'on'
 
     all_ship_items = []
     for pid, data in ship_quantities.items():
@@ -445,12 +597,15 @@ def create_shipment(order_id):
         return redirect(url_for('orders.ship_order_form', order_id=order.id))
 
     with db.atomic():
-        total_amount = sum(v['subtotal'] for v in ship_quantities.values()) + sum(e['subtotal'] for e in extra_items)
+        ship_total = sum(v['subtotal'] for v in ship_quantities.values())
+        extra_total = sum(e['subtotal'] for e in extra_items)
+
+        # ── 1. 正常发货 ──
         ship = SalesOrder.create(
             customer=order.customer,
             customer_order=order,
             order_date=request.form.get('order_date', datetime.date.today()),
-            total_amount=total_amount,
+            total_amount=ship_total + (0 if extra_as_new else extra_total),
             remark=request.form.get('remark', '') or None,
             ship_method=request.form.get('ship_method', '') or None,
             tracking_number=request.form.get('tracking_number', '') or None,
@@ -458,23 +613,84 @@ def create_shipment(order_id):
         )
         for product_id, data in ship_quantities.items():
             SalesOrderItem.create(
-                order=ship,
-                product=product_id,
-                quantity=data['quantity'],
-                unit_price=data['unit_price'],
-                subtotal=data['subtotal'],
-                user=current_user
+                order=ship, product=product_id,
+                quantity=data['quantity'], unit_price=data['unit_price'],
+                subtotal=data['subtotal'], user=current_user
             )
-        for extra in extra_items:
-            SalesOrderItem.create(
-                order=ship,
-                product=extra['product_id'],
-                quantity=extra['quantity'],
-                unit_price=extra['unit_price'],
-                subtotal=extra['subtotal'],
-                user=current_user
-            )
+        if not extra_as_new:
+            for extra in extra_items:
+                SalesOrderItem.create(
+                    order=ship, product=extra['product_id'],
+                    quantity=extra['quantity'], unit_price=extra['unit_price'],
+                    subtotal=extra['subtotal'], user=current_user
+                )
 
+        # ── 2. 取消剩余未发：减少订货量 ──
+        if cancel_remaining:
+            items_cancelled = []
+            for item in order.items:
+                shipped_now = ship_quantities.get(item.product.id, {}).get('quantity', 0)
+                shipped_before = (SalesOrderItem
+                                  .select(fn.SUM(SalesOrderItem.quantity))
+                                  .join(SalesOrder)
+                                  .where((SalesOrder.customer_order == order) &
+                                         (SalesOrderItem.product == item.product) &
+                                         (SalesOrder.user == current_user) &
+                                         (SalesOrder.id != ship.id))
+                                  .scalar()) or 0
+                total_shipped = shipped_before + shipped_now
+                if total_shipped < item.quantity:
+                    cancelled = item.quantity - total_shipped
+                    items_cancelled.append(f'{item.product.name} x{cancelled}')
+                    item.quantity = total_shipped
+                    item.subtotal = total_shipped * item.unit_price
+                    item.save()
+            if items_cancelled:
+                # 重算订单总额
+                new_total = sum(it.quantity * it.unit_price for it in order.items)
+                order.total_amount = new_total
+                log_action(current_user, 'cancel_remaining', 'CustomerOrder', order.id,
+                           f'取消未发：{"; ".join(items_cancelled)}', request.remote_addr)
+
+        # ── 3. 替代品生成独立订单 ──
+        new_order = None
+        if extra_as_new and extra_items:
+            new_total = extra_total
+            new_order = CustomerOrder.create(
+                user=current_user,
+                customer=order.customer,
+                order_date=datetime.date.today(),
+                total_amount=new_total,
+                status='shipped',
+                invoice_required=False,
+                remark=f'替代发货（原订单 #{order.id}）'
+            )
+            for extra in extra_items:
+                CustomerOrderItem.create(
+                    order=new_order,
+                    product=extra['product_id'],
+                    quantity=extra['quantity'],
+                    unit_price=extra['unit_price'],
+                    subtotal=extra['subtotal'],
+                    user=current_user
+                )
+            # 自动发货新订单
+            new_ship = SalesOrder.create(
+                customer=order.customer,
+                customer_order=new_order,
+                order_date=datetime.date.today(),
+                total_amount=new_total,
+                remark=f'替代发货（原订单 #{order.id} 换货）',
+                user=current_user
+            )
+            for extra in extra_items:
+                SalesOrderItem.create(
+                    order=new_ship, product=extra['product_id'],
+                    quantity=extra['quantity'], unit_price=extra['unit_price'],
+                    subtotal=extra['subtotal'], user=current_user
+                )
+
+        # ── 4. 更新订单状态 ──
         all_shipped = True
         for item in order.items:
             shipped = (SalesOrderItem
@@ -487,17 +703,115 @@ def create_shipment(order_id):
             if shipped < item.quantity:
                 all_shipped = False
                 break
-        if all_shipped or total_amount >= order.total_amount:
-            order.status = 'shipped'
-        else:
-            order.status = 'pending'
+        order.status = 'shipped' if all_shipped else 'pending'
         order.save()
 
-    # 记录操作日志
     log_action(current_user, 'ship', 'CustomerOrder', order.id,
-               f'订单 #{order.id} 发货，金额：{total_amount:.2f}', request.remote_addr)
+               f'订单 #{order.id} 发货 ¥{ship_total:.2f}', request.remote_addr)
 
-    flash(f'出库单生成成功，本次发货金额 ¥{total_amount:.2f}', 'success')
+    msg = f'出库单生成成功，发货金额 ¥{ship_total:.2f}'
+    if cancel_remaining and items_cancelled:
+        msg += f'，已取消剩余未发'
+    if new_order:
+        msg += f'，已自动创建替代订单 #{new_order.id}（¥{extra_total:.2f}）并完成发货'
+    flash(msg, 'success')
+    return redirect(url_for('orders.list_orders'))
+
+
+@orders_bp.route('/orders/fix/<int:order_id>', methods=['POST'])
+@login_required
+def fix_order_quantities(order_id):
+    """修正历史订单：将每行产品的订货量缩减到实际发货量"""
+    order = CustomerOrder.get_or_none((CustomerOrder.id == order_id) & (CustomerOrder.user == current_user))
+    if not order:
+        flash('订单不存在或无权访问', 'danger')
+        return redirect(url_for('orders.list_orders'))
+
+    fixed = []
+    for item in order.items:
+        shipped = (SalesOrderItem
+                   .select(fn.SUM(SalesOrderItem.quantity))
+                   .join(SalesOrder)
+                   .where((SalesOrder.customer_order == order) &
+                          (SalesOrderItem.product == item.product) &
+                          (SalesOrder.user == current_user))
+                   .scalar()) or 0
+        if shipped < item.quantity:
+            fixed.append(f'{item.product.name}：{item.quantity}→{shipped}')
+            item.quantity = shipped
+            item.subtotal = shipped * item.unit_price
+            item.save()
+
+    if fixed:
+        new_total = sum(it.quantity * it.unit_price for it in order.items)
+        order.total_amount = new_total
+        order.save()
+        flash(f'已修正：{"; ".join(fixed)}，订单总额 ¥{new_total:.2f}', 'success')
+    else:
+        flash('该订单无需修正，订货量已与实际发货一致', 'info')
+
+    return redirect(url_for('orders.list_orders'))
+
+
+@orders_bp.route('/orders/settle/<int:order_id>', methods=['POST'])
+@login_required
+def settle_order(order_id):
+    """手动平账：对尚未发货的剩余数量生成零价出库单，关闭订单"""
+    order = CustomerOrder.get_or_none((CustomerOrder.id == order_id) & (CustomerOrder.user == current_user))
+    if not order:
+        flash('订单不存在或无权访问', 'danger')
+        return redirect(url_for('orders.list_orders'))
+
+    # 统计每条明细的未发数量
+    settle_items = []
+    for item in order.items:
+        shipped = (SalesOrderItem
+                   .select(fn.SUM(SalesOrderItem.quantity))
+                   .join(SalesOrder)
+                   .where((SalesOrder.customer_order == order) &
+                          (SalesOrderItem.product == item.product) &
+                          (SalesOrder.user == current_user))
+                   .scalar()) or 0
+        remaining = item.quantity - shipped
+        if remaining > 0:
+            settle_items.append({
+                'product_id': item.product.id,
+                'product_name': item.product.name,
+                'quantity': remaining,
+            })
+
+    if not settle_items:
+        flash('该订单已全部发货，无需平账', 'info')
+        return redirect(url_for('orders.list_orders'))
+
+    with db.atomic():
+        settle = SalesOrder.create(
+            customer=order.customer,
+            customer_order=order,
+            order_date=datetime.date.today(),
+            total_amount=0,
+            remark='手动平账（替代品已通过其他方式发出）',
+            is_settlement=True,
+            user=current_user
+        )
+        for it in settle_items:
+            SalesOrderItem.create(
+                order=settle,
+                product=it['product_id'],
+                quantity=it['quantity'],
+                unit_price=0,
+                subtotal=0,
+                user=current_user
+            )
+
+        order.status = 'shipped'
+        order.save()
+
+    names = '、'.join(f"{it['product_name']} x{it['quantity']}" for it in settle_items)
+    log_action(current_user, 'settle', 'CustomerOrder', order.id,
+               f'手动平账订单 #{order.id}：{names}', request.remote_addr)
+
+    flash(f'订单 #{order.id} 已平账：{names}（金额 ¥0，数量已归零）', 'success')
     return redirect(url_for('orders.list_orders'))
 
 

@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}在线商品 — 仓库记账系统{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0">📦 在线商品</h5>
+  <div class="d-flex gap-2 align-items-center">
+    {% if last_sync %}
+    <span class="text-muted" style="font-size:12px">最近同步: {{ last_sync.strftime('%m-%d %H:%M') if last_sync else '-' }}</span>
+    {% endif %}
+    <form method="POST" action="/ozon/online-products/sync" id="syncForm" onsubmit="return syncProducts()">
+      <select name="account_id" class="form-select form-select-sm d-inline-block" style="width:140px" required>
+        <option value="">选择店铺</option>
+        {% for a in accounts %}
+        <option value="{{ a.id }}">{{ a.name }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn btn-primary btn-sm ms-1">🔄 同步</button>
+    </form>
+  </div>
+</div>
+
+<!-- 筛选 -->
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <form method="GET" class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label mb-0" style="font-size:12px">店铺</label>
+        <select name="account_id" class="form-select form-select-sm" style="width:140px">
+          <option value="">全部</option>
+          {% for a in accounts %}
+          <option value="{{ a.id }}" {% if selected_account == a.id|string %}selected{% endif %}>{{ a.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto">
+        <label class="form-label mb-0" style="font-size:12px">状态</label>
+        <select name="status" class="form-select form-select-sm" style="width:120px">
+          <option value="">全部</option>
+          <option value="active" {% if selected_status == 'active' %}selected{% endif %}>active</option>
+          <option value="hidden" {% if selected_status == 'hidden' %}selected{% endif %}>hidden</option>
+          <option value="blocked" {% if selected_status == 'blocked' %}selected{% endif %}>blocked</option>
+          <option value="archived" {% if selected_status == 'archived' %}selected{% endif %}>archived</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <label class="form-label mb-0" style="font-size:12px">归档</label>
+        <select name="archived" class="form-select form-select-sm" style="width:110px">
+          <option value="">全部</option>
+          <option value="0" {% if selected_archived == '0' %}selected{% endif %}>未归档</option>
+          <option value="1" {% if selected_archived == '1' %}selected{% endif %}>已归档</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <label class="form-label mb-0" style="font-size:12px">搜索</label>
+        <input type="text" name="search" class="form-control form-control-sm" placeholder="offer_id / 标题 / OZON ID" style="width:200px" value="{{ search }}">
+      </div>
+      <div class="col-auto"><button type="submit" class="btn btn-outline-primary btn-sm">筛选</button></div>
+      <div class="col-auto ms-auto"><span class="text-muted" style="font-size:12px">共 {{ products|length }} 件</span></div>
+    </form>
+  </div>
+</div>
+
+<!-- 表格 -->
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0" style="font-size:12px">
+      <thead class="table-light">
+        <tr>
+          <th style="width:50px">图片</th>
+          <th>商品标题</th>
+          <th style="width:100px">offer_id</th>
+          <th style="width:90px">OZON ID</th>
+          <th style="width:70px">状态</th>
+          <th style="width:70px" class="text-end">价格 ₽</th>
+          <th style="width:50px" class="text-center">库存</th>
+          <th style="width:70px">同步</th>
+          <th style="width:140px">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in products %}
+        <tr>
+          <td>
+            {% if p.primary_image %}
+            <img src="{{ p.primary_image }}" style="width:40px;height:40px;object-fit:cover;border-radius:4px" onerror="this.style.display='none'">
+            {% else %}
+            <span class="text-muted">-</span>
+            {% endif %}
+          </td>
+          <td><a href="/ozon/online-products/{{ p.id }}">{{ p.name[:80] }}</a></td>
+          <td><code style="font-size:11px">{{ p.offer_id[:20] }}</code></td>
+          <td><code style="font-size:11px">{{ p.ozon_product_id }}</code></td>
+          <td>
+            {% if p.local_is_archived %}
+            <span class="badge bg-warning text-dark">本地归档</span>
+            {% elif p.status == 'active' %}
+            <span class="badge bg-success">active</span>
+            {% elif p.status == 'hidden' %}
+            <span class="badge bg-secondary">hidden</span>
+            {% elif p.status == 'blocked' %}
+            <span class="badge bg-danger">blocked</span>
+            {% else %}
+            <span class="badge bg-secondary">{{ p.status }}</span>
+            {% endif %}
+          </td>
+          <td class="text-end">{{ p.price or '-' }}</td>
+          <td class="text-center">{{ p.stock_present }}</td>
+          <td style="font-size:11px">{{ p.last_synced_at.strftime('%m-%d %H:%M') if p.last_synced_at else '-' }}</td>
+          <td>
+            <a href="/ozon/online-products/{{ p.id }}" class="btn btn-sm btn-outline-secondary" style="font-size:10px;padding:0 6px">详情</a>
+            {% if p.local_is_archived %}
+            <button class="btn btn-sm btn-outline-success" style="font-size:10px;padding:0 6px" onclick="unarchiveProduct({{ p.id }})">恢复</button>
+            {% else %}
+            <button class="btn btn-sm btn-outline-warning" style="font-size:10px;padding:0 6px" onclick="archiveProduct({{ p.id }})">归档</button>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="9" class="text-center text-muted py-4">
+          暂无在线商品。请先选择一个店铺，点击 🔄 同步 从 OZON 拉取。
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+function syncProducts() {
+  var form = document.getElementById('syncForm');
+  if (!form.account_id.value) { alert('请先选择店铺'); return false; }
+  var btn = form.querySelector('button');
+  btn.disabled = true; btn.textContent = '⏳ 同步中...';
+  fetch(form.action, {method:'POST', body:new FormData(form)})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      btn.disabled = false; btn.textContent = '🔄 同步';
+      if (d.ok) { alert('✅ ' + d.message); location.reload(); }
+      else alert('❌ ' + (d.error || '失败'));
+    });
+  return false;
+}
+
+function archiveProduct(id) {
+  if (!confirm('确定归档此商品？OZON 上该商品将被归档。')) return;
+  fetch('/ozon/online-products/' + id + '/archive', {method:'POST'})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (d.ok) { alert('✅ ' + d.message); location.reload(); }
+      else alert('❌ ' + (d.error || '失败'));
+    });
+}
+
+function unarchiveProduct(id) {
+  if (!confirm('确定恢复此商品？')) return;
+  fetch('/ozon/online-products/' + id + '/unarchive', {method:'POST'})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (d.ok) { alert('✅ ' + d.message); location.reload(); }
+      else alert('❌ ' + (d.error || '失败'));
+    });
+}
+</script>
+{% endblock %}

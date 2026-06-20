@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}拆包单 — 仓库记账系统{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0">📋 拆包单</h5>
+  <button class="btn btn-primary btn-sm" onclick="showAddForm()">+ 新建拆包单</button>
+</div>
+
+<!-- 新建拆包单 -->
+<div class="card mb-3 d-none" id="addOrderCard">
+  <div class="card-header py-2"><strong>新建拆包单</strong></div>
+  <div class="card-body py-2">
+    <form method="POST" action="/inventory/split-orders/add">
+      <div class="row g-2 align-items-end">
+        <div class="col-sm-3">
+          <label class="form-label" style="font-size:12px">拆包规则</label>
+          <select name="rule_id" class="form-select form-select-sm" required onchange="showRulePreview(this.value)">
+            <option value="">-- 选择规则 --</option>
+            {% for r in rules %}
+            <option value="{{ r.id }}">{{ r.name }} ({{ r.source_product.name }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-sm-2">
+          <label class="form-label" style="font-size:12px">拆包数量</label>
+          <input type="number" step="any" name="source_quantity" class="form-control form-control-sm" required min="0.01" value="1">
+        </div>
+        <div class="col-sm-2">
+          <label class="form-label" style="font-size:12px">备注</label>
+          <input type="text" name="remark" class="form-control form-control-sm">
+        </div>
+        <div class="col-sm-auto">
+          <button type="submit" class="btn btn-success btn-sm">创建</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" onclick="hideAddForm()">取消</button>
+        </div>
+      </div>
+      <div id="rulePreview" class="mt-2" style="font-size:12px"></div>
+    </form>
+  </div>
+</div>
+
+<!-- 拆包单列表 -->
+<div class="table-responsive">
+  <table class="table table-sm table-hover" style="font-size:12px">
+    <thead class="table-light"><tr><th>单号</th><th>日期</th><th>源产品</th><th>拆包数量</th><th>产出</th><th>总成本</th><th>状态</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for o in orders %}
+      <tr>
+        <td><strong>{{ o.split_no }}</strong></td>
+        <td>{{ o.split_date }}</td>
+        <td>{{ o.source_product.name }}</td>
+        <td>{{ o.source_quantity }}</td>
+        <td>
+          {% for item in o.items %}
+          <span class="badge bg-light text-dark me-1">{{ item.target_product.name }} +{{ item.quantity }}</span>
+          {% endfor %}
+        </td>
+        <td>{{ "%.2f"|format(o.source_total_cost) }}</td>
+        <td>
+          {% if o.status == 'draft' %}<span class="badge bg-warning text-dark">草稿</span>
+          {% elif o.status == 'confirmed' %}<span class="badge bg-success">已确认</span>
+          {% elif o.status == 'cancelled' %}<span class="badge bg-secondary">已撤销</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if o.status == 'draft' %}
+          <form method="POST" action="/inventory/split-orders/{{ o.id }}/confirm" style="display:inline" onsubmit="return confirm('确认此拆包单？库存将立即更新。')">
+            <button class="btn btn-sm btn-outline-success" style="font-size:10px">确认</button>
+          </form>
+          {% endif %}
+          {% if o.status == 'confirmed' %}
+          <form method="POST" action="/inventory/split-orders/{{ o.id }}/cancel" style="display:inline" onsubmit="return confirm('撤销此拆包单？库存将反向恢复。')">
+            <button class="btn btn-sm btn-outline-warning" style="font-size:10px">撤销</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="text-center text-muted py-3">暂无拆包单。<br><small>请先创建拆包规则，再创建拆包单。</small></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function showAddForm(){ document.getElementById('addOrderCard').classList.remove('d-none'); }
+function hideAddForm(){ document.getElementById('addOrderCard').classList.add('d-none'); }
+var rulesData = [];
+function showRulePreview(ruleId){
+  if(!ruleId){ document.getElementById('rulePreview').innerHTML=''; return; }
+  var r=rulesData.find(function(x){return x.id==ruleId});
+  if(!r) return;
+  var html='<div class="alert alert-info py-1">拆出：';
+  // Lazy: fetch via inline data
+  html += '<small>请参考规则详情</small></div>';
+  document.getElementById('rulePreview').innerHTML=html;
+}
+</script>
+{% endblock %}

@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+{% block title %}{{ product.name[:40] }} — 在线商品{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb" style="font-size:12px">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="/ozon/online-products">在线商品</a></li>
+    <li class="breadcrumb-item active">{{ product.offer_id }}</li>
+  </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h5 class="mb-1">{{ product.name }}</h5>
+    <div class="d-flex gap-2 align-items-center">
+      <span class="badge bg-{{ 'success' if product.status == 'active' else 'secondary' if product.status == 'hidden' else 'danger' if product.status == 'blocked' else 'secondary' }}">{{ product.status }}</span>
+      <code style="font-size:11px">offer_id: {{ product.offer_id }}</code>
+      <code style="font-size:11px">OZON ID: {{ product.ozon_product_id }}</code>
+      <span class="text-muted" style="font-size:11px">同步: {{ product.last_synced_at.strftime('%m-%d %H:%M') if product.last_synced_at else '-' }}</span>
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-primary btn-sm" onclick="syncDetail()">🔄 同步</button>
+    {% if product.local_is_archived %}
+    <button class="btn btn-outline-success btn-sm" onclick="unarchiveProduct()">↩ 恢复</button>
+    {% else %}
+    <button class="btn btn-outline-warning btn-sm" onclick="archiveProduct()">📁 归档</button>
+    {% endif %}
+    <button class="btn btn-warning btn-sm d-none" id="btnPush" onclick="pushUpdate()">🚀 推送至 OZON</button>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <!-- 基础信息 -->
+    <div class="card mb-3">
+      <div class="card-header py-2 d-flex justify-content-between">
+        <strong style="font-size:13px">📋 基础信息</strong>
+        <button class="btn btn-outline-primary btn-sm" style="font-size:11px" onclick="toggleEdit()" id="btnEdit">✏️ 编辑</button>
+      </div>
+      <div class="card-body py-2">
+        <table class="table table-sm mb-0" style="font-size:12px">
+          <tr><td style="width:120px" class="text-muted">商品标题</td><td><span class="editable-field" data-field="name">{{ product.name }}</span></td></tr>
+          <tr><td class="text-muted">offer_id</td><td><code>{{ product.offer_id }}</code></td></tr>
+          <tr><td class="text-muted">OZON ID</td><td><code>{{ product.ozon_product_id }}</code></td></tr>
+          <tr><td class="text-muted">SKU</td><td>{{ product.sku }}</td></tr>
+          <tr><td class="text-muted">类目</td><td>{{ product.category_name or product.category_id }}</td></tr>
+          {% if draft %}
+          <tr><td class="text-muted">关联草稿</td><td><a href="/ozon/listings/{{ draft.id }}">刊登草稿 #{{ draft.id }}</a></td></tr>
+          {% endif %}
+        </table>
+      </div>
+    </div>
+
+    <!-- 价格 & 库存 -->
+    <div class="row g-3 mb-3">
+      <div class="col-sm-6">
+        <div class="card">
+          <div class="card-header py-2"><strong style="font-size:13px">💰 价格 (RUB)</strong></div>
+          <div class="card-body py-2">
+            <table class="table table-sm mb-0" style="font-size:13px">
+              <tr><td class="text-muted">售价</td><td class="fw-bold"><span class="editable-field" data-field="price" data-type="number">{{ product.price }}</span> ₽</td></tr>
+              <tr><td class="text-muted">原价</td><td><span class="editable-field" data-field="old_price" data-type="number">{{ product.old_price or '-' }}</span> ₽</td></tr>
+              <tr><td class="text-muted">最低价</td><td><span class="editable-field" data-field="min_price" data-type="number">{{ product.min_price or '-' }}</span> ₽</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="col-sm-6">
+        <div class="card">
+          <div class="card-header py-2"><strong style="font-size:13px">📦 库存</strong></div>
+          <div class="card-body py-2">
+            <table class="table table-sm mb-0" style="font-size:13px">
+              <tr><td class="text-muted">可售</td><td class="fw-bold"><span class="editable-field" data-field="stock" data-type="number">{{ product.stock_present }}</span></td></tr>
+              <tr><td class="text-muted">预留</td><td>{{ product.stock_reserved }}</td></tr>
+              <tr><td class="text-muted">货币</td><td>{{ product.currency }}</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 类目属性 -->
+    {% if attributes %}
+    <div class="card mb-3">
+      <div class="card-header py-2"><strong style="font-size:13px">📐 类目属性</strong> <span class="badge bg-secondary">{{ attributes|length }}</span></div>
+      <div class="table-responsive">
+        <table class="table table-sm table-striped mb-0" style="font-size:12px">
+          <thead class="table-light"><tr><th style="width:30%">属性 ID</th><th>值</th></tr></thead>
+          <tbody>
+          {% for attr in attributes %}
+            <tr>
+              <td><code>{{ attr.id }}</code>{% if attr.complex_id %} <small class="text-muted">(complex: {{ attr.complex_id }})</small>{% endif %}</td>
+              <td>
+                {% for v in attr.values %}
+                <span class="badge bg-light text-dark me-1" style="font-size:11px">{{ v.value[:60] }}</span>
+                {% endfor %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- 图片 -->
+    <div class="card mb-3">
+      <div class="card-header py-2"><strong style="font-size:13px">🖼️ 商品图片 ({{ images|length }})</strong></div>
+      <div class="card-body py-2">
+        <div class="d-flex gap-2 flex-wrap">
+          {% for img in images %}
+          {% set img_url = img.link if img is mapping else img %}
+          <div class="text-center">
+            <img src="{{ img_url }}" style="width:80px;height:80px;object-fit:cover;border-radius:4px;border:1px solid #dee2e6" onerror="this.style.display='none'">
+          </div>
+          {% else %}
+          <span class="text-muted">暂无图片</span>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右栏 -->
+  <div class="col-lg-4">
+    {% if errors %}
+    <div class="card mb-3 border-danger">
+      <div class="card-header py-2 bg-danger bg-opacity-10"><strong style="font-size:13px">⚠️ 平台错误</strong></div>
+      <div class="card-body py-2">
+        <ul class="mb-0" style="font-size:11px">
+        {% for e in errors %}
+          <li>{{ e.get('message', e) }}</li>
+        {% endfor %}
+        </ul>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="card mb-3">
+      <div class="card-header py-2"><strong style="font-size:13px">📡 状态</strong></div>
+      <div class="card-body py-2" style="font-size:12px">
+        <div>OZON 状态: <b>{{ product.status }}</b></div>
+        <div>可见性: {{ product.visibility }}</div>
+        <div>归档: {{ '是' if product.local_is_archived else '否' }}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header py-2"><strong style="font-size:13px">📝 操作记录</strong></div>
+      <div class="list-group list-group-flush" style="font-size:11px;max-height:250px;overflow-y:auto">
+        {% for act in actions %}
+        <div class="list-group-item py-1">
+          <span class="badge bg-{{ 'success' if act.status == 'success' else 'danger' if act.status == 'failed' else 'info' }}">{{ act.action_type }}</span>
+          {% if act.status == 'failed' %}<span class="text-danger">{{ act.error_message[:60] }}</span>{% endif %}
+          <span class="text-muted float-end">{{ act.created_at.strftime('%m-%d %H:%M') }}</span>
+        </div>
+        {% else %}
+        <div class="list-group-item py-1 text-muted">暂无记录</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+var editing = false;
+var changes = {};
+
+function toggleEdit() {
+  editing = !editing;
+  var btn = document.getElementById('btnEdit');
+  if (editing) {
+    btn.textContent = '💾 完成编辑';
+    btn.classList.remove('btn-outline-primary');
+    btn.classList.add('btn-primary');
+    document.getElementById('btnPush').classList.remove('d-none');
+  } else {
+    btn.textContent = '✏️ 编辑';
+    btn.classList.remove('btn-primary');
+    btn.classList.add('btn-outline-primary');
+    if (Object.keys(changes).length === 0) {
+      document.getElementById('btnPush').classList.add('d-none');
+    }
+  }
+  document.querySelectorAll('.editable-field').forEach(function(el) {
+    if (editing) {
+      el.style.border = '1px dashed #fd7e14';
+      el.style.padding = '2px 4px';
+      el.style.borderRadius = '3px';
+      el.style.cursor = 'pointer';
+      el.title = '点击编辑';
+    } else {
+      el.style.border = '';
+      el.style.padding = '';
+      el.style.cursor = '';
+      el.title = '';
+    }
+  });
+}
+
+document.addEventListener('click', function(e) {
+  if (!editing || !e.target.classList.contains('editable-field')) return;
+  var el = e.target;
+  var field = el.dataset.field;
+  var current = el.innerText.trim();
+  var newVal = prompt(field + ':', current);
+  if (newVal !== null && newVal !== current) {
+    el.innerText = newVal;
+    el.style.background = '#fff3cd';
+    changes[field] = newVal;
+  }
+});
+
+function pushUpdate() {
+  if (Object.keys(changes).length === 0) { alert('没有修改'); return; }
+  if (!confirm('确认将以下修改推送至 OZON？\n\n' +
+    Object.entries(changes).map(function(e){return e[0] + ': ' + e[1]}).join('\n'))) return;
+
+  fetch('/ozon/online-products/{{ product.id }}/update', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(changes)
+  })
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (d.ok) { alert('✅ ' + d.message); location.reload(); }
+      else alert('❌ ' + (d.error || '失败'));
+    });
+}
+
+function syncDetail() {
+  fetch('/ozon/online-products/{{ product.id }}/sync-detail', {method:'POST'})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (d.ok) { alert('✅ ' + d.message); location.reload(); }
+      else alert('❌ ' + (d.error || '失败'));
+    });
+}
+
+function archiveProduct() {
+  if (!confirm('确定归档？OZON 上该商品将被归档。')) return;
+  fetch('/ozon/online-products/{{ product.id }}/archive', {method:'POST'})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (d.ok) { alert('✅ ' + d.message); location.reload(); }
+      else alert('❌ ' + (d.error || '失败'));
+    });
+}
+
+function unarchiveProduct() {
+  if (!confirm('确定恢复？')) return;
+  fetch('/ozon/online-products/{{ product.id }}/unarchive', {method:'POST'})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (d.ok) { alert('✅ ' + d.message); location.reload(); }
+      else alert('❌ ' + (d.error || '失败'));
+    });
+}
+</script>
+{% endblock %}

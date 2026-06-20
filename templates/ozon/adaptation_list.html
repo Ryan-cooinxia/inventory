@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}适配任务 — 仓库记账系统{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2 class="mb-0">🔄 商品适配任务</h2>
+  <a href="{{ url_for('ozon.sources') }}" class="btn btn-primary">📥 从采集列表新建适配</a>
+</div>
+
+{% if groups %}
+<div class="mb-2 d-flex gap-2">
+  <form method="POST" action="{{ url_for('ozon.adaptation_batch_delete') }}" id="batchDeleteForm" onsubmit="return confirmBatchDelete()">
+    <input type="hidden" name="ids" id="batchIds">
+    <button type="submit" class="btn btn-sm btn-outline-danger" id="btnBatchDelete" disabled>🗑️ 批量删除</button>
+  </form>
+  <span class="text-muted" style="font-size:11px;line-height:31px" id="batchCount"></span>
+</div>
+<div class="table-responsive">
+<table class="table table-hover align-middle">
+  <thead class="table-light">
+    <tr>
+      <th style="width:36px"><input type="checkbox" id="selectAll" onchange="toggleAll(this)" title="全选"></th>
+      <th>任务名</th>
+      <th>适配关系</th>
+      <th>状态</th>
+      <th>关联源商品</th>
+      <th>更新时间</th>
+      <th>操作</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for g in groups %}
+    <tr>
+      <td class="text-center"><input type="checkbox" class="row-checkbox" value="{{ g.id }}" onchange="updateBatch()"></td>
+      <td><strong>{{ g.name }}</strong></td>
+      <td>
+        {% if g.relation_type == 'one_to_one' %}<span class="badge bg-primary">一对一</span>
+        {% elif g.relation_type == 'one_to_many' %}<span class="badge bg-info">一对多</span>
+        {% else %}<span class="badge bg-secondary">{{ g.relation_type }}</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if g.status == 'draft' %}<span class="badge bg-secondary">草稿</span>
+        {% elif g.status == 'adapting' %}<span class="badge bg-warning text-dark">适配中</span>
+        {% elif g.status == 'reviewed' %}<span class="badge bg-info">已审核</span>
+        {% elif g.status == 'converted' %}<span class="badge bg-success">已转换</span>
+        {% else %}<span class="badge bg-secondary">{{ g.status }}</span>
+        {% endif %}
+      </td>
+      <td style="font-size:13px">
+        {% for item in g.items %}
+          <span class="badge bg-light text-dark me-1">{{ item.source.platform }}</span>
+          {{ item.source.title_cn[:30] }}{% if item.source.title_cn|length > 30 %}...{% endif %}
+          {% if not loop.last %}<br>{% endif %}
+        {% endfor %}
+      </td>
+      <td style="font-size:12px;color:#6c757d">{{ g.updated_at.strftime('%Y-%m-%d %H:%M') if g.updated_at else '' }}</td>
+      <td>
+        {% set first_item = g.items|first %}
+        {% if first_item %}
+        <a href="{{ url_for('ozon.adaptation_workspace', source_id=first_item.source.id) }}" class="btn btn-sm btn-outline-primary">进入适配 ▸</a>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="text-center py-5">
+  <div style="font-size:48px">🔄</div>
+  <h5 class="text-muted mt-3">暂无适配任务</h5>
+  <p class="text-muted">从采集列表选择一个商品，点击"进入适配"开始</p>
+  <a href="{{ url_for('ozon.sources') }}" class="btn btn-primary">📥 进入采集列表</a>
+</div>
+{% endif %}
+
+<script>
+function toggleAll(el) { document.querySelectorAll('.row-checkbox').forEach(function(cb) { cb.checked = el.checked; }); updateBatch(); }
+function updateBatch() {
+  var ids = []; document.querySelectorAll('.row-checkbox:checked').forEach(function(cb) { ids.push(cb.value); });
+  document.getElementById('batchIds').value = ids.join(','); document.getElementById('btnBatchDelete').disabled = ids.length === 0;
+  document.getElementById('batchCount').textContent = ids.length ? '已选 ' + ids.length + ' 条' : '';
+}
+function confirmBatchDelete() { var ids = document.getElementById('batchIds').value; if (!ids) { alert('请先选择记录'); return false; } return confirm('确认删除 ' + ids.split(',').length + ' 条记录？'); }
+</script>
+{% endblock %}

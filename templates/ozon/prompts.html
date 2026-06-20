@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}提示词库 — 仓库记账系统{% endblock %}
+{% block content %}
+<ul class="nav nav-tabs mb-3">
+  <li class="nav-item"><a class="nav-link active" href="#">提示词模板</a></li>
+  <li class="nav-item"><a class="nav-link" href="#">规则文档</a></li>
+</ul>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="d-flex gap-2 align-items-center">
+    <h2 class="mb-0">提示词模板</h2>
+    <select name="category" class="form-select form-select-sm" style="width:160px" onchange="location.search='category='+this.value">
+      <option value="">全部品类</option>
+      <option value="common" {% if request.args.get('category') == 'common' %}selected{% endif %}>通用</option>
+      <option value="车载工具" {% if request.args.get('category') == '车载工具' %}selected{% endif %}>车载工具</option>
+      <option value="消费电子" {% if request.args.get('category') == '消费电子' %}selected{% endif %}>消费电子</option>
+      <option value="配件" {% if request.args.get('category') == '配件' %}selected{% endif %}>配件</option>
+    </select>
+  </div>
+  <div class="d-flex gap-2">
+    {% if prompts %}
+    <form method="POST" action="{{ url_for('ozon.prompt_batch_delete') }}" id="batchDeleteForm" onsubmit="return confirmBatchDelete()" class="d-flex gap-2">
+      <input type="hidden" name="ids" id="batchIds">
+      <button type="submit" class="btn btn-sm btn-outline-danger" id="btnBatchDelete" disabled>🗑️ 批量删除</button>
+    </form>
+    <span class="text-muted" style="font-size:11px;line-height:31px" id="batchCount"></span>
+    {% endif %}
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#promptModal">+ 新增模板</button>
+  </div>
+</div>
+
+<div class="row">
+  {% for p in prompts %}
+  <div class="col-lg-6 mb-3">
+    <div class="card h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-bold">
+          <input type="checkbox" class="row-checkbox me-1" value="{{ p.id }}" onchange="updateBatch()" style="position:relative;top:-1px">
+          {% if p.prompt_type == 'title' %}🇷🇺{% elif p.prompt_type == 'bullets' %}📌{% elif p.prompt_type == 'description' %}📄{% elif p.prompt_type == 'image' %}🖼{% endif %}
+          {{ p.name }}
+          {% if p.prompt_type == 'title' %}🇷🇺{% elif p.prompt_type == 'bullets' %}📌{% elif p.prompt_type == 'description' %}📄{% elif p.prompt_type == 'image' %}🖼{% endif %}
+          {{ p.name }}
+        </span>
+        <span class="badge
+          {% if p.prompt_type == 'title' %}bg-primary
+          {% elif p.prompt_type == 'bullets' %}bg-success
+          {% elif p.prompt_type == 'description' %}bg-info
+          {% else %}bg-warning text-dark{% endif %}">
+          {% if p.prompt_type == 'title' %}标题
+          {% elif p.prompt_type == 'bullets' %}卖点
+          {% elif p.prompt_type == 'description' %}描述
+          {% else %}图片{% endif %}
+        </span>
+      </div>
+      <div class="card-body">
+        <div class="mb-2"><span class="badge bg-light text-dark border">{{ p.category }}</span></div>
+        <div class="bg-light rounded p-2 small mb-2" style="max-height:120px;overflow:auto">
+          <code>{{ p.content[:300] }}{% if p.content|length > 300 %}...{% endif %}</code>
+        </div>
+        {% if p.variables %}
+        <div class="mb-2">
+          <small class="text-muted">变量：{{ p.variables }}</small>
+        </div>
+        {% endif %}
+        <div class="d-flex gap-1">
+          <form method="POST" action="{{ url_for('ozon.prompt_delete', prompt_id=p.id) }}" style="display:inline" onsubmit="return confirm('确定删除此模板？')">
+            <button class="btn btn-sm btn-outline-danger">删除</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+  {% if not prompts %}
+  <div class="col-12 text-center text-muted py-4">
+    <p class="fs-4">📋</p>
+    <p>暂无自定义模板，使用系统内置默认规则</p>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Add Modal -->
+<div class="modal fade" id="promptModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <form method="POST" action="{{ url_for('ozon.prompts') }}">
+        <div class="modal-header">
+          <h5 class="modal-title">新增提示词模板</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="row mb-3">
+            <div class="col-md-6"><label class="form-label fw-bold">模板名称</label><input type="text" name="name" class="form-control" placeholder="如：车载工具类标题" required></div>
+            <div class="col-md-3"><label class="form-label fw-bold">类型</label><select name="prompt_type" class="form-select"><option value="title">标题</option><option value="bullets">卖点</option><option value="description">描述</option><option value="image">图片</option></select></div>
+            <div class="col-md-3"><label class="form-label fw-bold">适用品类</label><select name="category" class="form-select"><option value="common">通用</option><option value="车载工具">车载工具</option><option value="消费电子">消费电子</option><option value="配件">配件</option><option value="家居">家居</option></select></div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold">提示词内容</label>
+            <textarea name="content" class="form-control" rows="8" style="font-family:monospace;font-size:13px" placeholder="输入提示词，使用 {变量名} 作为占位符..." required></textarea>
+            <small class="text-muted">可用变量：{source_title} {source_description} {attributes} {category} {style} {product_name} {color} {package_content}</small>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-primary">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+function toggleAll(el) { document.querySelectorAll('.row-checkbox').forEach(function(cb) { cb.checked = el.checked; }); updateBatch(); }
+function updateBatch() {
+  var ids = []; document.querySelectorAll('.row-checkbox:checked').forEach(function(cb) { ids.push(cb.value); });
+  document.getElementById('batchIds').value = ids.join(','); document.getElementById('btnBatchDelete').disabled = ids.length === 0;
+  document.getElementById('batchCount').textContent = ids.length ? '已选 ' + ids.length + ' 条' : '';
+}
+function confirmBatchDelete() { var ids = document.getElementById('batchIds').value; if (!ids) { alert('请先选择记录'); return false; } return confirm('确认删除 ' + ids.split(',').length + ' 条记录？'); }
+</script>
+{% endblock %}

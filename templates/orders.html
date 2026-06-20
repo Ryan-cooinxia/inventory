@@ -4,29 +4,69 @@
 <h2>客户订单列表</h2>
 <a href="/orders/add" class="btn btn-primary mb-3">新增订单</a>
 
+<!-- 日期 & 客户筛选 -->
+<div class="card mb-3">
+    <div class="card-body">
+        <form method="GET" action="/orders" class="row g-2 align-items-end">
+            <div class="col-auto">
+                <label class="form-label fw-bold">对账时段</label>
+                <div class="d-flex align-items-center gap-2">
+                    <input type="date" name="reconcile_start" class="form-control" value="{{ reconcile_start }}" style="width:140px">
+                    <span>至</span>
+                    <input type="date" name="reconcile_end" class="form-control" value="{{ reconcile_end }}" style="width:140px">
+                </div>
+            </div>
+            <div class="col-auto">
+                <label class="form-label fw-bold">客户</label>
+                <select name="customer_id" class="form-select" style="width:180px">
+                    <option value="">全部客户</option>
+                    {% for c in customers %}
+                    <option value="{{ c.id }}" {% if selected_customer|string == c.id|string %}selected{% endif %}>{{ c.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-outline-primary">筛选</button>
+                <a href="/orders" class="btn btn-outline-secondary">重置</a>
+            </div>
+        </form>
+        <small class="text-muted mt-2 d-block">
+            📅 对账时段：<strong>{{ reconcile_start }}</strong> 至 <strong>{{ reconcile_end }}</strong> — 期初 = 时段开始前未发货量，本时段发货 = 时段内发货量，期末 = 时段结束后仍欠量
+        </small>
+    </div>
+</div>
+
 <!-- 统计卡片 -->
 <div class="row mb-3">
-    <div class="col-md-4">
+    <div class="col-md-3">
         <div class="card bg-light">
             <div class="card-body text-center">
                 <h6 class="card-title">订单总金额</h6>
-                <p class="card-text fs-5 fw-bold">¥{{ "%.2f"|format(total_order_value) }}</p>
+                <p class="card-text fs-5">¥{{ "%.2f"|format(total_order_value) }}</p>
             </div>
         </div>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-3">
         <div class="card bg-light">
             <div class="card-body text-center">
-                <h6 class="card-title">已发货总金额</h6>
-                <p class="card-text fs-5 fw-bold">¥{{ "%.2f"|format(total_shipped_value) }}</p>
+                <h6 class="card-title">累计已发货总价值</h6>
+                <p class="card-text fs-5">¥{{ "%.2f"|format(total_shipped_value) }}</p>
             </div>
         </div>
     </div>
-    <div class="col-md-4">
-        <div class="card bg-light">
+    <div class="col-md-3">
+        <div class="card bg-success text-white">
             <div class="card-body text-center">
-                <h6 class="card-title">未发货总金额</h6>
-                <p class="card-text fs-5 fw-bold">¥{{ "%.2f"|format(total_unshipped_value) }}</p>
+                <h6 class="card-title">本时段发货</h6>
+                <p class="card-text fs-5">¥{{ "%.2f"|format(total_shipped_in_period_value) }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-warning">
+            <div class="card-body text-center">
+                <h6 class="card-title">未发货总价值</h6>
+                <p class="card-text fs-5">¥{{ "%.2f"|format(total_unshipped_value) }}</p>
             </div>
         </div>
     </div>
@@ -44,10 +84,11 @@
                 <th>单价</th>
                 <th>数量</th>
                 <th>小计</th>
-                <th>已发货数量</th>
-                <th>剩余数量</th>
-                <th>已发货金额</th>
-                <th>剩余金额</th>
+                <!-- 对账列 -->
+                <th>期初剩余</th>
+                <th>本时段发货</th>
+                <th>累计已发</th>
+                <th>期末剩余</th>
                 <th>状态</th>
                 <th>发票</th>
                 <th>操作</th>
@@ -65,12 +106,29 @@
             <td class="text-end">¥{{ "%.2f"|format(row.unit_price) }}</td>
             <td class="text-center">{{ row.qty_ordered }}</td>
             <td class="text-end">¥{{ "%.2f"|format(row.subtotal) }}</td>
-            {% if row.is_first_row %}
-            <td rowspan="{{ row.rowspan_count }}" class="text-center">{{ row.shipped_qty_total }}</td>
-            <td rowspan="{{ row.rowspan_count }}" class="text-center">{{ row.remaining_qty_total }}</td>
-            <td rowspan="{{ row.rowspan_count }}" class="text-end">¥{{ "%.2f"|format(row.shipped_amount) }}</td>
-            <td rowspan="{{ row.rowspan_count }}" class="text-end">¥{{ "%.2f"|format(row.remaining_amount) }}</td>
-            {% endif %}
+            <!-- 对账数据 -->
+            <td>
+                {% if row.pending_before > 0 %}
+                <span class="text-warning fw-bold">{{ row.pending_before }}</span>
+                {% else %}
+                <span class="text-muted">0</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if row.shipped_in_period > 0 %}
+                <span class="text-success fw-bold">{{ row.shipped_in_period }}</span>
+                {% else %}
+                <span class="text-muted">0</span>
+                {% endif %}
+            </td>
+            <td>{{ row.shipped_total }}</td>
+            <td>
+                {% if row.pending_after > 0 %}
+                <span class="text-danger fw-bold">{{ row.pending_after }}</span>
+                {% else %}
+                <span class="text-muted">0</span>
+                {% endif %}
+            </td>
             <td>
                 {% if row.status_text == '未发货' %}
                 <span class="badge bg-warning text-dark">未发货</span>
@@ -95,6 +153,11 @@
                 {% endif %}
                 {% if row.status_text != '已完成' %}
                 <a href="/orders/ship/{{ row.order_id }}" class="btn btn-sm btn-outline-success">发货</a>
+                {% endif %}
+                {% if row.needs_fix %}
+                <form method="POST" action="/orders/fix/{{ row.order_id }}" style="display:inline" onsubmit="return confirm('将订货量修正为实际发货量（不可撤销）：\n\n- 每行产品的订货量将被缩减到实际发货量\n- 订单总额同步更新\n\n确定？')">
+                    <button class="btn btn-sm btn-outline-warning">修正订货量</button>
+                </form>
                 {% endif %}
             </td>
             {% endif %}
