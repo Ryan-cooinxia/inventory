@@ -3135,8 +3135,7 @@ def api_adaptation_recommend_category(group_id):
         # 1) 先查用户收藏的常用 type
         favorites = list(OzonFavoriteCategoryType
                          .select()
-                         .where((OzonFavoriteCategoryType.user == current_user) &
-                                (OzonFavoriteCategoryType.is_active == True))
+                         .where(OzonFavoriteCategoryType.user == current_user)
                          .order_by(OzonFavoriteCategoryType.created_at.desc())
                          .limit(20))
 
@@ -3892,61 +3891,108 @@ def api_sync_category_tree():
 @ozon_bp.route('/api/category/translate', methods=['POST'])
 @login_required
 def api_translate_categories():
-    """对已有类目和属性进行翻译（仅翻译未翻译或已修改的）"""
+    """对已有类目、类型和属性进行翻译（每次最多处理限定数量，自动循环直到完成）"""
+    import re as _re
+    _has_cyrillic = _re.compile('[а-яА-ЯёЁ]')
+
+    def needs_translation(cn_val, ru_val):
+        """判断是否需要翻译：无中文名/中文名等于俄文名/中文名仍含俄语字符"""
+        if not cn_val:
+            return True
+        if cn_val == ru_val:
+            return True
+        if _has_cyrillic.search(cn_val):
+            return True
+        return False
+
     errors = []
+    limit = int(request.args.get('limit', 200))
 
-    # 翻译类目名（全部取，不分页）
-    cats = list(OzonCategory
-                .select()
-                .where(OzonCategory.user == current_user))
-
+    # ── 收集所有待翻译项 ──
+    cats = list(OzonCategory.select().where(OzonCategory.user == current_user))
     total_cats = len(cats)
-    need_trans_cats = [c for c in cats if not c.name_cn or c.name_cn == c.name]
-    cat_names = list(dict.fromkeys(c.name for c in need_trans_cats if c.name))
+    need_trans_cats = [c for c in cats if needs_translation(c.name_cn, c.name)]
+
+    # ── 翻译商品类型名 ──
+    types = list(OzonCategoryType
+                 .select()
+                 .where(OzonCategoryType.user == current_user))
+    total_types = len(types)
+    need_trans_types = [t for t in types if needs_translation(t.type_name_cn, t.type_name)]
+
+    # ── 翻译属性名 ──
+    attrs = list(OzonCategoryAttribute
+                 .select()
+                 .where(OzonCategoryAttribute.user == current_user))
+    need_trans_attrs = [a for a in attrs if needs_translation(a.name_cn, a.name)]
+
+    # 合并所有待翻译名称（去重，限制数量）
+    all_names = []
+    name_sources = {}  # name -> ['cat', 'type', 'attr']
+    for c in need_trans_cats:
+        if c.name and c.name not in name_sources:
+            all_names.append(c.name)
+            name_sources[c.name] = 'cat'
+    for t in need_trans_types:
+        if t.type_name and t.type_name not in name_sources:
+            all_names.append(t.type_name)
+            name_sources[t.type_name] = 'type'
+    for a in need_trans_attrs:
+        if a.name and a.name not in name_sources:
+            all_names.append(a.name)
+            name_sources[a.name] = 'attr'
+
+    # 限制每次翻译数量
+    batch_names = all_names[:limit]
+    remaining = len(all_names) - len(batch_names)
+
     cat_translated = 0
-    if cat_names:
-        result = _batch_translate(cat_names, current_user)
+    type_translated = 0
+    attr_translated = 0
+
+    if batch_names:
+        result = _batch_translate(batch_names, current_user)
         errors.extend(result.pop('_errors', []))
+
+        # 应用到类目
         for cat in need_trans_cats:
-            if cat.name in result:
+            if cat.name in result and result[cat.name] != cat.name:
                 cat.name_cn = result[cat.name]
                 cat.save()
                 cat_translated += 1
 
-    # 翻译属性名
-    attrs = list(OzonCategoryAttribute
-                 .select()
-                 .where(OzonCategoryAttribute.user == current_user)
-                 .limit(500))
+        # 应用到类型
+        for type_name_ru, cn in result.items():
+            if cn and cn != type_name_ru:
+                count = (OzonCategoryType
+                         .update(type_name_cn=cn)
+                         .where((OzonCategoryType.user == current_user) &
+                                (OzonCategoryType.type_name == type_name_ru))
+                         .execute())
+                type_translated += count
 
-    need_trans_attrs = [a for a in attrs if not a.name_cn or a.name_cn == a.name]
-    attr_names = list(dict.fromkeys(a.name for a in need_trans_attrs if a.name))
-    attr_translated = 0
-    if attr_names:
-        result = _batch_translate(attr_names, current_user)
-        errors.extend(result.pop('_errors', []))
+        # 应用到属性
         for attr_name, cn in result.items():
             if cn and cn != attr_name and not attr_name.startswith('_'):
                 count = (OzonCategoryAttribute
                          .update(name_cn=cn)
                          .where((OzonCategoryAttribute.user == current_user) &
-                                (OzonCategoryAttribute.name == attr_name) &
-                                ((OzonCategoryAttribute.name_cn.is_null()) |
-                                 (OzonCategoryAttribute.name_cn == '') |
-                                 (OzonCategoryAttribute.name_cn == OzonCategoryAttribute.name)))
+                                (OzonCategoryAttribute.name == attr_name))
                          .execute())
                 attr_translated += count
 
-    msg = f'翻译完成：{cat_translated}/{len(need_trans_cats)} 个类目（共{total_cats}），{attr_translated} 个属性'
-    if errors:
-        msg += '\n错误：' + '; '.join(errors[:3])
+    msg = f'本次翻译：类目 {cat_translated} 个，类型 {type_translated} 个，属性 {attr_translated} 个'
+    if remaining > 0:
+        msg += f'。还剩 {remaining} 个未翻译，请再次点击继续。'
+
     return jsonify({
         'ok': True,
         'message': msg,
         'cats': cat_translated,
-        'need_trans': len(need_trans_cats),
-        'total_cats': total_cats,
+        'types': type_translated,
         'attrs': attr_translated,
+        'remaining': remaining,
+        'need_trans': {'cats': len(need_trans_cats), 'types': len(need_trans_types), 'attrs': len(need_trans_attrs)},
         'errors': errors[:5] if errors else [],
     })
 
@@ -4205,12 +4251,12 @@ def api_category_children():
                       .exists())
         items.append({
             'id': c.ozon_category_id, 'name': c.name, 'name_cn': c.name_cn,
-            'has_children': real_child,
+            'has_children': real_child or type_cnt > 0,
             'type_count': type_cnt,
         })
 
-        # 若无子类目但有 type，在 items 中追加 type 节点供模态框选择
-        if not real_child and type_cnt > 0:
+        # type 作为子节点始终追加到类目树中
+        if type_cnt > 0:
             type_records = (OzonCategoryType
                            .select()
                            .where((OzonCategoryType.user == current_user) &
@@ -4870,6 +4916,9 @@ def api_sync_current_type_full(dcid):
         })
 
     except Exception as e:
+        import traceback
+        print(f'[SYNC-TYPE-ERROR] type_id={type_id} dcid={dcid}: {e}')
+        traceback.print_exc()
         return jsonify({'ok': False, 'error': str(e)[:300]}), 500
 
 
@@ -5015,6 +5064,118 @@ def api_sync_used_types():
         job.message = str(e)[:500]
         job.finished_at = datetime.datetime.now()
         job.save()
+        return jsonify({'ok': False, 'error': str(e)[:300]}), 500
+
+
+@ozon_bp.route('/api/category/sync-all-type-attributes', methods=['POST'])
+@login_required
+def api_sync_all_type_attributes():
+    """批量同步全部 type 的属性 Schema（偏移量分页，每次 5 个）"""
+    import time as time_mod
+    batch_size = int(request.args.get('batch', 20))
+    offset = int(request.args.get('offset', 0))
+
+    account = (OzonAccount
+               .select()
+               .where((OzonAccount.user == current_user) &
+                      (OzonAccount.is_active == True))
+               .first())
+    if not account:
+        return jsonify({'ok': False, 'error': '未找到已启用的 OZON 店铺'}), 400
+
+    # 按 type_id 排序，用 offset 分页（不依赖去重检测）
+    all_types = list(OzonCategoryType
+                     .select()
+                     .where(OzonCategoryType.user == current_user)
+                     .order_by(OzonCategoryType.type_id))
+
+    total = len(all_types)
+    batch = all_types[offset:offset + batch_size]
+    next_offset = offset + len(batch)
+    remaining = total - next_offset
+
+    if not batch:
+        return jsonify({'ok': True, 'message': '全部 type 属性已同步',
+                        'synced': 0, 'remaining': 0, 'next_offset': next_offset, 'total': total})
+
+    try:
+        from services.ozon_api import create_client
+        client = create_client(account)
+        synced_count = 0
+        attr_total = 0
+        skipped = 0
+        errors = []
+
+        for t in batch:
+            try:
+                # 跳过已有属性的 type
+                existing = (OzonCategoryAttribute
+                            .select()
+                            .where((OzonCategoryAttribute.user == current_user) &
+                                   (OzonCategoryAttribute.type_id == t.type_id))
+                            .count())
+                if existing > 0:
+                    skipped += 1
+                    continue
+
+                attrs = client.get_category_attributes(
+                    t.description_category_id, type_id=t.type_id, attribute_type='ALL')
+
+                if not attrs:
+                    # 无属性也标记，避免下次重复调 API
+                    OzonCategoryAttribute.get_or_create(
+                        user=current_user, account=account,
+                        ozon_category_id=t.description_category_id,
+                        type_id=t.type_id, attribute_id='_no_attrs',
+                        defaults={'name': '(无属性)', 'is_required': False,
+                                  'is_dictionary': False, 'is_collection': False,
+                                  'data_type': '', 'description': ''})
+                    synced_count += 1
+                    time_mod.sleep(0.1)
+                    continue
+
+                for attr in attrs:
+                    attr_id = str(attr.get('attribute_id', ''))
+                    if not attr_id:
+                        continue
+                    dict_id = attr.get('dictionary_id')
+                    OzonCategoryAttribute.get_or_create(
+                        user=current_user, account=account,
+                        ozon_category_id=t.description_category_id,
+                        type_id=t.type_id, attribute_id=attr_id,
+                        defaults={
+                            'name': attr.get('name', ''),
+                            'is_required': bool(attr.get('is_required')),
+                            'is_dictionary': bool(dict_id),
+                            'is_collection': bool(attr.get('is_collection')),
+                            'data_type': attr.get('data_type', ''),
+                            'description': attr.get('description', ''),
+                            'dictionary_id': int(dict_id) if dict_id else None,
+                            'group_name': attr.get('group_name', ''),
+                            'max_value_count': attr.get('max_value_count', 0),
+                        })
+                    attr_total += 1
+                synced_count += 1
+                time_mod.sleep(0.1)
+            except Exception as e:
+                err_str = str(e)
+                if 'UNIQUE constraint' in err_str:
+                    skipped += 1  # 已存在，静默跳过
+                else:
+                    errors.append(f'{t.type_name_cn or t.type_name}: {err_str[:100]}')
+
+        msg = f'第{offset//batch_size+1}批：同步 {synced_count} 个，跳过 {skipped} 个，属性 {attr_total} 个'
+        if remaining > 0:
+            msg += f'。剩余 {remaining} 个。'
+
+        return jsonify({
+            'ok': True, 'message': msg,
+            'synced': synced_count, 'attrs': attr_total, 'skipped': skipped,
+            'remaining': remaining, 'next_offset': next_offset, 'total': total,
+            'errors': errors[:5],
+        })
+
+    except Exception as e:
         return jsonify({'ok': False, 'error': str(e)[:300]}), 500
 
 

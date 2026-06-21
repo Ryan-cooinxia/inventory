@@ -886,7 +886,8 @@ function recommendCategory() {
             '<strong>' + (r.type_name || 'Type ' + r.type_id) + '</strong>' +
             '<span class="badge" style="font-size:8px;background:' + (r.source === 'favorite' ? '#ffc107' : '#e9ecef') + '">' + badge + ' 分' + r.score + '</span>' +
           '</div>' +
-          '<div class="text-muted" style="font-size:9px">' + (r.path || ('dcid=' + r.description_category_id)) + '</div>' +
+          (r.type_name_ru && r.type_name_ru !== r.type_name ? '<div style="font-size:9px;color:#6c757d">🇷🇺 ' + r.type_name_ru + '</div>' : '') +
+          '<div class="text-muted" style="font-size:9px">📂 ' + (r.path || ('dcid=' + r.description_category_id)) + '</div>' +
           '<div class="text-muted" style="font-size:9px">' + r.reason + '</div>' +
         '</div>';
       });

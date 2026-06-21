@@ -36,6 +36,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     <button class="btn btn-primary btn-sm" id="btnSyncTypeFull" onclick="syncCurrentTypeFull()" disabled title="请先选择 type_id">📥 当前 type 一键同步</button>
     <button class="btn btn-outline-primary btn-sm" id="btnBatchSync" onclick="batchSyncCurrentCategory()" disabled title="请先选择类目">📦 批量同步当前类目</button>
     <button class="btn btn-outline-info btn-sm" id="btnSyncUsed" onclick="syncUsedTypes()" title="同步草稿/在线商品/收藏的常用 type">⭐ 同步我的常用 type</button>
+    <button class="btn btn-warning btn-sm" id="btnSyncAllAttrs" onclick="syncAllTypeAttributes()" title="批量拉取全部 type 的属性 Schema">🔥 同步全部属性</button>
   </div>
 </div>
 
@@ -113,6 +114,16 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 {% block scripts %}
 <script>
 var selCatId = null;
+
+// 防止刷新中断同步/翻译
+var _syncInProgress = false;
+window.addEventListener('beforeunload', function(e) {
+  if (_syncInProgress) {
+    e.preventDefault();
+    e.returnValue = '同步/翻译正在进行中，刷新会中断操作。确定离开？';
+    return e.returnValue;
+  }
+});
 var selCatPath = '';
 var selTypeId = null;
 var selTypeName = '';
@@ -134,22 +145,28 @@ function loadTreeRoot() {
 
 function renderTreeNode(it, depth) {
   var hasKids = it.has_children;
+  var isType = it.is_type || false;
   var name = it.name_cn || it.name;
   var indent = '';
   for (var i = 0; i < depth; i++) indent += '<span class="tree-indent"></span>';
 
   var typeBadge = '';
-  if (it.type_count && it.type_count > 0) {
+  if (!isType && it.type_count && it.type_count > 0) {
     typeBadge = ' <span class="badge bg-warning text-dark" style="font-size:9px">' + it.type_count + '</span>';
   }
 
-  return '<div class="tree-node" data-id="' + it.id + '" data-depth="' + depth + '" data-has-kids="' + (hasKids ? '1' : '0') + '">'
+  var icon = isType ? '📦' : (hasKids ? '📁' : '📄');
+  var nameStyle = isType ? 'color:#0d6efd;font-size:12px' : '';
+  var dcid = it.description_category_id || '';
+
+  return '<div class="tree-node" data-id="' + it.id + '" data-depth="' + depth + '" data-has-kids="' + (hasKids ? '1' : '0') + '" data-is-type="' + (isType ? '1' : '0') + '" data-dcid="' + dcid + '">'
     + indent
-    + (hasKids ? '<span class="tree-toggle">▶</span>' : '<span class="tree-spacer"></span>')
-    + (hasKids ? '<span class="tree-icon">📁</span>' : '<span class="tree-icon">📄</span>')
-    + '<span class="tree-label">' + name + '</span>'
+    + (hasKids && !isType ? '<span class="tree-toggle">▶</span>' : '<span class="tree-spacer"></span>')
+    + '<span class="tree-icon">' + icon + '</span>'
+    + '<span class="tree-label" style="' + nameStyle + '">' + name + '</span>'
+    + (isType ? ' <code style="font-size:9px;color:#999">' + it.id + '</code>' : '')
     + typeBadge
-    + '<div class="tree-children" style="display:none"></div>'
+    + (!isType ? '<div class="tree-children" style="display:none"></div>' : '')
     + '</div>';
 }
 
@@ -173,6 +190,18 @@ document.getElementById('catTree').addEventListener('click', function(e) {
   if (target.classList.contains('tree-label') || target.classList.contains('tree-icon')) {
     e.preventDefault();
     e.stopPropagation();
+    var isType = node.dataset.isType === '1';
+    if (isType) {
+      // 点击 type 节点：先加载父类目，再直接选中该 type
+      var dcid = node.dataset.dcid || '';
+      var typeName = node.querySelector('.tree-label').textContent;
+      selectCategory(dcid, typeName, typeName, '');
+      // 延迟后直接选中 type 并加载属性
+      setTimeout(function(){
+        selectTypeId(id, typeName, dcid);
+      }, 600);
+      return;
+    }
     var it = treeData[id] || {id:id, name:node.querySelector('.tree-label').textContent};
     selectCategory(id, it.name_cn || it.name, it.name_cn, it.name);
     return;
@@ -305,12 +334,8 @@ function selectTypeId(tid, tname, dcid) {
   // 启用"当前 type 一键同步"
   document.getElementById('btnSyncTypeFull').disabled = false;
 
-  // 显示引导
-  document.getElementById('attrPanel').innerHTML = '<div class="text-center py-4 text-muted">'
-    + '<p>已选择 type <b>' + tname + '</b></p>'
-    + '<p>点击 <b style="color:#0d6efd">📥 当前 type 一键同步</b><br>获取属性 Schema 和字典值</p>'
-    + '</div>';
-  document.getElementById('attrCount').style.display = 'none';
+  // 先尝试加载已有属性（批量同步过的），无数据时再提示一键同步
+  loadAttributes();
 }
 
 function loadAttributes() {
@@ -532,6 +557,46 @@ function syncUsedTypes() {
     });
 }
 
+function syncAllTypeAttributes() {
+  var btn = document.getElementById('btnSyncAllAttrs');
+  _syncInProgress = true;
+  var logPanel = document.getElementById('syncAttrLog');
+  if (!logPanel) {
+    logPanel = document.createElement('div');
+    logPanel.id = 'syncAttrLog';
+    logPanel.style.cssText = 'max-height:250px;overflow-y:auto;font-size:11px;border:1px solid #dee2e6;border-radius:4px;padding:8px;margin-top:8px;background:#f8f9fa';
+    btn.parentElement.parentElement.appendChild(logPanel);
+  }
+  logPanel.innerHTML = '<div class="text-muted">开始同步全部 type 属性...</div>';
+  var totalSynced = 0, totalAttrs = 0, totalErrors = [];
+  function addLog(type, text) {
+    var div = document.createElement('div');
+    div.style.cssText = 'padding:2px 0;border-bottom:1px solid #eee';
+    var colors = {success:'#198754', info:'#0d6efd', warning:'#ffc107', error:'#dc3545'};
+    div.innerHTML = '<span style="color:' + (colors[type]||'#333') + '">' + text + '</span>';
+    logPanel.appendChild(div); logPanel.scrollTop = logPanel.scrollHeight;
+  }
+  function runBatch(n, offset) {
+    btn.disabled = true; btn.textContent = '⏳ 第' + n + '批...';
+    fetch('/ozon/api/category/sync-all-type-attributes?batch=20&offset=' + offset, {method:'POST'})
+      .then(function(r){return r.json()})
+      .then(function(d){
+        if (!d.ok) { btn.disabled = false; btn.textContent = '🔥 同步全部属性'; addLog('error', '❌ ' + (d.error||'')); return; }
+        totalSynced += (d.synced||0); totalAttrs += (d.attrs||0);
+        if (d.errors) d.errors.forEach(function(e){ totalErrors.push(e); });
+        addLog(d.synced > 0 ? 'success' : 'info', '✅ 第'+n+'批：'+d.synced+' type，'+d.attrs+' 属性' + (d.remaining>0?' | 剩余'+d.remaining:''));
+        if (d.errors && d.errors.length) d.errors.forEach(function(e){ addLog('warning', '⚠️ '+e); });
+        if (d.remaining > 0) { btn.textContent = '⏳ 剩余'+d.remaining+'...'; setTimeout(function(){runBatch(n+1, d.next_offset);}, 500); }
+        else { btn.disabled=false; btn.textContent='✅ 同步完成'; _syncInProgress=false;
+          addLog('success','🎉 完成！共'+n+'批，'+totalSynced+' type，'+totalAttrs+' 属性');
+          if (totalErrors.length) addLog('warning','⚠️ '+totalErrors.length+' 个错误');
+          loadSyncJobs(); }
+      })
+      .catch(function(e){ btn.disabled=false; btn.textContent='🔥 继续同步'; _syncInProgress=false; addLog('error','❌ 网络错误: '+e); });
+  }
+  runBatch(1, 0);
+}
+
 function toggleFavorite(typeId, typeName, dcid) {
   fetch('/ozon/api/category/type/' + typeId + '/favorite', {
     method:'POST',
@@ -546,20 +611,92 @@ function toggleFavorite(typeId, typeName, dcid) {
 
 function translateAll() {
   var btn = document.getElementById('btnTranslate');
-  btn.disabled = true; btn.textContent = '⏳ ...';
-  showStatus('info', '正在翻译...');
+  _syncInProgress = true;
+  var isRunning = false;
+  var totalCats = 0, totalTypes = 0, totalAttrs = 0, totalErrors = [];
 
-  fetch('/ozon/api/category/translate', {method:'POST'})
-    .then(function(r){return r.json()})
-    .then(function(d){
-      btn.disabled = false; btn.textContent = '🌐 翻译全部';
-      showStatusJson(d);
-      if (d.ok) loadTreeRoot();
-    })
-    .catch(function(e){
-      btn.disabled = false; btn.textContent = '🌐 翻译全部';
-      showStatus('danger', '网络错误: ' + e);
-    });
+  // 创建或获取日志面板
+  var logPanel = document.getElementById('translateLog');
+  if (!logPanel) {
+    logPanel = document.createElement('div');
+    logPanel.id = 'translateLog';
+    logPanel.style.cssText = 'max-height:300px;overflow-y:auto;font-size:11px;border:1px solid #dee2e6;border-radius:4px;padding:8px;margin-top:8px;background:#f8f9fa';
+    btn.parentElement.appendChild(logPanel);
+  }
+  logPanel.innerHTML = '<div class="text-muted">开始翻译...</div>';
+
+  function addLog(type, text) {
+    var div = document.createElement('div');
+    div.style.cssText = 'padding:2px 0;border-bottom:1px solid #eee';
+    var colors = {success:'#198754', info:'#0d6efd', warning:'#ffc107', error:'#dc3545'};
+    div.innerHTML = '<span style="color:' + (colors[type]||'#333') + '">' + text + '</span>';
+    logPanel.appendChild(div);
+    logPanel.scrollTop = logPanel.scrollHeight;
+  }
+
+  function runBatch(batchNum) {
+    isRunning = true;
+    btn.disabled = true;
+    btn.textContent = '⏳ 第' + batchNum + '批翻译中...';
+
+    fetch('/ozon/api/category/translate?limit=200', {method:'POST'})
+      .then(function(r){return r.json()})
+      .then(function(d){
+        if (!d.ok) {
+          btn.disabled = false;
+          btn.textContent = '🌐 翻译全部';
+          isRunning = false; _syncInProgress = false;
+          addLog('error', '❌ 翻译出错: ' + (d.message || d.error || ''));
+          return;
+        }
+
+        totalCats += (d.cats || 0);
+        totalTypes += (d.types || 0);
+        totalAttrs += (d.attrs || 0);
+        if (d.errors && d.errors.length) {
+          d.errors.forEach(function(e){ totalErrors.push(e); });
+        }
+
+        // 显示本批结果
+        var batchDetail = '第' + batchNum + '批：类目 ' + (d.cats||0) + ' | 类型 ' + (d.types||0) + ' | 属性 ' + (d.attrs||0);
+        if (d.remaining > 0) batchDetail += ' | 剩余 ' + d.remaining;
+        addLog(d.cats + d.types + d.attrs > 0 ? 'success' : 'info', '✅ ' + batchDetail);
+
+        // 显示错误
+        if (d.errors && d.errors.length) {
+          d.errors.forEach(function(e){ addLog('warning', '⚠️ ' + e); });
+        }
+
+        if (d.remaining > 0) {
+          btn.textContent = '⏳ 剩余' + d.remaining + '，第' + (batchNum+1) + '批...';
+          setTimeout(function(){ runBatch(batchNum + 1); }, 1000);
+        } else {
+          btn.disabled = false;
+          btn.textContent = '✅ 翻译完成';
+          btn.classList.remove('btn-warning');
+          btn.classList.add('btn-outline-success');
+          isRunning = false; _syncInProgress = false;
+
+          // 汇总报告
+          addLog('success', '━━━━━━━━━━━━━━━━━━');
+          addLog('success', '🎉 全部完成！共 ' + batchNum + ' 批');
+          addLog('success', '📊 类目 ' + totalCats + ' | 类型 ' + totalTypes + ' | 属性 ' + totalAttrs);
+          if (totalErrors.length) {
+            addLog('warning', '⚠️ 共 ' + totalErrors.length + ' 个错误');
+          }
+          loadTreeRoot();
+        }
+      })
+      .catch(function(e){
+        btn.disabled = false;
+        btn.textContent = '🌐 继续翻译';
+        btn.classList.add('btn-warning');
+        isRunning = false; _syncInProgress = false;
+        addLog('error', '❌ 网络错误: ' + e + ' — 点击按钮继续');
+      });
+  }
+
+  if (!isRunning) runBatch(1);
 }
 
 // ═══════════════════════════ 同步记录 ═══════════════════════════
