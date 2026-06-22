@@ -91,7 +91,7 @@ function loadChildren(parentId) {
   var url = parentId ? '/ozon/api/category/children?parent_id=' + parentId : '/ozon/api/category/root';
   fetch(url).then(function(r){return r.json()}).then(function(d){
     if (!d.ok || !d.items.length) {
-      list.innerHTML = '<div class="text-center text-muted py-3">该类目下暂无子类目。<br><small>请点击 📋 同步 type 按钮先拉取 type_id，或选择其他类目。</small></div>';
+      list.innerHTML = '<div class="text-center text-muted py-3">该类目下暂无子类目或商品类型。<br><small>请选择其他类目，或先在类目属性字典中展开该类目。</small></div>';
       return;
     }
     renderCategoryList(d.items, !!parentId);

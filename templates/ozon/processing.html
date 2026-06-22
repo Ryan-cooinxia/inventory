@@ -93,13 +93,21 @@
             <textarea name="description_ru" class="form-control" rows="3">{{ draft.description_ru or '' }}</textarea>
           </div>
           <div class="mb-3">
-            <label class="form-label fw-bold">📂 OZON 类目</label>
-            <select name="ozon_category_path" class="form-select">
-              <option value="">-- 待选择 --</option>
-              {% if draft and draft.ozon_category_path %}
-              <option selected>{{ draft.ozon_category_path }}</option>
+            <label class="form-label fw-bold">📂 OZON 类目
+              {% if draft and draft.ai_category_confidence is not none %}
+              <span class="badge ms-1" style="font-size:10px;{% if draft.ai_category_confidence >= 0.8 %}background:#d1e7dd;color:#0f5132{% elif draft.ai_category_confidence >= 0.6 %}background:#fef3cd;color:#856404{% else %}background:#fde8e8;color:#a94442{% endif %}">置信度 {{ (draft.ai_category_confidence * 100)|int }}%</span>
               {% endif %}
-            </select>
+            </label>
+            <input name="ozon_category_path" class="form-control" list="ozon-category-list"
+                   value="{{ draft.ozon_category_path or '' }}"
+                   placeholder="输入或选择 OZON 类目路径"
+                   autocomplete="off">
+            <datalist id="ozon-category-list">
+              {% for cat_path in category_list %}
+              <option value="{{ cat_path }}">
+              {% endfor %}
+            </datalist>
+            <div class="form-text">AI 生成后自动填入建议类目，可从下拉列表中选择已缓存的类目路径</div>
           </div>
           <input type="hidden" name="draft_id" value="{{ draft.id if draft else '' }}">
           <div class="d-flex gap-2">

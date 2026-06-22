@@ -310,7 +310,7 @@
                   <option value="">-- 选择 --</option>
                   {% for v in adaptation_attr_values[a.attribute_id] %}
                   <option value="{{ v.value_id }}" {% if saved_val and (saved_val.value_id if saved_val is mapping else '') == v.value_id or saved_val == v.value_id %}selected{% endif %}>
-                    {{ v.value }}{% if v.info %} ({{ v.info }}){% endif %}
+                    {{ v.value_cn or v.value }}{% if v.info %} ({{ v.info }}){% endif %}{% if v.value_cn and v.value_cn != v.value %} <small class="text-muted">{{ v.value }}</small>{% endif %}
                   </option>
                   {% endfor %}
                 </select>
@@ -1003,7 +1003,8 @@ function onTypeSelectChange() {
     if (d.ok) {
       updateTypeDisplay();
       document.getElementById('syncAttrSection').classList.remove('d-none');
-      document.getElementById('attributeFormSection').classList.add('d-none');
+      // 先尝试从本地数据库加载属性（已同步过的直接显示）
+      loadAttributeForm(dcid, typeId);
     }
   });
 }
@@ -1080,9 +1081,13 @@ function loadAttributeForm(dcid, typeId) {
     .then(function(r){return r.json()})
     .then(function(d){
       if (!d.ok || !d.attrs || !d.attrs.length) {
-        form.innerHTML = '<div class="text-muted text-center py-2">暂无属性数据，请点击「📥 同步属性/字典」拉取。</div>';
+        form.innerHTML = '<div class="text-muted text-center py-2">暂无属性数据，请点击「📥 同步属性/字典」从 OZON 拉取。</div>';
+        document.getElementById('syncAttrSection').classList.remove('d-none');
         return;
       }
+      // 已从本地加载成功，隐藏同步提示
+      document.getElementById('syncAttrSection').classList.add('d-none');
+      document.getElementById('attributeFormSection').classList.remove('d-none');
 
       var attrs = d.attrs;
       var requiredCount = attrs.filter(function(a){return a.is_required;}).length;
@@ -1129,8 +1134,9 @@ function renderAttributeRow(a) {
       + 'data-attr-id="' + a.attribute_id + '" data-is-required="' + (a.is_required ? '1' : '0') + '">'
       + '<option value="">-- 选择 --</option>';
     a.values.forEach(function(v){
-      inputHtml += '<option value="' + v.value_id + '">' + v.value
-        + (v.info ? ' (' + v.info + ')' : '') + '</option>';
+      var display = v.value_cn || v.value;
+      inputHtml += '<option value="' + v.value_id + '">' + display
+        + (v.info ? ' (' + v.info + ')' : '') + (v.value_cn ? ' <small class=text-muted>' + v.value + '</small>' : '') + '</option>';
     });
     inputHtml += '</select>';
   } else if (a.data_type === 'boolean') {

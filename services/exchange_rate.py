@@ -3,6 +3,7 @@
 """
 import threading
 import datetime
+import time
 import requests
 from models import db, ExchangeRate
 
@@ -11,6 +12,19 @@ NEEDED_CURRENCIES = ['RUB', 'USD', 'EUR', 'GBP']
 UPDATE_INTERVAL = 3600  # 每小时更新一次
 _lock = threading.Lock()
 _updater_started = False
+
+
+def _save_with_retry(record, max_retries=5):
+    """带重试的 save，应对 SQLite 写锁冲突"""
+    for i in range(max_retries):
+        try:
+            record.save()
+            return True
+        except Exception as e:
+            if 'database is locked' in str(e).lower() and i < max_retries - 1:
+                time.sleep(0.5 * (i + 1))
+                continue
+            raise
 
 
 def fetch_online_rates():
@@ -42,7 +56,7 @@ def update_exchange_rates():
             if record:
                 record.rate = rate
                 record.updated_at = datetime.datetime.now()
-                record.save()
+                _save_with_retry(record)
             else:
                 ExchangeRate.create(
                     base_currency='CNY',

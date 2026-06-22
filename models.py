@@ -912,6 +912,7 @@ class OzonAttributeValue(BaseModel):
     type_id = CharField(max_length=50, null=True)                      # 绑定的 type_id
     value_id = CharField(max_length=50)                                # OZON 字典值 ID
     value = CharField(max_length=500)                                  # 字典值（俄）
+    value_cn = CharField(max_length=500, null=True)                    # 字典值（中）
     info = CharField(max_length=500, null=True)                        # 附加信息
     last_synced_at = DateTimeField(null=True)
     created_at = DateTimeField(default=datetime.datetime.now)

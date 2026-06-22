@@ -72,6 +72,14 @@
     {% if not draft.type_id %}
     <p class="text-muted small mt-2 mb-0">请点击"选择类目"绑定 OZON 类目类型。发布前必须完成。</p>
     {% endif %}
+    <!-- 属性实时展示区 -->
+    <div id="attrSection" class="mt-3 d-none">
+      <div class="d-flex justify-content-between align-items-center mb-1">
+        <strong style="font-size:12px">📋 属性 Schema</strong>
+        <span class="badge bg-secondary" id="attrCount" style="font-size:10px"></span>
+      </div>
+      <div id="attrPanel" style="max-height:300px;overflow-y:auto;font-size:11px"></div>
+    </div>
     <input type="hidden" name="ozon_category_id" value="{{ draft.ozon_category_id or '' }}">
     <input type="hidden" name="type_id" value="{{ draft.type_id or '' }}">
   </div>
@@ -205,7 +213,7 @@ function onCategorySelected(sel) {
   info.innerHTML = '<div style="font-size:13px"><strong>路径：</strong>' + sel.path + '</div>' +
     '<div style="font-size:12px" class="mt-1"><code>dcid: ' + sel.description_category_id + '</code> <code class="ms-2">type_id: ' + sel.type_id + '</code>' +
     '<span class="ms-2 badge bg-info">' + sel.type_name + '</span></div>' +
-    '<p class="text-success small mt-2">✅ 已选择。保存草稿后生效。</p>';
+    '<p class="text-success small mt-2">✅ 已选择，属性已自动加载。</p>';
 
   fetch('/ozon/api/draft/{{ draft.id }}/set-category-type', {
     method: 'POST',
@@ -221,6 +229,63 @@ function onCategorySelected(sel) {
       document.querySelector('input[name="type_id"]').value = d.type_id;
     }
   });
+
+  // 自动加载属性（从本地数据库）
+  loadAttributes(sel.description_category_id, sel.type_id);
 }
+
+function loadAttributes(dcid, typeId) {
+  var section = document.getElementById('attrSection');
+  var panel = document.getElementById('attrPanel');
+  section.classList.remove('d-none');
+  panel.innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm"></div></div>';
+
+  fetch('/ozon/api/category/' + dcid + '/get-attributes?type_id=' + typeId)
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (!d.ok || !d.attrs.length) {
+        panel.innerHTML = '<div class="text-muted">该 type 暂无属性数据</div>';
+        document.getElementById('attrCount').textContent = '0';
+        return;
+      }
+      document.getElementById('attrCount').textContent = d.attrs.length + ' 个';
+      var html = '<table class="table table-sm table-borderless mb-0" style="font-size:11px">';
+      // 先必填再选填
+      d.attrs.sort(function(a, b){ return (b.is_required ? 1 : 0) - (a.is_required ? 1 : 0); });
+      d.attrs.forEach(function(a){
+        html += '<tr>';
+        html += '<td style="width:40%"><strong>' + (a.name_cn || a.name) + '</strong>';
+        if (a.is_required) html += ' <span class="badge bg-danger" style="font-size:9px">必填</span>';
+        html += '</td>';
+        html += '<td style="width:30%">';
+        if (a.is_dictionary) {
+          if (a.values && a.values.length > 0) {
+            html += '<span class="text-success">' + a.values.length + ' 个选项</span>';
+          } else {
+            html += '<span class="text-warning">字典值未拉取</span>';
+          }
+        } else {
+          html += '<span class="text-muted">' + (a.data_type || 'string') + '</span>';
+        }
+        html += '</td>';
+        html += '<td style="width:30%"><small class="text-muted">' + (a.name || '') + '</small></td>';
+        html += '</tr>';
+      });
+      html += '</table>';
+      panel.innerHTML = html;
+    })
+    .catch(function(){
+      panel.innerHTML = '<div class="text-danger">加载失败</div>';
+    });
+}
+
+// 页面初始化：已有类目则自动加载属性
+(function(){
+  var dcid = document.querySelector('input[name="ozon_category_id"]').value;
+  var tid = document.querySelector('input[name="type_id"]').value;
+  if (dcid && tid) {
+    loadAttributes(dcid, tid);
+  }
+})();
 </script>
 {% endblock %}
