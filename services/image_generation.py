@@ -412,12 +412,12 @@ def _call_seedream_api(
     if extra_body:
         body.update(extra_body)
 
-    # Reference images → image array
+    # Reference images → image array (only publicly accessible URLs)
     if refs:
         image_urls = []
         for r in refs:
-            src = r.get('source_url') or r.get('path') or ''
-            if src:
+            src = r.get('source_url') or ''
+            if src and (src.startswith('http://') or src.startswith('https://')):
                 image_urls.append(src)
         if image_urls:
             body['image'] = image_urls
@@ -427,7 +427,10 @@ def _call_seedream_api(
                 u[:120] for u in image_urls[:3]
             ]
         else:
-            request_snapshot['reference_error'] = 'Reference images found but no valid URLs'
+            request_snapshot['reference_error'] = (
+                f'No publicly accessible URLs in {len(refs)} reference(s). '
+                'Local paths cannot be sent to Seedream API.'
+            )
     else:
         request_snapshot['reference_image_count'] = 0
 
@@ -602,7 +605,7 @@ def save_generated_image(candidate, image_url=None, image_base64=None):
         filepath.write_bytes(image_bytes)
 
         # Store relative path
-        rel_path = str(filepath.relative_to(uploads_root))
+        rel_path = str(filepath.relative_to(uploads_root)).replace('\\', '/')
         candidate.local_path = rel_path
         candidate.save()
         return str(filepath)
