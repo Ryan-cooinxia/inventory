@@ -1946,16 +1946,38 @@ def image_plan_generate(draft_id):
                      .where((OzonImageSlot.draft == draft) &
                             (OzonImageSlot.id.in_(target_ids)))
                      .order_by(OzonImageSlot.slot_order))
-    else:
-        slots = list(OzonImageSlot
+    if not slot_ids:
+        # 默认：待生成 + 之前的候选全部失败的 slot（允许重新生成）
+        all_slots = list(OzonImageSlot
                      .select()
                      .where((OzonImageSlot.draft == draft) &
-                            (OzonImageSlot.status == 'planned'))
+                            (OzonImageSlot.status.in_(['planned', 'generated'])))
                      .order_by(OzonImageSlot.slot_order))
+        slots = []
+        for s in all_slots:
+            if s.status == 'planned':
+                slots.append(s)
+            else:
+                candidates = list(OzonImageCandidate.select().where(
+                    OzonImageCandidate.slot == s
+                ))
+                all_failed = candidates and all(c.status == 'failed' for c in candidates)
+                if all_failed:
+                    slots.append(s)
 
     if not slots:
         flash('No image slots need generation', 'info')
         return redirect(url_for('ozon.image_plan', draft_id=draft_id))
+
+    # ── 生成前清理旧的失败候选图 ──
+    slot_id_list = [s.id for s in slots]
+    deleted = (OzonImageCandidate
+               .delete()
+               .where((OzonImageCandidate.slot.in_(slot_id_list)) &
+                      (OzonImageCandidate.status == 'failed'))
+               .execute())
+    if deleted:
+        print(f'[IMG-GEN] Cleaned up {deleted} old failed candidates before regeneration')
 
     # Determine configs: single model or all models
     generate_all = request.form.get('generate_all_models', '').strip() == '1'

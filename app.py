@@ -173,6 +173,7 @@ def init_db():
     migrate_ozon_source_quality_schema()
     migrate_product_bundle_schema()
     migrate_ozon_image_schema()
+    cleanup_failed_image_candidates()
 
 def migrate_ozon_source_quality_schema():
     """Keep existing OZON source tables compatible with newly added quality fields."""
@@ -283,6 +284,45 @@ def migrate_ozon_image_schema():
                     db.execute_sql(f'ALTER TABLE {table} ADD COLUMN {col_name} {col_def}')
                 except Exception as e:
                     print(f'[migrate_ozon_image_schema] SKIP {table}.{col_name}: {e}')
+
+
+def cleanup_failed_image_candidates():
+    """启动时自动删除所有失败的候选图，并将对应 slot 状态回退为 planned"""
+    from models import OzonImageCandidate, OzonImageSlot
+    try:
+        # 找到所有失败候选图
+        failed = list(OzonImageCandidate.select().where(
+            OzonImageCandidate.status == 'failed'
+        ))
+        if not failed:
+            return
+
+        # 找到关联的 slot，回退状态
+        slot_ids = set(c.slot_id for c in failed)
+        for sid in slot_ids:
+            # 检查该 slot 是否还有其他非失败候选
+            has_good = (OzonImageCandidate
+                        .select()
+                        .where((OzonImageCandidate.slot_id == sid) &
+                               (OzonImageCandidate.status != 'failed'))
+                        .exists())
+            if not has_good:
+                # 所有候选全失败 → 回退 slot 状态
+                (OzonImageSlot
+                 .update(status='planned',
+                         generated_url=None,
+                         local_path=None)
+                 .where(OzonImageSlot.id == sid)
+                 .execute())
+
+        # 删除失败的候选图
+        count = (OzonImageCandidate
+                 .delete()
+                 .where(OzonImageCandidate.status == 'failed')
+                 .execute())
+        print(f'[cleanup] Deleted {count} failed image candidates, reset {len(slot_ids)} slots')
+    except Exception as e:
+        print(f'[cleanup] Error (non-fatal): {e}')
 
 
 # 启动后台汇率更新（每小时一次，不阻塞请求）
