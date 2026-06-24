@@ -184,6 +184,7 @@
       {% endif %}
 
       <div class="img-card-actions">
+        <button class="btn btn-sm btn-outline-success" title="单独生成此图" onclick="generateSingleSlot({{ slot.id }}, {{ draft.id }})" onclick="generateSingleSlot({{ slot.id }}, {{ draft.id }})">🎨 生成</button>
         <button class="btn btn-sm btn-outline-secondary" title="查看大图" onclick="{% if slot_image_src %}viewFullImage('{{ slot_image_src }}'){% else %}alert('尚未选用最终图'){% endif %}">🔍</button>
         {% if slot.prompt_cn %}
         <button class="btn btn-sm btn-outline-secondary" title="复制prompt" onclick="copyPrompt('{{ slot.prompt_cn|e }}')">📋</button>
@@ -308,14 +309,18 @@
   <div class="fw-bold text-nowrap">🤖 图片生成</div>
   <div class="small text-muted">生成结果先进入候选图；点击“选用”后才会成为最终已通过图片。</div>
   <form method="POST" action="{{ url_for('ozon.image_plan_generate', draft_id=draft.id) }}" class="d-flex gap-2 align-items-center flex-wrap">
-    <select name="model_config_id" class="form-select form-select-sm" style="max-width:280px;">
+    <select name="model_config_id" id="modelConfigSelect" class="form-select form-select-sm" style="max-width:280px;">
       <option value="">— 全部已启用的 img_gen_ 模型 —</option>
       {% for cfg in image_model_configs %}
       <option value="{{ cfg.id }}">{{ cfg.provider }} / {{ cfg.model_name }}</option>
       {% endfor %}
     </select>
-    <button type="submit" class="btn btn-sm btn-success">🎨 生成(选中模型)</button>
+    <button type="submit" class="btn btn-sm btn-success">🎨 全部生成</button>
     <button type="button" class="btn btn-sm btn-warning" onclick="generateAll(this)">🚀 全部模型生成</button>
+  </form>
+  <form id="singleSlotForm" method="POST" action="{{ url_for("ozon.image_plan_generate", draft_id=draft.id) }}" style="display:none;">
+    <input type="hidden" name="slot_ids" id="singleSlotIds">
+    <input type="hidden" name="model_config_id" id="singleSlotModel">
   </form>
   <div class="ms-auto">
     <span class="text-muted small">{{ image_model_configs|length }} 个 img_gen_ 模型已启用</span>
@@ -377,5 +382,31 @@ function generateAll(btn) {
   btn.textContent = '⏳ 生成中...';
   form.submit();
 }
+
+// 记住上次选择的模型
+(function() {
+  var sel = document.getElementById('modelConfigSelect');
+  if (sel) {
+    var saved = localStorage.getItem('ozon_img_model_id');
+    if (saved) {
+      for (var i = 0; i < sel.options.length; i++) {
+        if (sel.options[i].value === saved) { sel.selectedIndex = i; break; }
+      }
+    }
+    sel.addEventListener('change', function() {
+      localStorage.setItem('ozon_img_model_id', this.value);
+    });
+  }
+})();
+
+// 单 slot 生成
+function generateSingleSlot(slotId, draftId) {
+  var sel = document.getElementById('modelConfigSelect');
+  var modelId = sel ? sel.value : '';
+  document.getElementById('singleSlotIds').value = String(slotId);
+  document.getElementById('singleSlotModel').value = modelId;
+  document.getElementById('singleSlotForm').submit();
+}
+
 </script>
 {% endblock %}
