@@ -1947,23 +1947,12 @@ def image_plan_generate(draft_id):
                             (OzonImageSlot.id.in_(target_ids)))
                      .order_by(OzonImageSlot.slot_order))
     if not slot_ids:
-        # 默认：待生成 + 之前的候选全部失败的 slot（允许重新生成）
-        all_slots = list(OzonImageSlot
+        # 默认：生成所有 planned + generated 的 slot（允许随时重新生成）
+        slots = list(OzonImageSlot
                      .select()
                      .where((OzonImageSlot.draft == draft) &
                             (OzonImageSlot.status.in_(['planned', 'generated'])))
                      .order_by(OzonImageSlot.slot_order))
-        slots = []
-        for s in all_slots:
-            if s.status == 'planned':
-                slots.append(s)
-            else:
-                candidates = list(OzonImageCandidate.select().where(
-                    OzonImageCandidate.slot == s
-                ))
-                all_failed = candidates and all(c.status == 'failed' for c in candidates)
-                if all_failed:
-                    slots.append(s)
 
     if not slots:
         flash('No image slots need generation', 'info')
@@ -2226,6 +2215,8 @@ def image_candidate_score(candidate_id):
 @login_required
 def serve_ai_generated(filename):
     """Serve locally saved AI-generated images."""
+    # Normalize backslashes from Windows paths
+    filename = filename.replace('\\', '/')
     return send_from_directory(
         os.path.join(current_app.root_path, 'uploads', 'ai_generated'),
         filename
