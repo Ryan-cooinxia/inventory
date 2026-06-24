@@ -477,9 +477,12 @@ def _call_seedream_api(
         )
 
     # Wrap in a fake response object compatible with the rest of the code
+    _img_url = img_url
+    _b64_json = b64_json
+
     class _FakeData:
-        url = img_url
-        b64_json = b64_json
+        url = _img_url
+        b64_json = _b64_json
 
     class _FakeResponse:
         data = [_FakeData()]
