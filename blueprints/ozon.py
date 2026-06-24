@@ -2086,6 +2086,15 @@ def image_plan_generate(draft_id):
     for err in errors[:3]:
         flash(f'Generation failed: {err}', 'warning')
 
+    # 异步模式（AJAX 调用）：返回 JSON
+    if request.form.get('async') == '1':
+        return jsonify({
+            'ok': total_candidates > 0,
+            'generated': total_candidates,
+            'failed': total_failed,
+            'errors': errors[:5],
+        })
+
     return redirect(url_for('ozon.image_plan', draft_id=draft_id))
 
 

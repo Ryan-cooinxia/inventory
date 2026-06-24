@@ -184,7 +184,7 @@
       {% endif %}
 
       <div class="img-card-actions">
-        <button class="btn btn-sm btn-outline-success" title="单独生成此图" onclick="generateSingleSlot({{ slot.id }}, {{ draft.id }})" onclick="generateSingleSlot({{ slot.id }}, {{ draft.id }})">🎨 生成</button>
+        <button class="btn btn-sm btn-outline-success" title="单独生成此图" onclick="generateSingleSlot({{ slot.id }}, {{ draft.id }})">🎨 生成</button>
         <button class="btn btn-sm btn-outline-secondary" title="查看大图" onclick="{% if slot_image_src %}viewFullImage('{{ slot_image_src }}'){% else %}alert('尚未选用最终图'){% endif %}">🔍</button>
         {% if slot.prompt_cn %}
         <button class="btn btn-sm btn-outline-secondary" title="复制prompt" onclick="copyPrompt('{{ slot.prompt_cn|e }}')">📋</button>
@@ -399,13 +399,50 @@ function generateAll(btn) {
   }
 })();
 
-// 单 slot 生成
+// 单 slot 异步生成
 function generateSingleSlot(slotId, draftId) {
   var sel = document.getElementById('modelConfigSelect');
   var modelId = sel ? sel.value : '';
-  document.getElementById('singleSlotIds').value = String(slotId);
-  document.getElementById('singleSlotModel').value = modelId;
-  document.getElementById('singleSlotForm').submit();
+  var btn = event.target;
+  var origText = btn.textContent;
+
+  // 显示倒计时
+  btn.disabled = true;
+  btn.textContent = '生成中...';
+  var startTime = Date.now();
+  var timer = setInterval(function() {
+    var elapsed = Math.floor((Date.now() - startTime) / 1000);
+    btn.textContent = elapsed + 's';
+  }, 1000);
+
+  // 异步请求
+  var fd = new FormData();
+  fd.append('slot_ids', String(slotId));
+  fd.append('model_config_id', modelId);
+  fd.append('async', '1');
+
+  fetch('/ozon/image-plan/' + draftId + '/generate', {
+    method: 'POST',
+    body: fd
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    clearInterval(timer);
+    btn.textContent = origText;
+    btn.disabled = false;
+    if (data.ok) {
+      // 自动刷新页面
+      window.location.reload();
+    } else {
+      alert('生成失败: ' + (data.error || '未知错误'));
+    }
+  })
+  .catch(function(err) {
+    clearInterval(timer);
+    btn.textContent = origText;
+    btn.disabled = false;
+    alert('请求失败: ' + err.message);
+  });
 }
 
 </script>
