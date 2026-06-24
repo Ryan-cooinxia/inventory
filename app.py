@@ -25,6 +25,7 @@ from models import (
     # OZON 模型
     OzonAccount, OzonSource, OzonSourceSku, OzonSourceMedia,
     OzonDraft, OzonDraftSku, OzonImageSlot, OzonImageCandidate, OzonPublishJob,
+    OzonImagePlan, OzonImageReference,
     OzonPrompt, OzonPricingRule,
     # OZON 适配层
     SourceProductGroup, SourceProductGroupItem,
@@ -167,9 +168,11 @@ def init_db():
                       OzonCategoryAttribute, OzonCategoryType,
                       OzonAttributeValue, OzonCategory,
                       OzonOnlineProduct, OzonOnlineProductAction,
-                      OzonImageCandidate], safe=True)
+                      OzonImageCandidate, OzonImagePlan, OzonImageReference],
+                     safe=True)
     migrate_ozon_source_quality_schema()
     migrate_product_bundle_schema()
+    migrate_ozon_image_schema()
 
 def migrate_ozon_source_quality_schema():
     """Keep existing OZON source tables compatible with newly added quality fields."""
@@ -241,6 +244,45 @@ def migrate_product_bundle_schema():
             ON productbundleitem (bundle_id, component_product_id)
             '''
         )
+
+
+def migrate_ozon_image_schema():
+    """P0: ALTER TABLE 扩展 OzonImageSlot 和 OzonImageCandidate 字段（幂等）"""
+    migrations = {
+        'ozonimageslot': [
+            ('plan_id', 'INTEGER'),
+            ('buyer_question', 'TEXT'),
+            ('main_claim', 'TEXT'),
+            ('proof_points_json', 'TEXT'),
+            ('visual_evidence_json', 'TEXT'),
+            ('reference_media_ids_json', 'TEXT'),
+            ('text_overlay_json', 'TEXT'),
+            ('verified_parameters_json', 'TEXT'),
+            ('generation_mode', "VARCHAR(20) NOT NULL DEFAULT 'reference'"),
+            ('qa_required', 'INTEGER NOT NULL DEFAULT 1'),
+        ],
+        'ozonimagecandidate': [
+            ('parent_candidate_id', 'INTEGER'),
+            ('generation_mode', "VARCHAR(20) NOT NULL DEFAULT 'reference'"),
+            ('reference_snapshot_json', 'TEXT'),
+            ('auto_qa_json', 'TEXT'),
+            ('auto_qa_score', 'INTEGER'),
+            ('auto_qa_status', 'VARCHAR(20)'),
+            ('revision_prompt', 'TEXT'),
+            ('revision_count', 'INTEGER NOT NULL DEFAULT 0'),
+        ],
+    }
+
+    for table, columns in migrations.items():
+        existing_cols = {row[1] for row in db.execute_sql(f'PRAGMA table_info({table})').fetchall()}
+        if not existing_cols:
+            continue
+        for col_name, col_def in columns:
+            if col_name not in existing_cols:
+                try:
+                    db.execute_sql(f'ALTER TABLE {table} ADD COLUMN {col_name} {col_def}')
+                except Exception as e:
+                    print(f'[migrate_ozon_image_schema] SKIP {table}.{col_name}: {e}')
 
 
 # 启动后台汇率更新（每小时一次，不阻塞请求）

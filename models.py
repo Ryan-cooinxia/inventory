@@ -588,10 +588,57 @@ class OzonDraftSku(BaseModel):
         )
 
 
+class OzonImagePlan(BaseModel):
+    """图片方案 — 管理副图或 A+ 详情页方案"""
+    user = ForeignKeyField(User, backref='ozon_image_plans')
+    draft = ForeignKeyField(OzonDraft, backref='image_plans')
+
+    plan_type = CharField(max_length=20)            # listing / aplus
+    target_marketplace = CharField(max_length=30, default='ozon')
+    target_language = CharField(max_length=10, default='ru')
+
+    product_understanding_json = TextField(null=True)
+    buyer_questions_json = TextField(null=True)
+    selling_point_groups_json = TextField(null=True)
+    immutable_structure_json = TextField(null=True)
+    verified_parameters_json = TextField(null=True)
+
+    status = CharField(max_length=20, default='draft')
+    # draft / analyzed / planned / generating / reviewing / approved
+
+    created_at = DateTimeField(default=datetime.datetime.now)
+    updated_at = DateTimeField(default=datetime.datetime.now)
+
+    class Meta:
+        indexes = (
+            (('user', 'draft', 'plan_type'), True),
+        )
+
+
+class OzonImageReference(BaseModel):
+    """参考图关联 — 将 OzonSourceMedia 绑定到图片方案"""
+    user = ForeignKeyField(User, backref='ozon_image_references')
+    plan = ForeignKeyField(OzonImagePlan, backref='references')
+    media = ForeignKeyField(OzonSourceMedia, backref='image_references')
+
+    reference_role = CharField(max_length=30)        # primary / sku / detail / structure / style
+    priority = IntegerField(default=0)
+    is_required = BooleanField(default=False)
+
+    created_at = DateTimeField(default=datetime.datetime.now)
+
+    class Meta:
+        indexes = (
+            (('plan', 'media', 'reference_role'), True),
+        )
+
+
 class OzonImageSlot(BaseModel):
     """图片槽位"""
     user = ForeignKeyField(User, backref='ozon_image_slots')
     draft = ForeignKeyField(OzonDraft, backref='image_slots')
+    plan = ForeignKeyField(OzonImagePlan, null=True, backref='slots')
+
     slot_order = IntegerField()                                   # 槽位序号 1-8
     role = CharField(max_length=30)                               # main / sku / scene / selling_point / function / detail / size / package
     scope = CharField(max_length=10, default='all')               # all / sku
@@ -604,6 +651,18 @@ class OzonImageSlot(BaseModel):
     local_path = CharField(max_length=300, null=True)
     status = CharField(max_length=20, default='planned')          # planned / generated / reviewed / approved / rejected
     review_notes = TextField(null=True)
+
+    # ── P0 新增：买家疑问/卖点/参考图/生成模式 ──
+    buyer_question = TextField(null=True)
+    main_claim = TextField(null=True)
+    proof_points_json = TextField(null=True)
+    visual_evidence_json = TextField(null=True)
+    reference_media_ids_json = TextField(null=True)
+    text_overlay_json = TextField(null=True)
+    verified_parameters_json = TextField(null=True)
+    generation_mode = CharField(max_length=20, default='reference')  # reference / text_only / composite
+    qa_required = BooleanField(default=True)
+
     created_at = DateTimeField(default=datetime.datetime.now)
 
     class Meta:
@@ -643,6 +702,16 @@ class OzonImageCandidate(BaseModel):
     total_score = IntegerField(null=True)
 
     review_notes = TextField(null=True)
+
+    # ── P0 新增：返修链 / 生成模式 / 自动QA / 请求快照 ──
+    parent_candidate = ForeignKeyField('self', null=True, backref='revisions')
+    generation_mode = CharField(max_length=20, default='reference')     # reference / text_only / composite
+    reference_snapshot_json = TextField(null=True)
+    auto_qa_json = TextField(null=True)
+    auto_qa_score = IntegerField(null=True)
+    auto_qa_status = CharField(max_length=20, null=True)                # passed / warning / failed
+    revision_prompt = TextField(null=True)
+    revision_count = IntegerField(default=0)
 
     created_at = DateTimeField(default=datetime.datetime.now)
     updated_at = DateTimeField(default=datetime.datetime.now)

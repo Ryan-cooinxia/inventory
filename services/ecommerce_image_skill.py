@@ -100,8 +100,49 @@ def load_skill_rule_text() -> str:
     return "\n\n".join(parts)
 
 
-def build_slot_prompt(draft, slot, sku_names: Optional[Iterable[str]] = None) -> Dict[str, str]:
-    """Build the final image prompt and negative prompt for one image slot."""
+# ── 语言规则 ──
+LANGUAGE_RULES = {
+    'ozon':      {'language': 'Russian',     'code': 'ru', 'label': '俄语'},
+    'amazon_us': {'language': 'English',     'code': 'en', 'label': '英语'},
+    'amazon_jp': {'language': 'Japanese',    'code': 'ja', 'label': '日语'},
+    'amazon_de': {'language': 'German',      'code': 'de', 'label': '德语'},
+    'default':   {'language': 'English',     'code': 'en', 'label': '英语'},
+}
+
+
+def build_slot_prompt(
+    draft,
+    slot,
+    sku_names: Optional[Iterable[str]] = None,
+    product_analysis: Optional[dict] = None,
+    selling_point_group: Optional[dict] = None,
+    reference_media: Optional[list] = None,
+    marketplace: str = 'ozon',
+    language: str = 'ru',
+) -> Dict[str, str]:
+    """Build the final image prompt and negative prompt for one image slot.
+
+    Args:
+        draft: OzonDraft instance
+        slot: OzonImageSlot instance
+        sku_names: list of SKU names
+        product_analysis: optional product analysis dict (P1)
+        selling_point_group: optional selling point group dict (P1)
+        reference_media: optional list of reference image dicts
+        marketplace: target marketplace (ozon / amazon_us / etc.)
+        language: target language code (ru / en / ja / de)
+    """
+    # ── 语言设置 ──
+    lang_rule = LANGUAGE_RULES.get(marketplace, LANGUAGE_RULES['default'])
+    if language and language != lang_rule['code']:
+        # explicit language override
+        for rule in LANGUAGE_RULES.values():
+            if rule['code'] == language:
+                lang_rule = rule
+                break
+
+    layout_lang = lang_rule['language']
+
     source = getattr(draft, "source", None)
     title = _first_text(
         getattr(source, "title_cn", None),
@@ -127,7 +168,7 @@ def build_slot_prompt(draft, slot, sku_names: Optional[Iterable[str]] = None) ->
 
     prompt_parts = [
         f"Create a premium cross-border ecommerce image for {title}.",
-        "Language: English only for layout text. Do not use Chinese layout text.",
+        f"Language: {layout_lang} only for layout text. Do not use Chinese layout text.",
         (
             "Product preservation: keep the exact product structure from the reference images: same silhouette, "
             "proportions, component count, component positions, material split lines, color blocking, buttons, ports, "
@@ -146,7 +187,7 @@ def build_slot_prompt(draft, slot, sku_names: Optional[Iterable[str]] = None) ->
         f"Product context: {product_profile}.",
         f"Composition: {role_spec['layout']}. Use a clean 3:4 ecommerce layout unless the marketplace requires another ratio.",
         "Lighting and material: realistic commercial product photography, accurate materials, crisp edges, clean soft shadows, premium catalog quality.",
-        "Text/layout: use short English text only; keep labels minimal, readable, and easy to replace in post-production.",
+        f"Text/layout: use short {layout_lang} text only; keep labels minimal, readable, and easy to replace in post-production.",
     ])
 
     if custom_note:

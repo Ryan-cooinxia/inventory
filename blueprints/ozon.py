@@ -43,6 +43,11 @@ from services.image_generation import (
     generate_image_with_config,
     save_generated_image,
 )
+from services.ecommerce_image_reference import (
+    select_references_for_slot,
+    has_usable_references,
+)
+from crypto_utils import encrypt_api_key
 from crypto_utils import decrypt_api_key
 
 ozon_bp = Blueprint('ozon', __name__, url_prefix='/ozon')
@@ -1886,6 +1891,27 @@ def image_plan(draft_id):
         for c in candidates:
             candidate_map.setdefault(c.slot_id, []).append(c)
 
+    # 参考图映射: {slot_id: [reference dicts]}
+    reference_map = {}
+    for s in slots:
+        refs = []
+        if s.reference_media_ids_json:
+            try:
+                ref_ids = json.loads(s.reference_media_ids_json)
+                if ref_ids:
+                    media_list = list(OzonSourceMedia.select().where(
+                        OzonSourceMedia.id.in_(ref_ids) &
+                        (OzonSourceMedia.user == current_user)
+                    ))
+                    refs = [
+                        {'media_id': m.id, 'role': m.role or '', 'local_path': m.local_path or '',
+                         'source_url': m.source_url or ''}
+                        for m in media_list
+                    ]
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+        reference_map[s.id] = refs
+
     return render_template('ozon/image_plan.html',
                            draft=draft,
                            slots=slots,
@@ -1895,7 +1921,8 @@ def image_plan(draft_id):
                            status_filter=status_filter,
                            role_filter=role_filter,
                            image_model_configs=image_model_configs,
-                           candidate_map=candidate_map)
+                           candidate_map=candidate_map,
+                           reference_map=reference_map)
 
 
 @ozon_bp.route('/image-plan/<int:draft_id>/generate', methods=['POST'])
@@ -1954,14 +1981,35 @@ def image_plan_generate(draft_id):
     total_failed = 0
     errors = []
 
+    # ── 确定目标市场和语言 ──
+    marketplace = 'ozon'  # 默认 OZON
+    target_language = 'ru'
+
     for slot in slots:
-        # Build prompt once per slot
-        prompt_payload = build_slot_prompt(draft, slot, sku_names=sku_names)
+        # ── 选择参考图 ──
+        reference_images = select_references_for_slot(current_user, draft, slot, max_references=2)
+        has_refs = has_usable_references(reference_images)
+        generation_mode = getattr(slot, 'generation_mode', 'reference') or 'reference'
+        if not has_refs:
+            generation_mode = 'text_only'
+
+        # ── Build prompt with marketplace/language ──
+        prompt_payload = build_slot_prompt(
+            draft, slot, sku_names=sku_names,
+            product_analysis=None,          # P1 接入
+            selling_point_group=None,       # P1 接入
+            reference_media=reference_images,
+            marketplace=marketplace,
+            language=target_language,
+        )
         prompt = prompt_payload['prompt']
         negative_prompt = prompt_payload.get('negative_prompt')
         prompt_version = prompt_payload.get('prompt_version')
 
-        # Update slot metadata (don't overwrite generated_url — that's done via select)
+        # ── Save reference IDs to slot ──
+        ref_ids = [r.get('media_id') for r in reference_images if r.get('media_id')]
+        slot.reference_media_ids_json = json.dumps(ref_ids) if ref_ids else None
+        slot.generation_mode = generation_mode
         slot.prompt_ru = prompt
         slot.negative_prompt = negative_prompt
         slot.status = 'generated'
@@ -1978,12 +2026,22 @@ def image_plan_generate(draft_id):
                 prompt_version=prompt_version,
                 prompt=prompt,
                 negative_prompt=negative_prompt,
+                generation_mode=generation_mode,
+                reference_snapshot_json=json.dumps(reference_images, ensure_ascii=False) if reference_images else None,
                 status='generated',
             )
 
             try:
-                result = generate_image_with_config(config, prompt, negative_prompt)
+                result = generate_image_with_config(
+                    config, prompt, negative_prompt,
+                    reference_images=reference_images,
+                    generation_mode=generation_mode,
+                )
                 candidate.image_url = result.get('image_url')
+                candidate.generation_mode = result.get('generation_mode', generation_mode)
+                candidate.request_json = json.dumps(
+                    result.get('request_snapshot', {}), ensure_ascii=False
+                )
                 candidate.response_json = json.dumps(result.get('raw_response'), ensure_ascii=False)
                 candidate.save()
 
@@ -5932,7 +5990,7 @@ def model_config():
                 config.model_name = model_name
                 config.api_base = api_base
                 if api_key and api_key != '••••••••••••••••':
-                    config.api_key_encrypted = api_key
+                    config.api_key_encrypted = encrypt_api_key(api_key)
                 config.enabled = enabled
                 config.notes = notes
                 config.timeout_seconds = int(request.form.get('img_gen_timeout', 60))
@@ -6220,6 +6278,115 @@ def call_vision_api(config, image_bytes, filename, task_type):
 
     result = json.loads(raw_text)
     return result
+
+
+# ═══════════════════════════════════════════════════════════════
+# 图片生成模型测试端点
+# ═══════════════════════════════════════════════════════════════
+
+@ozon_bp.route('/api/models/test-image-gen', methods=['POST'])
+@login_required
+def api_test_image_gen():
+    """测试图片生成模型配置 — 不实际调用付费 API，仅展示脱敏请求体"""
+    config_id = request.form.get('config_id', '').strip()
+    if not config_id:
+        return jsonify({'ok': False, 'error': '请指定模型配置 ID'}), 400
+
+    try:
+        config_id_int = int(config_id)
+    except ValueError:
+        return jsonify({'ok': False, 'error': '无效的配置 ID'}), 400
+
+    config = (VisionModelConfig
+              .select()
+              .where((VisionModelConfig.id == config_id_int) &
+                     (VisionModelConfig.user == current_user))
+              .first())
+
+    if not config:
+        return jsonify({'ok': False, 'error': '配置不存在'}), 404
+
+    if not (config.provider or '').startswith('img_gen_'):
+        return jsonify({'ok': False, 'error': '该配置不是图片生成模型（provider 不以 img_gen_ 开头）'}), 400
+
+    from services.image_generation import (
+        _resolve_api_base,
+        _match_model_preset,
+        _parse_user_size_override,
+    )
+
+    base_url = _resolve_api_base(config)
+    model_name = config.model_name or '(未设置)'
+    preset = _match_model_preset(model_name)
+
+    # 尺寸
+    user_size = _parse_user_size_override(config.notes)
+    if user_size:
+        image_size = user_size
+    elif preset:
+        image_size = preset.get('portrait_size', preset.get('default_size', '2K'))
+    else:
+        image_size = '2K'
+
+    extra_body = preset.get('extra_body') if preset else None
+    api_style = preset.get('api_style', 'openai') if preset else 'openai'
+
+    # 构建脱敏请求体
+    request_preview = {
+        'endpoint': f'{base_url}/images/generations',
+        'model': model_name,
+        'size': image_size,
+        'prompt_length': 0,  # 测试不发真实 prompt
+        'api_style': api_style,
+        'extra_body': {k: v for k, v in (extra_body or {}).items() if k not in ('api_key',)} if extra_body else None,
+        'provider': config.provider,
+        'enabled': config.enabled,
+    }
+
+    # API Key 脱敏
+    key_preview = ''
+    if config.api_key_encrypted:
+        try:
+            decrypted = decrypt_api_key(config.api_key_encrypted)
+            key_preview = decrypted[:6] + '...' + decrypted[-4:] if len(decrypted) > 10 else '****'
+        except Exception:
+            key_preview = (config.api_key_encrypted[:6] + '...') if len(config.api_key_encrypted) > 10 else '****'
+    request_preview['api_key_preview'] = key_preview
+
+    # 尝试获取第一张参考图信息
+    draft_id = request.form.get('draft_id', '').strip()
+    ref_info = None
+    if draft_id:
+        try:
+            draft = (OzonDraft
+                     .select()
+                     .where((OzonDraft.id == int(draft_id)) & (OzonDraft.user == current_user))
+                     .first())
+            if draft:
+                from services.ecommerce_image_reference import select_references_for_slot
+                slots = list(OzonImageSlot.select().where(
+                    (OzonImageSlot.draft == draft) &
+                    (OzonImageSlot.status == 'planned')
+                ).limit(1))
+                if slots:
+                    refs = select_references_for_slot(current_user, draft, slots[0], max_references=1)
+                    if refs:
+                        r = refs[0]
+                        ref_info = {
+                            'media_id': r.get('media_id'),
+                            'has_url': bool(r.get('source_url')),
+                            'has_local_path': bool(r.get('path')),
+                        }
+        except Exception as e:
+            ref_info = {'error': str(e)[:100]}
+    if ref_info:
+        request_preview['reference_test'] = ref_info
+
+    return jsonify({
+        'ok': True,
+        'message': '配置有效（未实际调用付费 API）',
+        'request_preview': request_preview,
+    })
 
 
 def _resolve_api_base(config):

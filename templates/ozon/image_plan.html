@@ -155,6 +155,16 @@
           {% else %}<span class="badge bg-secondary">{{ slot.role }}</span>
           {% endif %}
           {% if slot.style %}<span class="badge bg-light text-dark border">{{ slot.style }}</span>{% endif %}
+          {# P0: 参考图 & 生成模式标签 #}
+          {% set slot_refs = reference_map.get(slot.id, []) %}
+          {% if slot_refs %}
+            <span class="badge bg-light text-primary border" title="{% for r in slot_refs %}{{ r.role }}:{{ r.media_id or r.local_path[:30] }} {% endfor %}">🖼️ {{ slot_refs|length }}参考图</span>
+          {% endif %}
+          {% if slot.generation_mode == 'text_only' %}
+            <span class="badge bg-warning text-dark" title="无参考图可用，纯文生图有结构漂移风险">⚠️ 纯文生图</span>
+          {% elif slot.generation_mode == 'composite' %}
+            <span class="badge bg-info">🧩 合成</span>
+          {% endif %}
         </div>
         <small class="text-muted">#{{ slot.slot_order }}</small>
       </div>
