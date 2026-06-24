@@ -24,7 +24,7 @@ from models import (
     User,
     # OZON 模型
     OzonAccount, OzonSource, OzonSourceSku, OzonSourceMedia,
-    OzonDraft, OzonDraftSku, OzonImageSlot, OzonPublishJob,
+    OzonDraft, OzonDraftSku, OzonImageSlot, OzonImageCandidate, OzonPublishJob,
     OzonPrompt, OzonPricingRule,
     # OZON 适配层
     SourceProductGroup, SourceProductGroupItem,
@@ -166,7 +166,8 @@ def init_db():
                       OzonDraft, OzonOnlineProduct, OzonOnlineProductAction,
                       OzonCategoryAttribute, OzonCategoryType,
                       OzonAttributeValue, OzonCategory,
-                      OzonOnlineProduct, OzonOnlineProductAction], safe=True)
+                      OzonOnlineProduct, OzonOnlineProductAction,
+                      OzonImageCandidate], safe=True)
     migrate_ozon_source_quality_schema()
     migrate_product_bundle_schema()
 

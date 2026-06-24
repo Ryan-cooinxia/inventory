@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI Ecommerce Image Maker"
+  short_description: "Plan ecommerce images, prompts, and QA."
+  default_prompt: "Use $ecommerce-image-maker to turn my product photo and selling points into an ecommerce image set plan."

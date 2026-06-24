@@ -16,7 +16,7 @@ from werkzeug.utils import secure_filename
 from models import (
     db,
     OzonAccount, OzonSource, OzonSourceSku, OzonSourceMedia,
-    OzonDraft, OzonDraftSku, OzonImageSlot, OzonPublishJob,
+    OzonDraft, OzonDraftSku, OzonImageSlot, OzonImageCandidate, OzonPublishJob,
     OzonPrompt, OzonPricingRule, ExchangeRate, UserApiKey,
     # 新增：适配层
     SourceProductGroup, SourceProductGroupItem,
@@ -37,6 +37,12 @@ from services.ozon_api import (
     OzonAPIError, OzonAuthError, OzonValidationError,
 )
 from services.ozon_collector import fetch_url, extract_product, fetch_url_headless, collect_quality_check
+from services.ecommerce_image_skill import build_slot_prompt
+from services.image_generation import (
+    get_image_generation_configs,
+    generate_image_with_config,
+    save_generated_image,
+)
 from crypto_utils import decrypt_api_key
 
 ozon_bp = Blueprint('ozon', __name__, url_prefix='/ozon')
@@ -1867,6 +1873,19 @@ def image_plan(draft_id):
     approved_count = draft.image_slots.where(OzonImageSlot.status == 'approved').count()
     generated_count = draft.image_slots.where(OzonImageSlot.status != 'planned').count()
 
+    # 图片生成模型配置
+    image_model_configs = get_image_generation_configs(current_user)
+
+    # 候选图映射: {slot_id: [candidates]}
+    candidate_map = {}
+    if slots:
+        candidates = list(OzonImageCandidate
+                         .select()
+                         .where(OzonImageCandidate.slot.in_([s.id for s in slots]))
+                         .order_by(OzonImageCandidate.created_at.desc()))
+        for c in candidates:
+            candidate_map.setdefault(c.slot_id, []).append(c)
+
     return render_template('ozon/image_plan.html',
                            draft=draft,
                            slots=slots,
@@ -1874,7 +1893,9 @@ def image_plan(draft_id):
                            approved_count=approved_count,
                            generated_count=generated_count,
                            status_filter=status_filter,
-                           role_filter=role_filter)
+                           role_filter=role_filter,
+                           image_model_configs=image_model_configs,
+                           candidate_map=candidate_map)
 
 
 @ozon_bp.route('/image-plan/<int:draft_id>/generate', methods=['POST'])
@@ -1885,11 +1906,117 @@ def image_plan_generate(draft_id):
              .where((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
              .first())
     if not draft:
-        flash('草稿不存在', 'danger')
+        flash('Draft not found', 'danger')
         return redirect(url_for('ozon.listings'))
 
-    # TODO: 阶段 6 接入图片生成服务
-    flash('图片生成功能将在阶段 6 接入 AI 图片服务', 'info')
+    _ensure_image_slots(draft)
+
+    slot_ids = request.form.get('slot_ids', '').strip()
+    if slot_ids:
+        target_ids = [int(x) for x in slot_ids.split(',') if x.strip().isdigit()]
+        slots = list(OzonImageSlot
+                     .select()
+                     .where((OzonImageSlot.draft == draft) &
+                            (OzonImageSlot.id.in_(target_ids)))
+                     .order_by(OzonImageSlot.slot_order))
+    else:
+        slots = list(OzonImageSlot
+                     .select()
+                     .where((OzonImageSlot.draft == draft) &
+                            (OzonImageSlot.status == 'planned'))
+                     .order_by(OzonImageSlot.slot_order))
+
+    if not slots:
+        flash('No image slots need generation', 'info')
+        return redirect(url_for('ozon.image_plan', draft_id=draft_id))
+
+    # Determine configs: single model or all models
+    generate_all = request.form.get('generate_all_models', '').strip() == '1'
+    requested_config_id = request.form.get('model_config_id', '').strip()
+
+    if generate_all:
+        configs = get_image_generation_configs(current_user)
+    elif requested_config_id.isdigit():
+        configs = get_image_generation_configs(current_user, selected_config_id=requested_config_id)
+    else:
+        configs = get_image_generation_configs(current_user)
+
+    if not configs:
+        flash(
+            'Please configure at least one image generation model with provider prefix img_gen_ in Model APIs.',
+            'danger'
+        )
+        return redirect(url_for('ozon.image_plan', draft_id=draft_id))
+
+    sku_names = [s.source_sku_name for s in draft.draft_skus.order_by(OzonDraftSku.source_order)]
+
+    total_candidates = 0
+    total_failed = 0
+    errors = []
+
+    for slot in slots:
+        # Build prompt once per slot
+        prompt_payload = build_slot_prompt(draft, slot, sku_names=sku_names)
+        prompt = prompt_payload['prompt']
+        negative_prompt = prompt_payload.get('negative_prompt')
+        prompt_version = prompt_payload.get('prompt_version')
+
+        # Update slot metadata (don't overwrite generated_url — that's done via select)
+        slot.prompt_ru = prompt
+        slot.negative_prompt = negative_prompt
+        slot.status = 'generated'
+        slot.save()
+
+        for config in configs:
+            # Create candidate record
+            candidate = OzonImageCandidate.create(
+                user=current_user,
+                draft=draft,
+                slot=slot,
+                provider=config.provider,
+                model_name=config.model_name,
+                prompt_version=prompt_version,
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                status='generated',
+            )
+
+            try:
+                result = generate_image_with_config(config, prompt, negative_prompt)
+                candidate.image_url = result.get('image_url')
+                candidate.response_json = json.dumps(result.get('raw_response'), ensure_ascii=False)
+                candidate.save()
+
+                save_generated_image(
+                    candidate,
+                    image_url=result.get('image_url'),
+                    image_base64=result.get('image_base64'),
+                )
+
+                total_candidates += 1
+            except Exception as e:
+                total_failed += 1
+                err_msg = str(e)[:500]
+                candidate.status = 'failed'
+                candidate.error_message = err_msg
+                candidate.save()
+                errors.append(f'Slot#{slot.slot_order}/{config.provider}/{config.model_name}: {err_msg[:120]}')
+                print(f'[IMG-GEN-ERROR] slot={slot.id} provider={config.provider} model={config.model_name}: {err_msg[:200]}')
+
+    if total_candidates:
+        flash(
+            f'Generated {total_candidates} candidate image(s)'
+            + (f', {total_failed} failed' if total_failed else ''),
+            'success'
+        )
+    if not total_candidates and total_failed:
+        flash(
+            'All image generation attempts failed. Please check model configuration and API response format.',
+            'danger'
+        )
+    for err in errors[:3]:
+        flash(f'Generation failed: {err}', 'warning')
+
     return redirect(url_for('ozon.image_plan', draft_id=draft_id))
 
 
@@ -1919,6 +2046,110 @@ def image_plan_reject(slot_id):
         slot.status = 'rejected'
         slot.save()
     return redirect(url_for('ozon.image_plan', draft_id=slot.draft_id))
+
+
+# ═══════════════════════════════════════════════════════
+# P5.1 — 候选图选择
+# ═══════════════════════════════════════════════════════
+
+@ozon_bp.route('/image-candidate/<int:candidate_id>/select', methods=['POST'])
+@login_required
+def image_candidate_select(candidate_id):
+    candidate = (OzonImageCandidate
+                 .select()
+                 .join(OzonDraft)
+                 .where((OzonImageCandidate.id == candidate_id) &
+                        (OzonImageCandidate.user == current_user))
+                 .first())
+    if not candidate:
+        flash('Candidate not found', 'danger')
+        return redirect(request.referrer or url_for('ozon.listings'))
+
+    slot = candidate.slot
+
+    if candidate.status == 'failed':
+        flash('Failed candidates cannot be selected', 'warning')
+        return redirect(url_for('ozon.image_plan', draft_id=slot.draft_id))
+
+    if not candidate.image_url and not candidate.local_path:
+        flash('This candidate has no generated image to select', 'warning')
+        return redirect(url_for('ozon.image_plan', draft_id=slot.draft_id))
+
+    # Only a user-selected candidate becomes the final approved slot image.
+    slot.generated_url = candidate.image_url
+    slot.local_path = candidate.local_path
+    slot.prompt_ru = candidate.prompt
+    slot.negative_prompt = candidate.negative_prompt
+    slot.status = 'approved'
+    slot.save()
+
+    # Reset other candidates in same slot from 'selected' to 'generated'
+    OzonImageCandidate.update(status='generated').where(
+        (OzonImageCandidate.slot == slot) &
+        (OzonImageCandidate.status == 'selected')
+    ).execute()
+
+    # Mark this candidate as selected
+    candidate.status = 'selected'
+    candidate.save()
+
+    flash(f'Slot #{slot.slot_order} image set to candidate #{candidate.id} ({candidate.provider}/{candidate.model_name})', 'success')
+    return redirect(url_for('ozon.image_plan', draft_id=slot.draft_id))
+
+
+@ozon_bp.route('/image-candidate/<int:candidate_id>/score', methods=['POST'])
+@login_required
+def image_candidate_score(candidate_id):
+    candidate = (OzonImageCandidate
+                 .select()
+                 .join(OzonDraft)
+                 .where((OzonImageCandidate.id == candidate_id) &
+                        (OzonImageCandidate.user == current_user))
+                 .first())
+    if not candidate:
+        flash('Candidate not found', 'danger')
+        return redirect(request.referrer or url_for('ozon.listings'))
+
+    # Parse scores and clamp them to the rubric limits.
+    def _parse_score(val, max_value, default=None):
+        try:
+            v = int(val)
+        except (ValueError, TypeError):
+            return default
+        if v < 0:
+            return default
+        return min(v, max_value)
+
+    candidate.structure_score = _parse_score(request.form.get('structure_score'), 30)
+    candidate.detail_score = _parse_score(request.form.get('detail_score'), 25)
+    candidate.text_score = _parse_score(request.form.get('text_score'), 15)
+    candidate.commercial_score = _parse_score(request.form.get('commercial_score'), 20)
+    candidate.postprocess_score = _parse_score(request.form.get('postprocess_score'), 10)
+    candidate.review_notes = (request.form.get('review_notes', '') or '').strip()[:2000] or None
+
+    # Calculate total from non-null scores
+    scores = [
+        candidate.structure_score,
+        candidate.detail_score,
+        candidate.text_score,
+        candidate.commercial_score,
+        candidate.postprocess_score,
+    ]
+    candidate.total_score = sum(s for s in scores if s is not None)
+
+    candidate.save()
+    flash(f'Candidate #{candidate.id} scored: {candidate.total_score}', 'success')
+    return redirect(url_for('ozon.image_plan', draft_id=candidate.draft_id))
+
+
+@ozon_bp.route('/uploads/ai_generated/<path:filename>')
+@login_required
+def serve_ai_generated(filename):
+    """Serve locally saved AI-generated images."""
+    return send_from_directory(
+        os.path.join(current_app.root_path, 'uploads', 'ai_generated'),
+        filename
+    )
 
 
 # ═══════════════════════════════════════════════════════
@@ -5674,6 +5905,49 @@ def api_save_mapping():
 def model_config():
     """模型接口配置页面"""
     if request.method == 'POST':
+        action = request.form.get('action', '').strip()
+
+        # ── 图片生成模型保存 ──
+        if action == 'save_image_gen':
+            provider = request.form.get('img_gen_provider', '').strip()
+            model_name = request.form.get('img_gen_model_name', '').strip()
+            api_base = request.form.get('img_gen_api_base', '').strip()
+            api_key = request.form.get('img_gen_api_key', '').strip()
+            enabled = request.form.get('img_gen_enabled') == 'on'
+            notes = request.form.get('img_gen_notes', '').strip() or None
+
+            # 自动加 img_gen_ 前缀
+            if provider and not provider.startswith('img_gen_'):
+                provider = f'img_gen_{provider}'
+
+            if provider and model_name and api_base:
+                # 按 provider 查找已有配置
+                config = (VisionModelConfig
+                          .select()
+                          .where((VisionModelConfig.user == current_user) &
+                                 (VisionModelConfig.provider == provider))
+                          .first())
+                if not config:
+                    config = VisionModelConfig(user=current_user, provider=provider)
+                config.model_name = model_name
+                config.api_base = api_base
+                if api_key and api_key != '••••••••••••••••':
+                    config.api_key_encrypted = api_key
+                config.enabled = enabled
+                config.notes = notes
+                config.timeout_seconds = int(request.form.get('img_gen_timeout', 60))
+                config.max_images_per_batch = int(request.form.get('img_gen_batch', 5))
+                config.updated_at = datetime.datetime.now()
+                config.save()
+                flash(f'图片生成模型 "{model_name}" 配置已保存 (provider: {provider})', 'success')
+            elif provider and not api_base:
+                flash('请填写 API Base URL', 'warning')
+            elif provider and not model_name:
+                flash('请填写 Model Name', 'warning')
+
+            return redirect(url_for('ozon.model_config'))
+
+        # ── 视觉模型保存（原有逻辑）──
         provider = request.form.get('vision_provider', '').strip()
         model_name = request.form.get('vision_model_name', '').strip()
         api_base = request.form.get('vision_api_base', '').strip()
@@ -5715,15 +5989,26 @@ def model_config():
 
         return redirect(url_for('ozon.model_config'))
 
-    vision_configs = (VisionModelConfig
-                      .select()
-                      .where(VisionModelConfig.user == current_user))
+    # ── GET：分拆 img_gen 和 vision 配置 ──
+    all_configs = (VisionModelConfig
+                   .select()
+                   .where(VisionModelConfig.user == current_user))
     api_keys = (UserApiKey
                 .select()
                 .where(UserApiKey.user == current_user))
 
+    # 拆分为图片生成配置和视觉配置
+    img_gen_configs = []
+    vision_configs = []
+    for cfg in all_configs:
+        if (cfg.provider or '').startswith('img_gen_'):
+            img_gen_configs.append(cfg)
+        else:
+            vision_configs.append(cfg)
+
     return render_template('ozon/models.html',
                            vision_configs=vision_configs,
+                           img_gen_configs=img_gen_configs,
                            api_keys=api_keys)
 
 

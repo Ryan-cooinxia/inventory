@@ -612,6 +612,49 @@ class OzonImageSlot(BaseModel):
         )
 
 
+class OzonImageCandidate(BaseModel):
+    """图片槽位的多模型候选图"""
+    user = ForeignKeyField(User, backref='ozon_image_candidates')
+    draft = ForeignKeyField(OzonDraft, backref='image_candidates')
+    slot = ForeignKeyField(OzonImageSlot, backref='candidates')
+
+    provider = CharField(max_length=50)          # img_gen_image2 / img_gen_openai / img_gen_wanx ...
+    model_name = CharField(max_length=100)
+    prompt_version = CharField(max_length=100, null=True)
+
+    prompt = TextField()
+    negative_prompt = TextField(null=True)
+
+    image_url = CharField(max_length=500, null=True)
+    local_path = CharField(max_length=300, null=True)
+
+    request_json = TextField(null=True)
+    response_json = TextField(null=True)
+    error_message = TextField(null=True)
+
+    status = CharField(max_length=20, default='generated')
+    # generated / failed / selected / rejected
+
+    structure_score = IntegerField(null=True)      # 产品结构还原，0-30
+    detail_score = IntegerField(null=True)         # 关键细节，0-25
+    text_score = IntegerField(null=True)           # 文字/屏幕/按钮，0-15
+    commercial_score = IntegerField(null=True)     # 电商美观，0-20
+    postprocess_score = IntegerField(null=True)    # 后期可处理，0-10
+    total_score = IntegerField(null=True)
+
+    review_notes = TextField(null=True)
+
+    created_at = DateTimeField(default=datetime.datetime.now)
+    updated_at = DateTimeField(default=datetime.datetime.now)
+
+    class Meta:
+        indexes = (
+            (('slot', 'provider', 'model_name'), False),
+            (('draft', 'slot'), False),
+            (('user', 'status'), False),
+        )
+
+
 class OzonPublishJob(BaseModel):
     """发布任务"""
     user = ForeignKeyField(User, backref='ozon_publish_jobs')

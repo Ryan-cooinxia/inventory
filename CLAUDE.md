@@ -138,3 +138,29 @@ mcp__vision-tools__analyze_image
 - API Key: 设置环境变量 `OPENAI_API_KEY` 或 `DASHSCOPE_API_KEY`
 - 默认模型: `gpt-4o`（可通过 `VISION_MODEL` 环境变量覆盖）
 - MCP 配置: `.mcp.json`
+
+## 项目改动日志
+
+每次大改动后在 `G:\inventory\项目改动日志\` 目录下记录，命名格式 `YYYY-MM-DD_描述.md`。
+最新日志：[2026-06-21_22_OZON模块全面优化.md](项目改动日志/2026-06-21_22_OZON模块全面优化.md)
+
+## 最近关键修复/优化（2026-06-21~22）
+
+### 数据库索引问题
+- `OzonCategoryAttribute` 和 `OzonAttributeValue` 存在过时唯一索引不含 `type_id`
+- 导致同 dcid 下多 type 的属性/字典值静默丢失
+- 修复：DROP 旧索引，补齐所有缺失数据
+
+### 翻译体系
+- `OzonAttributeValue` 有 `value_cn` 字段（ALTER TABLE 手动添加，models.py 已同步）
+- 字典值翻译优先显示中文，俄语原文作为小字提示
+
+### 图片生成
+- 图片生成配置存在 `VisionModelConfig` 表，provider 前缀 `img_gen_`
+- 图片生成需要 OpenAI DALL-E 3 或通义万相 Key
+- 加工页 → 生成内容 → 保存 → 图片方案 → 批量生成
+
+### 适配工作台属性加载
+- 选 type 后自动从本地 DB 加载属性（`loadAttributeForm`），不再需要手动同步
+- 属性加载成功则隐藏"同步属性/字典"按钮
+- `api_get_category_attributes` 和 `adaptation_workspace` 均已加 type_id 过滤+去重

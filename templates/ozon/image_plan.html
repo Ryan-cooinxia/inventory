@@ -33,6 +33,28 @@
 
   /* 筛选栏 */
   .filter-bar { background:#f8f9fa; border-radius:8px; padding:12px 16px; margin-bottom:16px; }
+
+  /* 候选图区域 */
+  .candidates-section { margin-top:8px; padding-top:8px; border-top:1px dashed #dee2e6; }
+  .candidates-section .section-title { font-size:12px; font-weight:600; color:#6c757d; margin-bottom:6px; display:flex; align-items:center; gap:4px; }
+  .candidate-item { display:flex; gap:10px; align-items:flex-start; padding:8px; background:#f8f9fa; border-radius:6px; margin-bottom:6px; }
+  .candidate-item:last-child { margin-bottom:0; }
+  .candidate-item.selected { background:#d1e7dd; border:1px solid #198754; }
+  .candidate-thumb { width:80px; height:106px; border-radius:4px; overflow:hidden; background:#e9ecef; flex-shrink:0; display:flex; align-items:center; justify-content:center; }
+  .candidate-thumb img { width:100%; height:100%; object-fit:cover; }
+  .candidate-thumb .no-img { font-size:24px; color:#adb5bd; }
+  .candidate-info { flex:1; min-width:0; }
+  .candidate-info .cand-provider { font-size:11px; color:#6c757d; }
+  .candidate-info .cand-score { font-size:12px; font-weight:600; }
+  .candidate-info .cand-error { font-size:11px; color:#dc3545; max-height:40px; overflow:auto; }
+  .cand-actions { display:flex; gap:4px; flex-wrap:wrap; margin-top:4px; }
+  .score-form-row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-top:4px; }
+  .score-form-row input { width:52px; font-size:11px; padding:2px 4px; text-align:center; }
+  .score-form-row label { font-size:10px; color:#6c757d; margin:0; white-space:nowrap; }
+
+  /* 生成按钮区 */
+  .gen-toolbar { background:#f8f9fa; border-radius:8px; padding:12px 16px; margin-top:16px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .gen-toolbar select { max-width:300px; }
 </style>
 {% endblock %}
 {% block content %}
@@ -103,11 +125,18 @@
 <!-- 图片卡片网格 -->
 <div class="img-card-grid">
   {% for slot in slots %}
+  {% if slot.local_path %}
+    {% set slot_image_src = url_for('ozon.serve_ai_generated', filename=slot.local_path) %}
+  {% elif slot.generated_url %}
+    {% set slot_image_src = slot.generated_url %}
+  {% else %}
+    {% set slot_image_src = None %}
+  {% endif %}
   <div class="img-card">
     <!-- 预览区 -->
     <div class="img-card-preview">
-      {% if slot.generated_url %}
-        <img src="{{ slot.generated_url }}" alt="{{ slot.role }}" loading="lazy" onclick="viewFullImage('{{ slot.generated_url }}')" style="cursor:pointer">
+      {% if slot_image_src %}
+        <img src="{{ slot_image_src }}" alt="{{ slot.role }}" loading="lazy" onclick="viewFullImage('{{ slot_image_src }}')" style="cursor:pointer">
       {% else %}
         <span class="placeholder">🖼️</span>
       {% endif %}
@@ -132,12 +161,12 @@
 
       <div class="img-card-meta">
         {% if slot.status == 'planned' %}<span class="text-warning">⏳ 待生成</span>
-        {% elif slot.status == 'generated' %}<span class="text-info">🎨 已生成</span>
+        {% elif slot.status == 'generated' %}<span class="text-info">🎨 已生成候选，待选用</span>
         {% elif slot.status == 'reviewed' %}<span class="text-primary">👁 已审核</span>
         {% elif slot.status == 'approved' %}<span class="text-success fw-bold">✅ 已通过</span>
         {% elif slot.status == 'rejected' %}<span class="text-danger">❌ 已拒绝</span>
         {% endif %}
-        {% if slot.generated_url %}<span>1024×1360</span>{% endif %}
+        {% if slot_image_src %}<span>1024x1360</span>{% endif %}
       </div>
 
       {% if slot.prompt_cn %}
@@ -145,29 +174,100 @@
       {% endif %}
 
       <div class="img-card-actions">
-        <button class="btn btn-sm btn-outline-secondary" title="查看大图" onclick="{% if slot.generated_url %}viewFullImage('{{ slot.generated_url }}'){% else %}alert('尚未生成图片'){% endif %}">🔍</button>
+        <button class="btn btn-sm btn-outline-secondary" title="查看大图" onclick="{% if slot_image_src %}viewFullImage('{{ slot_image_src }}'){% else %}alert('尚未选用最终图'){% endif %}">🔍</button>
         {% if slot.prompt_cn %}
         <button class="btn btn-sm btn-outline-secondary" title="复制prompt" onclick="copyPrompt('{{ slot.prompt_cn|e }}')">📋</button>
         {% endif %}
-        {% if slot.status == 'rejected' or slot.status == 'generated' %}
-        <button class="btn btn-sm btn-outline-warning" title="重新生成" onclick="alert('重新生成功能将在接入AI服务后可用')">🔄</button>
-        {% endif %}
-        {% if slot.generated_url %}
-        <a href="{{ slot.generated_url }}" class="btn btn-sm btn-outline-secondary" download target="_blank" title="下载">💾</a>
+        {% if slot_image_src %}
+        <a href="{{ slot_image_src }}" class="btn btn-sm btn-outline-secondary" download target="_blank" title="下载">💾</a>
         {% endif %}
         <div class="ms-auto">
-          {% if slot.status != 'approved' and slot.generated_url %}
+          {% if slot.status != 'approved' and slot_image_src %}
           <form method="POST" action="{{ url_for('ozon.image_plan_approve', slot_id=slot.id) }}" style="display:inline" title="审核通过">
             <button class="btn btn-sm btn-outline-success">✓</button>
           </form>
           {% endif %}
-          {% if slot.status != 'rejected' and slot.generated_url %}
+          {% if slot.status != 'rejected' and slot_image_src %}
           <form method="POST" action="{{ url_for('ozon.image_plan_reject', slot_id=slot.id) }}" style="display:inline" title="拒绝">
             <button class="btn btn-sm btn-outline-danger">✗</button>
           </form>
           {% endif %}
         </div>
       </div>
+
+      <!-- 候选图区域 -->
+      {% set slot_candidates = candidate_map.get(slot.id, []) %}
+      {% if slot_candidates %}
+      <div class="candidates-section">
+        <div class="section-title">🎯 候选图 ({{ slot_candidates|length }})</div>
+        {% for c in slot_candidates %}
+        <div class="candidate-item{% if c.status == 'selected' %} selected{% endif %}">
+          <!-- 缩略图 -->
+          <div class="candidate-thumb">
+            {% if c.local_path %}
+              <img src="{{ url_for('ozon.serve_ai_generated', filename=c.local_path) }}" alt="{{ c.provider }}" loading="lazy" onclick="viewFullImage('{{ url_for('ozon.serve_ai_generated', filename=c.local_path) }}')" style="cursor:pointer">
+            {% elif c.image_url %}
+              <img src="{{ c.image_url }}" alt="{{ c.provider }}" loading="lazy" onclick="viewFullImage('{{ c.image_url }}')" style="cursor:pointer">
+            {% else %}
+              <span class="no-img">🖼️</span>
+            {% endif %}
+          </div>
+          <!-- 信息 -->
+          <div class="candidate-info">
+            <div class="d-flex justify-content-between align-items-start">
+              <div>
+                <span class="badge bg-secondary">{{ c.provider }}</span>
+                <span class="badge bg-light text-dark">{{ c.model_name }}</span>
+                {% if c.status == 'selected' %}<span class="badge bg-success">✅ 已选用</span>
+                {% elif c.status == 'failed' %}<span class="badge bg-danger">❌ 失败</span>
+                {% endif %}
+              </div>
+              {% if c.total_score is not none %}
+              <span class="cand-score" title="综合评分">{{ c.total_score }}分</span>
+              {% endif %}
+            </div>
+            <div class="cand-provider mt-1">
+              {% if c.prompt_version %}<span class="me-2">v:{{ c.prompt_version }}</span>{% endif %}
+              {% if c.local_path %}<span class="me-2 text-success">💾 已保存本地</span>{% endif %}
+              {% if c.error_message %}
+              <div class="cand-error">⚠ {{ c.error_message[:200] }}</div>
+              {% endif %}
+            </div>
+            <!-- 分数明细 -->
+            {% if c.structure_score is not none or c.detail_score is not none or c.text_score is not none or c.commercial_score is not none or c.postprocess_score is not none %}
+            <div class="cand-provider mt-1">
+              结构{{ c.structure_score or '-' }} | 细节{{ c.detail_score or '-' }} | 文字{{ c.text_score or '-' }} | 美观{{ c.commercial_score or '-' }} | 后期{{ c.postprocess_score or '-' }}
+            </div>
+            {% endif %}
+            {% if c.review_notes %}
+            <div class="cand-provider mt-1" style="max-height:36px;overflow:hidden;">📝 {{ c.review_notes[:100] }}</div>
+            {% endif %}
+            <!-- 操作按钮 -->
+            <div class="cand-actions">
+              {% if c.status != 'failed' and c.status != 'selected' and (c.local_path or c.image_url) %}
+              <form method="POST" action="{{ url_for('ozon.image_candidate_select', candidate_id=c.id) }}" style="display:inline">
+                <button class="btn btn-sm btn-outline-success" title="选用此候选图">✅ 选用</button>
+              </form>
+              {% endif %}
+              <button class="btn btn-sm btn-outline-secondary" onclick="toggleScoreForm('score-form-{{ c.id }}')" title="评分">⭐</button>
+            </div>
+            <!-- 评分表单（默认隐藏） -->
+            <form method="POST" action="{{ url_for('ozon.image_candidate_score', candidate_id=c.id) }}" id="score-form-{{ c.id }}" style="display:none;">
+              <div class="score-form-row mt-2">
+                <label>结构<br><input type="number" name="structure_score" min="0" max="30" value="{{ c.structure_score or '' }}" placeholder="0-30"></label>
+                <label>细节<br><input type="number" name="detail_score" min="0" max="25" value="{{ c.detail_score or '' }}" placeholder="0-25"></label>
+                <label>文字<br><input type="number" name="text_score" min="0" max="15" value="{{ c.text_score or '' }}" placeholder="0-15"></label>
+                <label>美观<br><input type="number" name="commercial_score" min="0" max="20" value="{{ c.commercial_score or '' }}" placeholder="0-20"></label>
+                <label>后期<br><input type="number" name="postprocess_score" min="0" max="10" value="{{ c.postprocess_score or '' }}" placeholder="0-10"></label>
+                <button type="submit" class="btn btn-sm btn-primary">💾</button>
+              </div>
+              <input type="text" name="review_notes" class="form-control form-control-sm mt-1" placeholder="评分备注(可选)" value="{{ c.review_notes or '' }}" maxlength="2000" style="font-size:11px;">
+            </form>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
     </div>
   </div>
   {% endfor %}
@@ -193,13 +293,29 @@
   </div>
 </div>
 
+<!-- 生成工具栏 -->
+<div class="gen-toolbar">
+  <div class="fw-bold text-nowrap">🤖 图片生成</div>
+  <div class="small text-muted">生成结果先进入候选图；点击“选用”后才会成为最终已通过图片。</div>
+  <form method="POST" action="{{ url_for('ozon.image_plan_generate', draft_id=draft.id) }}" class="d-flex gap-2 align-items-center flex-wrap">
+    <select name="model_config_id" class="form-select form-select-sm" style="max-width:280px;">
+      <option value="">— 全部已启用的 img_gen_ 模型 —</option>
+      {% for cfg in image_model_configs %}
+      <option value="{{ cfg.id }}">{{ cfg.provider }} / {{ cfg.model_name }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-sm btn-success">🎨 生成(选中模型)</button>
+    <button type="button" class="btn btn-sm btn-warning" onclick="generateAll(this)">🚀 全部模型生成</button>
+  </form>
+  <div class="ms-auto">
+    <span class="text-muted small">{{ image_model_configs|length }} 个 img_gen_ 模型已启用</span>
+  </div>
+</div>
+
 <!-- 底部操作栏 -->
 <div class="d-flex gap-2 justify-content-between mt-3 mb-4">
   <a href="{{ url_for('ozon.listing_review', draft_id=draft.id) }}" class="btn btn-outline-secondary">← 返回草稿审核</a>
   <div class="d-flex gap-2">
-    <form method="POST" action="{{ url_for('ozon.image_plan_generate', draft_id=draft.id) }}" style="display:inline">
-      <button type="submit" class="btn btn-success">🤖 批量生成图片</button>
-    </form>
     <a href="{{ url_for('ozon.listings') }}" class="btn btn-primary">📋 完成审核 → 到刊登列表</a>
   </div>
 </div>
@@ -232,6 +348,24 @@ function copyPrompt(text) {
     document.body.removeChild(ta);
     alert('Prompt 已复制');
   }
+}
+function toggleScoreForm(formId) {
+  var form = document.getElementById(formId);
+  if (form) {
+    form.style.display = form.style.display === 'none' ? 'block' : 'none';
+  }
+}
+function generateAll(btn) {
+  // Find the parent form, add generate_all_models hidden input, submit
+  var form = btn.closest('form');
+  var input = document.createElement('input');
+  input.type = 'hidden';
+  input.name = 'generate_all_models';
+  input.value = '1';
+  form.appendChild(input);
+  btn.disabled = true;
+  btn.textContent = '⏳ 生成中...';
+  form.submit();
 }
 </script>
 {% endblock %}

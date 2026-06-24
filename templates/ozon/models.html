@@ -38,25 +38,42 @@
           <input type="hidden" name="action" value="save_image_gen">
           <div class="row g-2">
             <div class="col-md-4">
-              <label class="form-label mb-0" style="font-size:11px">Provider</label>
-              <select class="form-select form-select-sm" name="img_gen_provider">
-                <option value="dalle">OpenAI DALL-E 3</option>
+              <label class="form-label mb-0" style="font-size:11px">Provider <span class="text-muted">(自动加 img_gen_ 前缀)</span></label>
+              <input type="text" class="form-control form-control-sm" name="img_gen_provider" placeholder="如: seedream / gpt_image / wanx / banana" list="providerSuggest">
+              <datalist id="providerSuggest">
+                <option value="seedream">Seedream 4.5 (火山引擎 ARK)</option>
+                <option value="gpt_image">GPT Image 1.5 (OpenAI)</option>
                 <option value="wanx">通义万相 (DashScope)</option>
-              </select>
+                <option value="banana">IMAGE NANO BANANA</option>
+                <option value="openai">GPT Image 1 / DALL-E 3 (OpenAI)</option>
+                <option value="kling">可灵</option>
+                <option value="jimeng">即梦</option>
+              </datalist>
+              <div class="mt-1" style="font-size:10px;color:#6c757d;">
+                快捷选择：
+                <a href="#" onclick="fillProvider('seedream','doubao-seedream-4.5','https://ark.cn-beijing.volces.com/api/v3');return false;" class="text-decoration-none me-1">Seedream</a>
+                <a href="#" onclick="fillProvider('gpt_image','gpt-image-1.5','https://api.openai.com/v1');return false;" class="text-decoration-none me-1">GPT-Image</a>
+                <a href="#" onclick="fillProvider('wanx','wanx2.0-t2i-turbo','https://dashscope.aliyuncs.com');return false;" class="text-decoration-none me-1">万相</a>
+                <a href="#" onclick="fillProvider('banana','','');return false;" class="text-decoration-none">Banana</a>
+              </div>
             </div>
             <div class="col-md-4">
               <label class="form-label mb-0" style="font-size:11px">Model Name</label>
-              <input type="text" class="form-control form-control-sm" name="img_gen_model_name" placeholder="如: dall-e-3">
+              <input type="text" class="form-control form-control-sm" name="img_gen_model_name" id="imgGenModelName" placeholder="如: gpt-image-1.5">
             </div>
             <div class="col-md-4">
-              <label class="form-label mb-0" style="font-size:11px">API Base URL（可选）</label>
-              <input type="text" class="form-control form-control-sm" name="img_gen_api_base" placeholder="留空用 OpenAI 默认">
+              <label class="form-label mb-0" style="font-size:11px">API Base URL</label>
+              <input type="text" class="form-control form-control-sm" name="img_gen_api_base" id="imgGenApiBase" placeholder="如: https://api.openai.com/v1">
             </div>
-            <div class="col-md-8">
+            <div class="col-md-6">
               <label class="form-label mb-0" style="font-size:11px">API Key</label>
-              <input type="password" class="form-control form-control-sm" name="img_gen_api_key" placeholder="sk-...">
+              <input type="password" class="form-control form-control-sm" name="img_gen_api_key" placeholder="sk-..." autocomplete="off">
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
+              <label class="form-label mb-0" style="font-size:11px">Notes (JSON, 可选)</label>
+              <input type="text" class="form-control form-control-sm" name="img_gen_notes" placeholder='{"size":"1024x1536"}'>
+            </div>
+            <div class="col-md-3">
               <label class="form-label mb-0" style="font-size:11px">启用</label>
               <div class="form-check form-switch mt-1">
                 <input class="form-check-input" type="checkbox" name="img_gen_enabled">
@@ -68,13 +85,14 @@
 
         {% if img_gen_configs %}
         <hr class="my-2">
-        <div style="font-size:11px"><strong>已保存的配置：</strong></div>
+        <div style="font-size:11px"><strong>已保存的图片生成配置：</strong></div>
         {% for g in img_gen_configs %}
-        <div class="d-flex justify-content-between align-items-center bg-light rounded p-1 mt-1">
+        <div class="d-flex justify-content-between align-items-center bg-light rounded p-1 mt-1" id="configRow{{ g.id }}">
           <span>
             <strong>{{ g.provider }}</strong> / {{ g.model_name }}
             <span class="badge {% if g.enabled %}bg-success{% else %}bg-secondary{% endif %}">{{ '启用' if g.enabled else '禁用' }}</span>
-            <small class="text-muted">{{ g.updated_at.strftime('%m-%d %H:%M') if g.updated_at else '' }}</small>
+            <small class="text-muted">{{ g.updated_at.strftime('%Y-%m-%d %H:%M') if g.updated_at else '' }}</small>
+            {% if g.api_base %}<small class="text-muted ms-1">{{ g.api_base[:40] }}</small>{% endif %}
           </span>
           <span>
             <button class="btn btn-sm btn-outline-danger" style="font-size:10px;padding:1px 6px" onclick="deleteConfig({{ g.id }})" title="删除">🗑️</button>
@@ -211,6 +229,14 @@
 </div>
 
 <script>
+function fillProvider(provider, modelName, apiBase) {
+  var form = document.querySelector('form input[name="action"][value="save_image_gen"]').closest('form');
+  form.querySelector('[name="img_gen_provider"]').value = provider;
+  form.querySelector('[name="img_gen_model_name"]').value = modelName;
+  form.querySelector('[name="img_gen_api_base"]').value = apiBase;
+  form.querySelector('[name="img_gen_api_key"]').focus();
+}
+
 (function() {
   var dropZone = document.getElementById('dropZone');
   var imageInput = document.getElementById('imageInput');
