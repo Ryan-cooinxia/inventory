@@ -26,6 +26,7 @@ from models import (
     OzonAccount, OzonSource, OzonSourceSku, OzonSourceMedia,
     OzonDraft, OzonDraftSku, OzonImageSlot, OzonImageCandidate, OzonPublishJob,
     OzonImagePlan, OzonImageReference, OzonProductCutout,
+    OzonProductSubjectDetection,
     OzonPrompt, OzonPricingRule,
     # OZON 适配层
     SourceProductGroup, SourceProductGroupItem,
@@ -169,7 +170,7 @@ def init_db():
                       OzonAttributeValue, OzonCategory,
                       OzonOnlineProduct, OzonOnlineProductAction,
                       OzonImageCandidate, OzonImagePlan, OzonImageReference,
-                      OzonProductCutout],
+                      OzonProductCutout, OzonProductSubjectDetection],
                      safe=True)
     migrate_ozon_source_quality_schema()
     migrate_product_bundle_schema()

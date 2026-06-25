@@ -55,6 +55,7 @@ from services.product_cutout import (
     _load_media_image,
     CUTOUT_DIR,
 )
+from services.product_subject_detector import detect_product_subject
 from crypto_utils import encrypt_api_key
 from crypto_utils import decrypt_api_key
 
@@ -2384,6 +2385,26 @@ def product_cutout_create(media_id):
             pass
 
     result = create_product_cutout(current_user, media, provider=provider, sku=sku, targets=targets)
+    return jsonify(result)
+
+
+@ozon_bp.route('/product-cutout/<int:media_id>/detect-subject', methods=['POST'])
+@login_required
+def product_cutout_detect_subject(media_id):
+    """自动识别产品主体"""
+    media = (OzonSourceMedia
+             .select()
+             .join(OzonSource)
+             .where((OzonSourceMedia.id == media_id) &
+                    (OzonSource.user == current_user))
+             .first())
+    if not media:
+        return jsonify({'ok': False, 'error': '图片不存在'}), 404
+
+    result = detect_product_subject(current_user, media)
+    if 'error' in result:
+        return jsonify({'ok': False, 'error': result['error']}), 400
+    result['ok'] = True
     return jsonify(result)
 
 

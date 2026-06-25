@@ -62,6 +62,7 @@
       </div>
       <div class="target-list" id="targetList{{ rec.media_id }}"></div>
       <div class="cutout-actions">
+        <button class="btn btn-sm btn-info" onclick="doDetectSubject({{ rec.media_id }})">🔍 自动识别</button>
         <button class="btn btn-sm btn-primary" onclick="doCutoutV2({{ rec.media_id }})">✂️ 目标抠图</button>
         <button class="btn btn-sm btn-outline-secondary" onclick="doCutoutSimple({{ rec.media_id }})" title="快速抠图-仅白底图适用">⚡ 快速抠图</button>
       </div>
@@ -269,6 +270,76 @@ document.addEventListener('DOMContentLoaded', function() {
     if (mediaId) initDrawing(mediaId);
   });
 });
+
+function doDetectSubject(mediaId) {
+  var el = document.getElementById('cutoutResult' + mediaId);
+  el.innerHTML = '<span class="text-info">识别中...</span>';
+  fetch('/ozon/product-cutout/' + mediaId + '/detect-subject', { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d.ok) { el.innerHTML = '<span class="text-danger">' + (d.error || '识别失败') + '</span>'; return; }
+      el.innerHTML = '<span class="text-success">识别完成: ' + (d.main_product ? d.main_product.label : '') + '</span>';
+
+      // Clear old targets
+      allTargets[mediaId] = [];
+      var wrap = document.getElementById('imgWrap' + mediaId);
+      if (wrap) { wrap.querySelectorAll('.target-box').forEach(function(b) { b.remove(); }); }
+
+      // Draw main product box
+      if (d.main_product && d.main_product.bbox) {
+        var mp = d.main_product;
+        var t = { type: 'main_product', keep: true,
+                  bbox: mp.bbox, image_width: d.image_width, image_height: d.image_height,
+                  label: mp.label || '主商品', confidence: mp.confidence || 0, source: 'vision_model' };
+        allTargets[mediaId].push(t);
+        drawTargetBox(mediaId, t, 'keep');
+      }
+
+      // Draw exclude regions
+      if (d.exclude_regions) {
+        d.exclude_regions.forEach(function(er) {
+          var t = { type: er.type, keep: false,
+                    bbox: er.bbox, image_width: d.image_width, image_height: d.image_height,
+                    label: er.description || er.type, confidence: er.confidence || 0, source: 'vision_model' };
+          allTargets[mediaId].push(t);
+          drawTargetBox(mediaId, t, 'remove');
+        });
+      }
+      updateTargetUI(mediaId);
+
+      if (d.requires_confirmation) {
+        el.innerHTML += ' <span class="text-warning">需人工确认</span>';
+      }
+      if (d.warnings && d.warnings.length) {
+        el.innerHTML += ' <span class="text-warning">' + d.warnings.join('; ') + '</span>';
+      }
+    })
+    .catch(function(e) { el.innerHTML = '<span class="text-danger">请求失败: ' + e.message + '</span>'; });
+}
+
+function drawTargetBox(mediaId, target, cssClass) {
+  var wrap = document.getElementById('imgWrap' + mediaId);
+  var img = document.getElementById('img' + mediaId);
+  if (!wrap || !img) return;
+
+  var rect = img.getBoundingClientRect();
+  var scaleX = rect.width / img.naturalWidth;
+  var scaleY = rect.height / img.naturalHeight;
+  var bbox = target.bbox;
+
+  var boxEl = document.createElement('div');
+  boxEl.className = 'target-box ' + cssClass;
+  boxEl.style.left = Math.round(bbox[0] * scaleX) + 'px';
+  boxEl.style.top = Math.round(bbox[1] * scaleY) + 'px';
+  boxEl.style.width = Math.round((bbox[2] - bbox[0]) * scaleX) + 'px';
+  boxEl.style.height = Math.round((bbox[3] - bbox[1]) * scaleY) + 'px';
+  var lbl = document.createElement('span');
+  lbl.className = 'target-box-label';
+  lbl.style.cssText = 'background:' + (cssClass === 'keep' ? '#198754' : '#dc3545');
+  lbl.textContent = (allTargets[mediaId] ? allTargets[mediaId].length : '') + ':' + (target.label || '');
+  boxEl.appendChild(lbl);
+  wrap.appendChild(boxEl);
+}
 
 function switchBg(id, cls) {
   var el = document.getElementById(id); if (!el) return;

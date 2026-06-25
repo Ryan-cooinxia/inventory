@@ -674,6 +674,35 @@ class OzonProductCutout(BaseModel):
         )
 
 
+class OzonProductSubjectDetection(BaseModel):
+    """视觉模型商品主体检测记录（保留历史）"""
+    user = ForeignKeyField(User, backref='product_subject_detections')
+    source = ForeignKeyField(OzonSource, backref='subject_detections')
+    source_media = ForeignKeyField(OzonSourceMedia, backref='subject_detections')
+
+    provider = CharField(max_length=50)          # qwen_vl / openai_vision 等
+    model_name = CharField(max_length=100)
+
+    image_width = IntegerField()
+    image_height = IntegerField()
+
+    detection_json = TextField()                 # 识别结果 JSON
+    raw_response_json = TextField(null=True)     # 视觉模型原始响应
+
+    main_product_confidence = FloatField(null=True)
+    status = CharField(max_length=20, default='detected')  # detected / confirmed / rejected / failed
+
+    error_message = TextField(null=True)
+    created_at = DateTimeField(default=datetime.datetime.now)
+    confirmed_at = DateTimeField(null=True)
+
+    class Meta:
+        indexes = (
+            (('user', 'source_media'), False),
+            (('user', 'status'), False),
+        )
+
+
 class OzonImageSlot(BaseModel):
     """图片槽位"""
     user = ForeignKeyField(User, backref='ozon_image_slots')
