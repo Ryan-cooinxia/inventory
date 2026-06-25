@@ -3494,6 +3494,9 @@ def api_analyze_product_fact(fact_id):
     result['conflicts'] = len(detect_fact_conflicts(fact))
     return jsonify(result)
 
+
+@ozon_bp.route('/api/product-fact/<int:fact_id>/merge', methods=['POST'])
+@login_required
 def api_merge_fact(fact_id):
     fact = ProductFact.get_or_none((ProductFact.id == fact_id) & (ProductFact.user == current_user))
     if not fact: return jsonify({"ok": False, "error": "商品事实不存在"}), 404

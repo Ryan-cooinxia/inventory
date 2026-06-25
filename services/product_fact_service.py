@@ -288,6 +288,14 @@ def reject_fact_evidence(evidence_id: int, user, reason: str = '') -> bool:
 # 验证
 # ═══════════════════════════════════════════════════════════════
 
+def resolve_fact_sources(fact):
+    if not fact.group: return []
+    return [item.source for item in __import__("models").SourceProductGroupItem.select().where(
+        (__import__("models").SourceProductGroupItem.group == fact.group) &
+        (__import__("models").SourceProductGroupItem.user == fact.user)
+    )]
+
+
 def validate_product_brief(fact: ProductFact) -> Dict[str, Any]:
     """验证 Product Brief 是否可以审核通过。返回 blocking_errors 列表。"""
     errors = []
@@ -311,9 +319,7 @@ def validate_product_brief(fact: ProductFact) -> Dict[str, Any]:
     skus = list(ProductFactSku.select().where(
         (ProductFactSku.fact == fact) & (ProductFactSku.user == user)
     ))
-    source_skus = list(OzonSource.select().join(
-        ProductFact, on=(ProductFact.source_id == OzonSource.id)  # approximate
-    ).where(ProductFact.id == fact.id))
+    sources = resolve_fact_sources(fact)
     # Check SKU evidence
     for s in skus:
         confirmed_count = (ProductFactEvidence.select().where(
