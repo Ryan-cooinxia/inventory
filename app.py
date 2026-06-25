@@ -31,7 +31,7 @@ from models import (
     # OZON 适配层
     SourceProductGroup, SourceProductGroupItem,
     ProductFact, ProductFactSku, ProductFactEvidence,
-    ProductFactRevision,
+    ProductFactRevision, ProductFactSchema,
     ListingAdaptation,
     # OZON 类目属性
     OzonCategory, OzonCategoryAttribute, OzonCategoryType,
@@ -172,7 +172,7 @@ def init_db():
                       OzonOnlineProduct, OzonOnlineProductAction,
                       OzonImageCandidate, OzonImagePlan, OzonImageReference,
                       OzonProductCutout, OzonProductSubjectDetection,
-                      ProductFactRevision],
+                      ProductFactRevision, ProductFactSchema],
                      safe=True)
     migrate_ozon_source_quality_schema()
     migrate_product_bundle_schema()
@@ -279,6 +279,11 @@ def migrate_ozon_image_schema():
             ('confirmed_at', 'DATETIME'),
             ('rejected_reason', 'TEXT'),
             ('updated_at', 'DATETIME'),
+            ('group_key', 'VARCHAR(30)'),
+            ('label_cn', 'VARCHAR(100)'),
+            ('value_type', 'VARCHAR(20)'),
+            ('unit', 'VARCHAR(20)'),
+            ('sort_order', 'INTEGER NOT NULL DEFAULT 0'),
         ],
         'ozonproductcutout': [
             ('target_spec_json', 'TEXT'),

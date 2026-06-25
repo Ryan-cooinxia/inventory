@@ -3288,13 +3288,17 @@ def adaptation_workspace(source_id):
                               ImageFact.media_id.in_(media_ids))
                        .order_by(ImageFact.created_at.desc()))
 
-    # 加载 ProductFactEvidence 证据列表
+    # 加载 ProductFactEvidence 证据列表并按 group_key 分组
     evidences = []
+    product_details = {}  # {group_key: [evidences]}
     if fact:
         evidences = list(ProductFactEvidence.select().where(
             (ProductFactEvidence.user == current_user) &
             (ProductFactEvidence.fact == fact)
-        ).order_by(ProductFactEvidence.fact_status, ProductFactEvidence.field_path)[:50])
+        ).order_by(ProductFactEvidence.sort_order, ProductFactEvidence.field_path)[:100])
+        for ev in evidences:
+            gk = ev.group_key or _infer_group_key(ev.field_path)
+            product_details.setdefault(gk, []).append(ev)
 
     # 检查是否有已启用的视觉模型配置
     has_vision_config = (VisionModelConfig
@@ -3342,6 +3346,7 @@ def adaptation_workspace(source_id):
                            adaptation=adaptation, gaps=gaps,
                            image_facts=image_facts,
                            evidences=evidences,
+                           product_details=product_details,
                            has_vision_config=has_vision_config,
                            # 新增：类目/Type/属性/字典
                            adaptation_types=adaptation_types,

@@ -982,6 +982,13 @@ class ProductFactEvidence(BaseModel):
     confirmed_at = DateTimeField(null=True)
     rejected_reason = TextField(null=True)
 
+    # ── 动态属性：跨品类通用 ──
+    group_key = CharField(max_length=30, null=True)          # identity/structure/specification/function/compatibility/sku/package/selling_point/custom
+    label_cn = CharField(max_length=100, null=True)          # 中文显示名
+    value_type = CharField(max_length=20, null=True)         # text/number/boolean/list/measurement
+    unit = CharField(max_length=20, null=True)               # mm/g/Hz/V/W等
+    sort_order = IntegerField(default=0)
+
     created_at = DateTimeField(default=datetime.datetime.now)
     updated_at = DateTimeField(default=datetime.datetime.now)
 
@@ -991,6 +998,7 @@ class ProductFactEvidence(BaseModel):
             (('fact', 'field_path'), False),
             (('user', 'evidence_hash'), False),
             (('fact', 'conflict_group'), False),
+            (('fact', 'group_key'), False),
         )
 
 
@@ -1011,6 +1019,22 @@ class ProductFactRevision(BaseModel):
         indexes = (
             (('user', 'fact'), False),
             (('fact', 'revision'), True),
+        )
+
+
+class ProductFactSchema(BaseModel):
+    """品类事实模板 — 指导不同品类提取不同属性"""
+    user = ForeignKeyField(User, backref='product_fact_schemas')
+    category_key = CharField(max_length=100, unique=True)   # electronics.camera_accessory
+    display_name = CharField(max_length=100)                 # 摄影配件
+    schema_json = TextField()                                # 完整 schema JSON
+    is_active = BooleanField(default=True)
+    created_at = DateTimeField(default=datetime.datetime.now)
+    updated_at = DateTimeField(default=datetime.datetime.now)
+
+    class Meta:
+        indexes = (
+            (('user', 'category_key'), True),
         )
 
 
