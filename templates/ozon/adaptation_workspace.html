@@ -20,7 +20,7 @@
 <div class="row g-2" style="min-height:calc(100vh - 160px)">
   <!-- 左栏：源商品资料 -->
   <div class="col-lg-3">
-    <div class="card h-100">
+    <div class="card">
       <div class="card-header py-2 d-flex justify-content-between align-items-center">
         <strong style="font-size:13px">📥 源商品资料</strong>
         <span class="badge bg-secondary">{{ source.platform }}</span>
@@ -152,7 +152,7 @@
 
 <!-- 中栏：商品事实库 -->
   <div class="col-lg-5">
-    <div class="card h-100">
+    <div class="card">
       <div class="card-header py-2 d-flex justify-content-between align-items-center">
         <strong style="font-size:13px">📋 商品事实库</strong>
         <div class="d-flex gap-1">
@@ -296,7 +296,7 @@
 
   <!-- 右栏：OZON Listing 草稿 -->
   <div class="col-lg-4">
-    <div class="card h-100">
+    <div class="card">
       <div class="card-header py-2 d-flex justify-content-between align-items-center">
         <strong style="font-size:13px">🎯 OZON Listing 草稿</strong>
         <button class="btn btn-sm btn-primary" style="font-size:11px" onclick="generateDraft()" {% if fact.review_status != 'approved' %}disabled{% endif %}>生成草稿</button>
