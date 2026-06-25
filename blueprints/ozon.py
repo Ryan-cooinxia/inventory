@@ -56,6 +56,7 @@ from services.product_cutout import (
     CUTOUT_DIR,
 )
 from services.product_subject_detector import detect_product_subject
+from services.vision_tool import analyze_product_image
 from crypto_utils import encrypt_api_key
 from crypto_utils import decrypt_api_key
 
@@ -3407,6 +3408,94 @@ def api_save_fact(group_id):
     group.updated_at = datetime.datetime.now()
     group.save()
     return jsonify({'ok': True, 'message': '商品事实已保存'})
+# ==================== 商品事实管理 API ====================
+
+@ozon_bp.route("/api/product-fact/<int:fact_id>/analyze", methods=["POST"])
+@login_required
+def api_analyze_product_fact(fact_id):
+    from services.product_fact_service import merge_fact_candidates, detect_fact_conflicts
+    from services.product_text_fact_extractor import extract_text_facts
+    fact = ProductFact.get_or_none((ProductFact.id == fact_id) & (ProductFact.user == current_user))
+    if not fact: return jsonify({"ok": False, "error": "商品事实不存在"}), 404
+    source = getattr(fact, "source", None)
+    text_count = extract_text_facts(current_user, source, fact) if source else 0
+    img_count = 0
+    if source:
+        for m in OzonSourceMedia.select().where((OzonSourceMedia.user == current_user) & (OzonSourceMedia.source == source) & (OzonSourceMedia.compliance_status != "rejected")).limit(10):
+            try:
+                if analyze_product_image(current_user, m): img_count += 1
+            except: pass
+    merged = merge_fact_candidates(fact)
+    conflicts = detect_fact_conflicts(fact)
+    return jsonify({"ok": True, "text_facts": text_count, "images_analyzed": img_count, "merged": merged, "conflicts": len(conflicts)})
+
+@ozon_bp.route("/api/product-fact/<int:fact_id>/merge", methods=["POST"])
+@login_required
+def api_merge_fact(fact_id):
+    fact = ProductFact.get_or_none((ProductFact.id == fact_id) & (ProductFact.user == current_user))
+    if not fact: return jsonify({"ok": False, "error": "商品事实不存在"}), 404
+    from services.product_fact_service import merge_fact_candidates, detect_fact_conflicts
+    return jsonify({"ok": True, "merged": merge_fact_candidates(fact), "conflicts": len(detect_fact_conflicts(fact))})
+
+@ozon_bp.route("/api/product-fact/<int:fact_id>/brief", methods=["GET"])
+@login_required
+def api_get_product_brief(fact_id):
+    fact = ProductFact.get_or_none((ProductFact.id == fact_id) & (ProductFact.user == current_user))
+    if not fact: return jsonify({"ok": False, "error": "商品事实不存在"}), 404
+    from services.product_fact_service import build_product_brief
+    return jsonify({"ok": True, "brief": build_product_brief(fact)})
+
+@ozon_bp.route("/api/product-fact/<int:fact_id>/evidences", methods=["GET"])
+@login_required
+def api_get_fact_evidences(fact_id):
+    fact = ProductFact.get_or_none((ProductFact.id == fact_id) & (ProductFact.user == current_user))
+    if not fact: return jsonify({"ok": False, "error": "商品事实不存在"}), 404
+    field = request.args.get("field", "")
+    q = ProductFactEvidence.select().where((ProductFactEvidence.user == current_user) & (ProductFactEvidence.fact == fact))
+    if field: q = q.where(ProductFactEvidence.field_path == field)
+    return jsonify({"ok": True, "evidences": [{"id": e.id, "field_path": e.field_path, "fact_status": e.fact_status, "confidence": e.confidence, "evidence_type": e.evidence_type, "value": e.value_json or e.content} for e in q.order_by(ProductFactEvidence.field_path)[:100]]})
+
+@ozon_bp.route("/api/product-fact/evidence/<int:evidence_id>/confirm", methods=["POST"])
+@login_required
+def api_confirm_evidence(evidence_id):
+    from services.product_fact_service import confirm_fact_evidence
+    return jsonify({"ok": confirm_fact_evidence(evidence_id, current_user, current_user)})
+
+@ozon_bp.route("/api/product-fact/evidence/<int:evidence_id>/reject", methods=["POST"])
+@login_required
+def api_reject_evidence(evidence_id):
+    from services.product_fact_service import reject_fact_evidence
+    data = request.get_json() or {}
+    return jsonify({"ok": reject_fact_evidence(evidence_id, current_user, data.get("reason", ""))})
+
+@ozon_bp.route("/api/product-fact/<int:fact_id>/resolve-conflict", methods=["POST"])
+@login_required
+def api_resolve_conflict(fact_id):
+    fact = ProductFact.get_or_none((ProductFact.id == fact_id) & (ProductFact.user == current_user))
+    if not fact: return jsonify({"ok": False, "error": "商品事实不存在"}), 404
+    from services.product_fact_service import resolve_conflict
+    data = request.get_json() or {}
+    return jsonify({"ok": resolve_conflict(fact, data.get("conflict_group", 0), data.get("winning_evidence_id", 0), current_user)})
+
+@ozon_bp.route("/api/product-fact/<int:fact_id>/approve", methods=["POST"])
+@login_required
+def api_approve_product_fact(fact_id):
+    fact = ProductFact.get_or_none((ProductFact.id == fact_id) & (ProductFact.user == current_user))
+    if not fact: return jsonify({"ok": False, "error": "商品事实不存在"}), 404
+    from services.product_fact_service import validate_product_brief, create_fact_revision
+    v = validate_product_brief(fact)
+    if not v["passed"]: return jsonify({"ok": False, "error": "{0} 个阻塞问题".format(len(v.get("blocking_errors",[]))), "blocking_errors": v["blocking_errors"][:10]}), 400
+    r = create_fact_revision(fact, current_user)
+    fact.review_status = "approved"; fact.save()
+    return jsonify({"ok": True, "revision": r.revision})
+
+@ozon_bp.route("/api/product-fact/<int:fact_id>/revisions", methods=["GET"])
+@login_required
+def api_get_fact_revisions(fact_id):
+    fact = ProductFact.get_or_none((ProductFact.id == fact_id) & (ProductFact.user == current_user))
+    if not fact: return jsonify({"ok": False, "error": "商品事实不存在"}), 404
+    revs = list(ProductFactRevision.select().where((ProductFactRevision.user == current_user) & (ProductFactRevision.fact == fact)).order_by(ProductFactRevision.revision.desc()))
+    return jsonify({"ok": True, "revisions": [{"revision": r.revision, "status": r.status, "created_at": str(r.created_at)} for r in revs]})
 
 
 @ozon_bp.route('/api/adaptation/<int:group_id>/relation', methods=['POST'])
