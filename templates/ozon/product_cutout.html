@@ -100,16 +100,19 @@
             <button style="background:#000" title="黑底" onclick="switchBg('cutoutPreview{{ c.id }}','black')"></button>
             <button style="background:repeating-conic-gradient(#e0e0e0 0% 25%,#fff 0% 50%) 50%/20px 20px" title="棋盘格" onclick="switchBg('cutoutPreview{{ c.id }}','checker')"></button>
           </div>
-          {% if c.status not in ('approved', 'rejected') %}
           <div class="cutout-actions">
-            <form onsubmit="event.preventDefault(); doApprove({{ c.id }});">
+            {% if c.transparent_path %}
+            <a href="{{ url_for('ozon.serve_cutout', filename=c.transparent_path) }}" class="btn btn-sm btn-outline-secondary" download title="下载透明PNG">📥</a>
+            {% endif %}
+            {% if c.status not in ('approved', 'rejected') %}
+            <form onsubmit="event.preventDefault(); doApprove({{ c.id }});" style="display:inline">
               <button class="btn btn-sm btn-success">✅ 确认母图</button>
             </form>
-            <form onsubmit="event.preventDefault(); doReject({{ c.id }});">
+            <form onsubmit="event.preventDefault(); doReject({{ c.id }});" style="display:inline">
               <button class="btn btn-sm btn-outline-danger">❌ 拒绝</button>
             </form>
+            {% endif %}
           </div>
-          {% endif %}
         </div>
       </div>
       {% endfor %}
