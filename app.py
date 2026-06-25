@@ -31,6 +31,7 @@ from models import (
     # OZON 适配层
     SourceProductGroup, SourceProductGroupItem,
     ProductFact, ProductFactSku, ProductFactEvidence,
+    ProductFactRevision,
     ListingAdaptation,
     # OZON 类目属性
     OzonCategory, OzonCategoryAttribute, OzonCategoryType,
@@ -170,7 +171,8 @@ def init_db():
                       OzonAttributeValue, OzonCategory,
                       OzonOnlineProduct, OzonOnlineProductAction,
                       OzonImageCandidate, OzonImagePlan, OzonImageReference,
-                      OzonProductCutout, OzonProductSubjectDetection],
+                      OzonProductCutout, OzonProductSubjectDetection,
+                      ProductFactRevision],
                      safe=True)
     migrate_ozon_source_quality_schema()
     migrate_product_bundle_schema()
@@ -264,6 +266,19 @@ def migrate_ozon_image_schema():
             ('verified_parameters_json', 'TEXT'),
             ('generation_mode', "VARCHAR(20) NOT NULL DEFAULT 'reference'"),
             ('qa_required', 'INTEGER NOT NULL DEFAULT 1'),
+        ],
+        'productfactevidence': [
+            ('value_json', 'TEXT'),
+            ('fact_status', "VARCHAR(20) NOT NULL DEFAULT 'extracted'"),
+            ('source_type', 'VARCHAR(20)'),
+            ('source_locator_json', 'TEXT'),
+            ('applicable_sku_id', 'INTEGER'),
+            ('evidence_hash', 'VARCHAR(64)'),
+            ('conflict_group', 'INTEGER'),
+            ('confirmed_by_id', 'INTEGER'),
+            ('confirmed_at', 'DATETIME'),
+            ('rejected_reason', 'TEXT'),
+            ('updated_at', 'DATETIME'),
         ],
         'ozonproductcutout': [
             ('target_spec_json', 'TEXT'),

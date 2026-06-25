@@ -963,18 +963,54 @@ class ProductFactEvidence(BaseModel):
     fact = ForeignKeyField(ProductFact, null=True, backref='evidences')
     fact_sku = ForeignKeyField(ProductFactSku, null=True, backref='evidences')
     field_path = CharField(max_length=200)                             # 字段路径，如 material / skus[0].color_cn
-    evidence_type = CharField(max_length=30, default='text')          # text / image / screenshot / html / api / ocr / ai
+    evidence_type = CharField(max_length=30, default='text')          # text / image / screenshot / html / api / ocr / ai / manual
     source = ForeignKeyField(OzonSource, null=True, backref='evidences')
     media = ForeignKeyField(OzonSourceMedia, null=True, backref='evidences')
     source_url = CharField(max_length=500, null=True)
     content = TextField(null=True)
     confidence = FloatField(null=True)
+
+    # ── 新增：事实值、状态、来源定位、SKU归属、冲突标记 ──
+    value_json = TextField(null=True)                    # 事实值 JSON
+    fact_status = CharField(max_length=20, default='extracted')  # extracted/inferred/verified/confirmed/conflict/unknown/rejected
+    source_type = CharField(max_length=20, null=True)    # text/image/ocr/html/api/manual
+    source_locator_json = TextField(null=True)            # 网页段落/图片bbox/OCR区域等
+    applicable_sku_id = IntegerField(null=True)           # 适用 SKU ID
+    evidence_hash = CharField(max_length=64, null=True)   # SHA256 去重
+    conflict_group = IntegerField(null=True)              # 同一冲突组编号
+    confirmed_by = ForeignKeyField(User, null=True, backref='confirmed_evidences')
+    confirmed_at = DateTimeField(null=True)
+    rejected_reason = TextField(null=True)
+
     created_at = DateTimeField(default=datetime.datetime.now)
+    updated_at = DateTimeField(default=datetime.datetime.now)
 
     class Meta:
         indexes = (
             (('user', 'fact'), False),
             (('fact', 'field_path'), False),
+            (('user', 'evidence_hash'), False),
+            (('fact', 'conflict_group'), False),
+        )
+
+
+class ProductFactRevision(BaseModel):
+    """Product Brief 版本快照 — 不可覆盖"""
+    user = ForeignKeyField(User, backref='product_fact_revisions')
+    fact = ForeignKeyField(ProductFact, backref='revisions')
+
+    revision = IntegerField(default=1)
+    brief_json = TextField()                             # 完整 Product Brief JSON
+    status = CharField(max_length=20, default='draft')   # draft / confirmed / approved / archived
+    source_snapshot_json = TextField(null=True)           # 来源快照
+
+    created_by = ForeignKeyField(User, null=True, backref='created_revisions')
+    created_at = DateTimeField(default=datetime.datetime.now)
+
+    class Meta:
+        indexes = (
+            (('user', 'fact'), False),
+            (('fact', 'revision'), True),
         )
 
 
