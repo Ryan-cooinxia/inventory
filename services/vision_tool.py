@@ -82,9 +82,10 @@ Return JSON:
 
 
 def get_active_config(user) -> Optional[VisionModelConfig]:
+    uid = user.id if hasattr(user, "id") else int(user)
     return (VisionModelConfig
             .select()
-            .where((VisionModelConfig.user == user) &
+            .where((VisionModelConfig.user_id == uid) &
                    (VisionModelConfig.enabled == True) &
                    ~(VisionModelConfig.provider.startswith('img_gen_')))
             .first())
@@ -131,8 +132,10 @@ def analyze_product_image(
     source_skus: Optional[List] = None, fact: Optional[Any] = None,
     force: bool = False,
 ) -> dict:
-    """统一入口：分析商品图片。返回 {'ok':True/False, 'facts':N, 'error':''} """
-    config = get_active_config(user)
+    """统一入口：分析商品图片。user可以是User对象或int id。"""
+    # 统一user为int id（避免LocalProxy序列化问题）
+    uid = user.id if hasattr(user, 'id') else int(user)
+    config = get_active_config(uid)
     if not config:
         return {'ok': False, 'error': '未配置启用的视觉模型', 'facts': 0}
 
@@ -149,7 +152,7 @@ def analyze_product_image(
     ).hexdigest()[:20]
     if not force:
         existing = ImageAnalysisJob.select().where(
-            (ImageAnalysisJob.user == user) & (ImageAnalysisJob.media == media) &
+            (ImageAnalysisJob.user_id == uid) & (ImageAnalysisJob.media == media) &
             (ImageAnalysisJob.task_type == task_type) & (ImageAnalysisJob.status == 'success') &
             (ImageAnalysisJob.request_json.contains(task_fingerprint))
         ).first()
@@ -165,8 +168,8 @@ def analyze_product_image(
         _create_job(user, media, task_type, config, status='failed', error=str(e)[:500])
         return {'ok': False, 'error': str(e)[:200], 'facts': 0}
 
-    job = _create_job(user, media, task_type, config, status='success', response=raw_json, parsed=parsed)
-    count = _save_image_facts(user, media, job, parsed, source_skus, fact)
+    job = _create_job(uid, media, task_type, config, status='success', response=raw_json, parsed=parsed)
+    count = _save_image_facts(uid, media, job, parsed, source_skus, fact)
     return {'ok': True, 'facts': count, 'media_id': media.id}
 
 
@@ -256,8 +259,9 @@ def _parse_vision_response(text: str, W: int, H: int) -> dict:
 
 def _create_job(user, media, task_type, config, status='success',
                 response=None, parsed=None, error=None, fingerprint=''):
+    uid = user.id if hasattr(user, 'id') else int(user)
     return ImageAnalysisJob.create(
-        user=user, media=media, source=media.source,
+        user_id=uid, media=media, source=media.source,
         task_type=task_type, provider=config.provider,
         model_name=config.model_name, status=status,
         request_json=json.dumps({
@@ -271,6 +275,7 @@ def _create_job(user, media, task_type, config, status='success',
 
 
 def _save_image_facts(user, media, job, parsed, source_skus, fact=None) -> int:
+    uid = user.id if hasattr(user, "id") else int(user)
     """完整写入 ImageFact + ProductFactEvidence。返回新增数量。"""
     facts = parsed.get('facts', [])
     count = 0
@@ -312,7 +317,7 @@ def _save_image_facts(user, media, job, parsed, source_skus, fact=None) -> int:
         label_cn = f.get('label_cn') or field_path
 
         # ImageFact
-        ImageFact.create(user=user, image_analysis_job=job, media=media,
+        ImageFact.create(user_id=uid, image_analysis_job=job, media=media,
             field_path=field_path, value=value,
             evidence_text=evidence_text, confidence=confidence,
             requires_manual_confirmation=(confidence < 0.85))
@@ -322,11 +327,11 @@ def _save_image_facts(user, media, job, parsed, source_skus, fact=None) -> int:
         if fact:
             evidence_hash = _hash_evidence(fact.id, field_path, value, 'image', str(media.id))
             if not ProductFactEvidence.select().where(
-                (ProductFactEvidence.user == user) & (ProductFactEvidence.fact == fact) &
+                (ProductFactEvidence.user_id == uid) & (ProductFactEvidence.fact == fact) &
                 (ProductFactEvidence.evidence_hash == evidence_hash)
             ).exists():
                 ProductFactEvidence.create(
-                    user=user, fact=fact, fact_sku=fact_sku,
+                    user_id=uid, fact=fact, fact_sku=fact_sku,
                     field_path=field_path, evidence_type='image',
                     fact_status=status, confidence=confidence, source_type='image',
                     source_locator_json=source_locator,
@@ -356,17 +361,18 @@ def _infer_group_key(fp: str) -> str:
 
 
 def backfill_evidence_from_existing_jobs(user, fact, source) -> int:
+    uid = user.id if hasattr(user, "id") else int(user)
     """回填历史 ImageAnalysisJob 到 ProductFactEvidence。返回回填数量。"""
     from models import ImageAnalysisJob, ImageFact as IMF
     count = 0
     media_ids = [m.id for m in OzonSourceMedia.select(OzonSourceMedia.id).where(
-        (OzonSourceMedia.user == user) & (OzonSourceMedia.source == source)
+        (OzonSourceMedia.user_id == uid) & (OzonSourceMedia.source == source)
     )]
     if not media_ids:
         return 0
 
     jobs = list(ImageAnalysisJob.select().where(
-        (ImageAnalysisJob.user == user) & (ImageAnalysisJob.media.in_(media_ids)) &
+        (ImageAnalysisJob.user_id == uid) & (ImageAnalysisJob.media.in_(media_ids)) &
         (ImageAnalysisJob.status == 'success')
     ))
 
@@ -390,11 +396,11 @@ def backfill_evidence_from_existing_jobs(user, fact, source) -> int:
 
                 evidence_hash = _hash_evidence(fact.id, field_path, value, 'image', str(job.media_id))
                 if not ProductFactEvidence.select().where(
-                    (ProductFactEvidence.user == user) & (ProductFactEvidence.fact == fact) &
+                    (ProductFactEvidence.user_id == uid) & (ProductFactEvidence.fact == fact) &
                     (ProductFactEvidence.evidence_hash == evidence_hash)
                 ).exists():
                     ProductFactEvidence.create(
-                        user=user, fact=fact, field_path=field_path,
+                        user_id=uid, fact=fact, field_path=field_path,
                         evidence_type='image', fact_status=status,
                         confidence=confidence, source_type='image',
                         source_locator_json=source_locator,
@@ -406,18 +412,18 @@ def backfill_evidence_from_existing_jobs(user, fact, source) -> int:
         else:
             # 从 ImageFact 回填
             img_facts = list(IMF.select().where(
-                (IMF.user == user) & (IMF.image_analysis_job == job)
+                (IMF.user_id == uid) & (IMF.image_analysis_job == job)
             ))
             for imf in img_facts:
                 field_path = imf.field_path
                 value = str(imf.value or '')[:2000]
                 evidence_hash = _hash_evidence(fact.id, field_path, value, 'image', str(job.media_id))
                 if not ProductFactEvidence.select().where(
-                    (ProductFactEvidence.user == user) & (ProductFactEvidence.fact == fact) &
+                    (ProductFactEvidence.user_id == uid) & (ProductFactEvidence.fact == fact) &
                     (ProductFactEvidence.evidence_hash == evidence_hash)
                 ).exists():
                     ProductFactEvidence.create(
-                        user=user, fact=fact, field_path=field_path,
+                        user_id=uid, fact=fact, field_path=field_path,
                         evidence_type='image', fact_status='extracted',
                         confidence=imf.confidence, source_type='image',
                         media=job.media, source=source,
