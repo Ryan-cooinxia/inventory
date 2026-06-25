@@ -1,14 +1,14 @@
 """
-产品母图服务 V2 — 目标级分割
+产品母图服务 V3 — 只分割、不重绘
 
-将整图显著性抠图升级为指定商品及配件的实例级抠图。
+rembg 只用于生成 mask，产品像素从原图直接取，禁止 AI 重绘。
 
 工作流:
-原图 → 用户指定目标框 → 裁剪区域rembg → 框外强制透明 → 蒙版清理 → 质量检查 → 人工确认
+原图 → 用户框选 → rembg only_mask → 蒙版清理 → 原图+mask合成 → 像素验证 → 人工确认
 
 后端:
-- rembg_crop (默认): bbox裁剪+rembg+框外透明
-- rembg_full: 简单白底图全图rembg
+- rembg_crop (默认): bbox裁剪+rembg mask+框外透明
+- rembg_full: 简单白底图全图rembg mask
 - manual: 人工蒙版
 """
 from __future__ import annotations
@@ -200,7 +200,7 @@ def _next_revision(user, media, provider: str) -> int:
 def _cutout_rembg_crop(img: Image.Image, targets: List[Dict]) -> Tuple[
     Optional[Image.Image], Optional[Image.Image], Optional[Image.Image], Dict
 ]:
-    """对每个 keep 目标裁剪后rembg，合并mask，框外强制透明。"""
+    """对每个 keep 目标裁剪后 rembg only_mask，mask 贴回原图，产品像素不变。"""
     from rembg import remove
 
     W, H = img.size
@@ -209,13 +209,13 @@ def _cutout_rembg_crop(img: Image.Image, targets: List[Dict]) -> Tuple[
         return None, None, None, {'error': 'No keep targets'}
 
     merged_mask = Image.new('L', (W, H), 0)
-    seg_info = {'method': 'rembg_crop', 'targets': []}
+    seg_info = {'method': 'rembg_crop', 'mask_only': True, 'targets': []}
 
     for i, t in enumerate(keep_targets):
         bbox = t.get('bbox', [0, 0, W, H])
         x1, y1, x2, y2 = _clamp_bbox(bbox, W, H)
 
-        # 扩展 5% 给 rembg 更多上下文
+        # 扩展 5% 给 rembg
         pad_x = int((x2 - x1) * 0.05)
         pad_y = int((y2 - y1) * 0.05)
         cx1, cy1 = max(0, x1 - pad_x), max(0, y1 - pad_y)
@@ -223,59 +223,47 @@ def _cutout_rembg_crop(img: Image.Image, targets: List[Dict]) -> Tuple[
 
         crop = img.crop((cx1, cy1, cx2, cy2))
         try:
-            removed = remove(crop.convert('RGB'), post_process_mask=True)
-            if removed.mode == 'RGBA':
-                local_mask = removed.split()[-1]
-            else:
-                local_mask = Image.new('L', crop.size, 255)
+            # V3: only_mask=True → 只出mask，不重绘产品像素
+            local_mask = remove(crop.convert('RGB'), only_mask=True, post_process_mask=True)
         except Exception as e:
             print(f'[rembg_crop] target {i} error: {e}')
             continue
 
-        # 将局部mask贴回全局坐标
+        # 贴回全局坐标
         global_mask = Image.new('L', (W, H), 0)
         global_mask.paste(local_mask, (cx1, cy1))
-        merged_mask = ImageChannels.merge_max(merged_mask, global_mask)
+        merged_mask = np.maximum(np.array(merged_mask), np.array(global_mask)).astype(np.uint8)
+        merged_mask = Image.fromarray(merged_mask)
 
-        seg_info['targets'].append({'index': i, 'bbox': [x1, y1, x2, y2], 'crop_bbox': [cx1, cy1, cx2, cy2]})
+        seg_info['targets'].append({'index': i, 'bbox': [x1, y1, x2, y2]})
 
     # 框外强制透明
     cleaned_mask = _clean_target_mask(merged_mask, keep_targets, W, H)
 
-    # 生成透明图
+    # ── 核心：原图 RGBA + mask = 透明母图，产品像素零修改 ──
     transparent = img.convert('RGBA')
     transparent.putalpha(cleaned_mask)
 
-    # 框外彻底透明
-    pixels = transparent.load()
-    mask_pixels = cleaned_mask.load()
-    for y in range(H):
-        for x in range(W):
-            if mask_pixels[x, y] < 10:
-                pixels[x, y] = (0, 0, 0, 0)
+    # 半透明像素设为完全透明（二值mask）
+    mask_arr = np.array(cleaned_mask)
+    rgba_arr = np.array(transparent)
+    rgba_arr[mask_arr < 20] = [0, 0, 0, 0]
+    transparent = Image.fromarray(rgba_arr)
 
     return transparent, merged_mask, cleaned_mask, seg_info
 
 
-class ImageChannels:
-    @staticmethod
-    def merge_max(a: Image.Image, b: Image.Image) -> Image.Image:
-        return Image.fromarray(np.maximum(np.array(a), np.array(b)).astype(np.uint8))
-
-
 # ═══════════════════════════════════════════════════════════════
-# rembg_full (旧版兼容)
+# rembg_full (旧版兼容, V3: 也改用 only_mask)
 # ═══════════════════════════════════════════════════════════════
 
 def _cutout_rembg_full(img: Image.Image) -> Tuple[Optional[Image.Image], Optional[Image.Image]]:
     from rembg import remove
     if img.mode not in ('RGB', 'RGBA'): img = img.convert('RGB')
     try:
-        output = remove(img, post_process_mask=True)
-        transparent = output.convert('RGBA')
-        alpha = transparent.split()[-1]
-        mask = Image.new('L', transparent.size, 0)
-        mask.paste(alpha)
+        mask = remove(img, only_mask=True, post_process_mask=True)
+        transparent = img.convert('RGBA')
+        transparent.putalpha(mask)
         return transparent, mask
     except Exception as e:
         print(f'[rembg_full] Error: {e}')
@@ -380,17 +368,39 @@ def _check_cutout_quality_v2(
             warnings.append('边缘存在明显白边/黑边')
             edge_score = 0.7
 
+    # ── V3: 像素真实性检查 ──
+    # 产品内部不透明区域必须与原图一致
+    pixel_preserved = True
+    opaque_diff = 0.0
+    if mask is not None:
+        original_rgb = np.array(img.convert('RGB'))
+        result_rgba = np.array(transparent)
+        result_rgb = result_rgba[:, :, :3]
+        result_alpha = result_rgba[:, :, 3]
+
+        opaque = result_alpha > 250
+        if opaque.any() and original_rgb.shape == result_rgb.shape:
+            diff = np.abs(original_rgb[opaque].astype(int) - result_rgb[opaque].astype(int))
+            opaque_diff = float(diff.mean())
+            if opaque_diff > 0:
+                pixel_preserved = False
+                warnings.append(f'产品内部像素被修改 (平均差异{opaque_diff:.1f})，母图不可作为正式产品图')
+
     # 评分
     score = 90
     score -= int(outside_residual * 80)
     score -= int((1 - completeness) * 40)
     score -= int((1 - edge_score) * 30)
+    if not pixel_preserved: score -= 50
     for w in warnings: score -= 3
     score = max(0, min(100, score))
 
     return {
-        'score': score, 'pass': score >= 70 and outside_residual < 0.05 and completeness > 0.5,
+        'score': score,
+        'pass': score >= 70 and outside_residual < 0.05 and completeness > 0.5 and pixel_preserved,
         'warnings': warnings,
+        'pixel_preserved': pixel_preserved,
+        'opaque_pixel_difference': round(opaque_diff, 2),
         'outside_residual_score': round(1 - outside_residual, 3),
         'completeness_score': round(completeness, 3),
         'edge_quality_score': round(edge_score, 3),
