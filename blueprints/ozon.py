@@ -3473,21 +3473,27 @@ def api_analyze_product_fact(fact_id):
         (OzonSourceMedia.user == current_user) & (OzonSourceMedia.source == source)
     ))
     total = len(media_all)
-    for i in range(0, total, 5):
-        batch = media_all[i:i+5]
-        for m in batch:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    def _analyze_one(m):
+        try:
+            return analyze_product_image(current_user, m, fact=fact, source_skus=source_skus)
+        except Exception as e:
+            return {'ok': False, 'error': str(e)[:200], 'media_id': m.id}
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futures = {ex.submit(_analyze_one, m): m for m in media_all}
+        for future in as_completed(futures):
+            m = futures[future]
             try:
-                r = analyze_product_image(current_user, m, fact=fact, source_skus=source_skus)
-                if r.get('ok'):
-                    result['images'] += 1
-                    if not r.get('skipped'): result['model_calls'] += 1
-                    else: result['skipped'] += 1
-                else:
-                    result['failed'] += 1
-                    result['image_errors'].append(f'{m.id}:{r.get("error","?")[:60]}')
+                r = future.result(timeout=60)
             except Exception as e:
+                r = {'ok': False, 'error': str(e)[:200]}
+            if r.get('ok'):
+                result['images'] += 1
+                if not r.get('skipped'): result['model_calls'] += 1
+                else: result['skipped'] += 1
+            else:
                 result['failed'] += 1
-                result['image_errors'].append(f'{m.id}:{str(e)[:80]}')
+                result['image_errors'].append(f'{m.id}:{r.get("error","?")[:60]}')
 
     result['total_images'] = total
     result['merged'] = merge_fact_candidates(fact)
