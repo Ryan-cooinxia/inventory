@@ -126,7 +126,7 @@
               <span class="fw-bold text-primary" style="font-size:10px">{{ gname }}</span>
               {% for item in items[:5] %}
               <span class="badge bg-light text-dark me-1 mb-1" style="font-size:9px;font-weight:normal">
-                {{ (ev.label_cn or ev.field_path)[:20] }}: <b>{{ (ev.value_json or ev.content or '')[:30] }}</b>
+                {{ item.label[:20] }}: <b>{{ (item.value or '')[:30] }}</b>
                 {% if item.status=='confirmed' %}✅{% elif item.status=='conflict' %}⚠{% elif item.status=='inferred' %}💭{% endif %}
               </span>
               {% endfor %}
