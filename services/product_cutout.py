@@ -117,6 +117,9 @@ def create_product_cutout(
         transparent, raw_mask, cleaned_mask, seg_info = _cutout_rembg_crop(img, targets)
         segmentation_provider = 'rembg_crop'
     elif provider == 'rembg_full':
+        # 检查是否适合全图抠图
+        if _is_complex_image(media):
+            return {'ok': False, 'error': '该图片包含文字或复杂背景，快速抠图会保留广告内容。请框选商品后使用"目标抠图"。'}
         transparent, mask = _cutout_rembg_full(img)
         raw_mask, cleaned_mask, seg_info = mask, mask, {'method': 'rembg_full'}
         segmentation_provider = 'rembg_full'
@@ -231,7 +234,18 @@ def _cutout_rembg_crop(img: Image.Image, targets: List[Dict]) -> Tuple[
         seg_info['targets'].append({'index': i, 'bbox': [x1, y1, x2, y2]})
 
     # 框外强制透明
-    cleaned_mask = _clean_target_mask(merged_mask, keep_targets, W, H)
+    cleaned_mask = _clean_target_mask(merged_mask, targets, keep_targets, W, H)
+
+    # ── 排除框强制透明 ──
+    remove_targets = [t for t in targets if not t.get('keep')]
+    if remove_targets:
+        mask_arr = np.array(cleaned_mask)
+        for t in remove_targets:
+            bbox = t.get('bbox', [0, 0, W, H])
+            x1, y1, x2, y2 = _clamp_bbox(bbox, W, H)
+            mask_arr[y1:y2, x1:x2] = 0
+        cleaned_mask = Image.fromarray(mask_arr)
+        seg_info['removed_regions'] = len(remove_targets)
 
     # ── 核心：原图 RGBA + mask = 透明母图，产品像素零修改 ──
     transparent = img.convert('RGBA')
@@ -268,7 +282,7 @@ def _cutout_rembg_full(img: Image.Image) -> Tuple[Optional[Image.Image], Optiona
 # ═══════════════════════════════════════════════════════════════
 
 def _clean_target_mask(
-    mask: Image.Image, keep_targets: List[Dict], W: int, H: int,
+    mask: Image.Image, all_targets: List[Dict], keep_targets: List[Dict], W: int, H: int,
     preserve_components: Optional[List[int]] = None,
 ) -> Image.Image:
     """清理蒙版: 框外透明 + 去噪 + 补孔 + 轻微闭运算 + 1px羽化"""
@@ -276,13 +290,19 @@ def _clean_target_mask(
 
     mask_arr = np.array(mask)
 
-    # 1. 框外强制透明
+    # 1. 框外强制透明 + 排除框强制透明
     outside = np.ones((H, W), dtype=np.uint8) * 255
     for t in keep_targets:
         bbox = t.get('bbox', [0, 0, W, H])
         x1, y1, x2, y2 = _clamp_bbox(bbox, W, H)
         outside[y1:y2, x1:x2] = 0
     mask_arr[outside == 255] = 0
+    # 排除框内强制透明
+    for t in keep_targets:
+        pass  # keep_targets handled above
+    # 如果有 remove targets，对应区域强制透明
+    # (从调用方传入的 targets 参数获取，这里通过闭包不可用，所以在 _cutout_rembg_crop 中处理)
+    # 实际上 remove targets 在外面的 outside 处理中已经跳过了检查，这里只需确保不出现在最终 mask
 
     # 2. 二值化
     binary = (mask_arr > 30).astype(np.uint8) * 255
@@ -322,47 +342,68 @@ def _check_cutout_quality_v2(
     W, H = img.size
     mask_arr = np.array(mask) if mask else np.array(transparent.split()[-1])
     binary = (mask_arr > 30).astype(np.uint8)
+    # binary is 0/1 — no division by 255 needed
 
     keep_targets = [t for t in (targets or []) if t.get('keep')]
+    remove_targets = [t for t in (targets or []) if not t.get('keep')]
+    has_targets = len(keep_targets) > 0
+    is_rembg_full = seg_info.get('method') == 'rembg_full'
 
-    # 框外残留
-    outside_residual = 0.0
-    if keep_targets:
+    # ── 框外残留 ──
+    outside_residual = None
+    if has_targets:
         outside_mask = np.ones((H, W), dtype=np.uint8)
         for t in keep_targets:
             bbox = t.get('bbox', [0, 0, W, H])
             x1, y1, x2, y2 = _clamp_bbox(bbox, W, H)
             outside_mask[y1:y2, x1:x2] = 0
+        # 排除框内的前景不算残留
+        for t in remove_targets:
+            bbox = t.get('bbox', [0, 0, W, H])
+            x1, y1, x2, y2 = _clamp_bbox(bbox, W, H)
+            outside_mask[y1:y2, x1:x2] = 1  # 排除框内mask(将被清除)不检查
         outside_pixels = binary[outside_mask == 1]
-        outside_residual = outside_pixels.mean() / 255 if outside_pixels.size > 0 else 0
+        if outside_pixels.size > 0:
+            outside_residual = float(outside_pixels.mean())  # 0-1, no /255
+        else:
+            outside_residual = 0.0
         if outside_residual > 0.05:
             warnings.append(f'目标框外仍有{int(outside_residual*100)}%残留，广告文字/Logo可能未被清除')
         elif outside_residual > 0.01:
             warnings.append(f'框外少量残留({int(outside_residual*100)}%)')
 
-    # 完整性
-    completeness = 1.0
-    for i, t in enumerate(keep_targets):
-        bbox = t.get('bbox', [0, 0, W, H])
-        x1, y1, x2, y2 = _clamp_bbox(bbox, W, H)
-        region = binary[y1:y2, x1:x2]
-        if region.size > 0:
-            fill = region.mean() / 255
-            if fill < 0.3:
-                warnings.append(f'目标 {t.get("label", i+1)} 填充率仅{int(fill*100)}%，商品可能被截断')
-                completeness = min(completeness, fill)
+    # ── rembg_full 警告 ──
+    if is_rembg_full:
+        warnings.append('整图抠图无法确认商品范围，请使用目标抠图')
+        # 检测外部文字
+        text_score = _detect_text_regions(img, mask)
+        if text_score > 0.3:
+            warnings.append(f'检测到疑似广告文字/Logo (置信度{int(text_score*100)}%)，请框选商品重新抠图')
 
-    # 边缘质量
+    # ── 完整性 ──
+    completeness = None
+    if has_targets:
+        completeness = 1.0
+        for i, t in enumerate(keep_targets):
+            bbox = t.get('bbox', [0, 0, W, H])
+            x1, y1, x2, y2 = _clamp_bbox(bbox, W, H)
+            region = binary[y1:y2, x1:x2]
+            if region.size > 0:
+                fill = float(region.mean())  # 0-1, no /255
+                if fill < 0.3:
+                    warnings.append(f'目标 {t.get("label", i+1)} 填充率仅{int(fill*100)}%，商品可能被截断')
+                    completeness = min(completeness, fill)
+
+    # ── 边缘质量 ──
     edge_score = 1.0
     if binary.shape[0] > 2 and binary.shape[1] > 2:
         grad = np.abs(np.diff(binary.astype(int), axis=1))
-        halo = (grad > 200).mean()
+        halo = (grad > 0).mean()
         if halo > 0.08:
             warnings.append('边缘存在明显白边/黑边')
             edge_score = 0.7
 
     # ── V3: 像素真实性检查 ──
-    # 产品内部不透明区域必须与原图一致
     pixel_preserved = True
     opaque_diff = 0.0
     if mask is not None:
@@ -370,7 +411,6 @@ def _check_cutout_quality_v2(
         result_rgba = np.array(transparent)
         result_rgb = result_rgba[:, :, :3]
         result_alpha = result_rgba[:, :, 3]
-
         opaque = result_alpha > 250
         if opaque.any() and original_rgb.shape == result_rgb.shape:
             diff = np.abs(original_rgb[opaque].astype(int) - result_rgb[opaque].astype(int))
@@ -379,26 +419,49 @@ def _check_cutout_quality_v2(
                 pixel_preserved = False
                 warnings.append(f'产品内部像素被修改 (平均差异{opaque_diff:.1f})，母图不可作为正式产品图')
 
-    # 评分
-    score = 90
-    score -= int(outside_residual * 80)
-    score -= int((1 - completeness) * 40)
+    # ── 评分 ──
+    if has_targets:
+        score = 90
+        if outside_residual is not None:
+            score -= int(outside_residual * 80)
+        if completeness is not None:
+            score -= int((1 - completeness) * 40)
+    else:
+        # rembg_full 无目标: 基础分低
+        score = 40
+        text_score = _detect_text_regions(img, mask)
+        if text_score > 0.3:
+            score = 20
+            warnings.append('检测到广告文字，该结果不可作为正式产品母图')
+
     score -= int((1 - edge_score) * 30)
     if not pixel_preserved: score -= 50
     for w in warnings: score -= 3
     score = max(0, min(100, score))
 
+    # rembg_full 永远不 pass(除非是纯白底简单图)
+    rembg_pass = not is_rembg_full or _detect_text_regions(img, mask) < 0.1
+
     return {
         'score': score,
-        'pass': score >= 70 and outside_residual < 0.05 and completeness > 0.5 and pixel_preserved,
+        'pass': score >= 70 and (outside_residual or 0) < 0.05 and (completeness or 1) > 0.5 and pixel_preserved and rembg_pass,
         'warnings': warnings,
         'pixel_preserved': pixel_preserved,
         'opaque_pixel_difference': round(opaque_diff, 2),
-        'outside_residual_score': round(1 - outside_residual, 3),
-        'completeness_score': round(completeness, 3),
+        'outside_residual_score': round(1 - outside_residual, 3) if outside_residual is not None else None,
+        'completeness_score': round(completeness, 3) if completeness is not None else None,
         'edge_quality_score': round(edge_score, 3),
         'target_count': len(keep_targets),
+        'remove_target_count': len(remove_targets),
     }
+
+
+def _is_complex_image(media) -> bool:
+    """判断图片是否包含复杂背景/文字，不适合 rembg_full"""
+    if getattr(media, 'has_text', False): return True
+    role = getattr(media, 'role', '') or ''
+    if role not in ('main', ''): return True
+    return False
 
 
 def _detect_text_regions(img: Image.Image, mask: Optional[Image.Image] = None) -> float:

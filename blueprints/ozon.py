@@ -2400,6 +2400,33 @@ def product_cutout_approve(cutout_id):
     if not cutout:
         return jsonify({'ok': False, 'error': '记录不存在'}), 404
 
+    # ── 质量门禁 ──
+    quality = {}
+    if cutout.quality_json:
+        try: quality = json.loads(cutout.quality_json)
+        except: pass
+
+    # 1. 必须有目标
+    if not cutout.target_count or cutout.target_count == 0:
+        return jsonify({'ok': False, 'error': '该结果未使用目标框，可能包含广告内容。请框选商品后使用"目标抠图"重新生成。'}), 400
+
+    # 2. 质量必须通过
+    if not quality.get('pass', True):
+        return jsonify({'ok': False, 'error': f'质量检查未通过，请重新抠图。问题: {"; ".join(quality.get("warnings", [])[:3])}'}), 400
+
+    # 3. 像素必须保持
+    if not quality.get('pixel_preserved', True):
+        return jsonify({'ok': False, 'error': '产品像素已被AI修改，不可作为正式母图。请重新生成。'}), 400
+
+    # 4. 框外残留不能太多
+    outside = quality.get('outside_residual_score')
+    if outside is not None and outside < 0.95:
+        return jsonify({'ok': False, 'error': f'目标框外仍有{int((1-outside)*100)}%残留，请重新框选商品。'}), 400
+
+    # 5. rembg_full 且包含文字 → 禁止
+    if (cutout.segmentation_provider or cutout.provider) == 'rembg_full':
+        return jsonify({'ok': False, 'error': '整图抠图结果不可作为正式母图。请框选商品后使用"目标抠图"。'}), 400
+
     # 先取消同一 source 的旧 primary
     OzonProductCutout.update(is_primary=False).where(
         (OzonProductCutout.source == cutout.source) &

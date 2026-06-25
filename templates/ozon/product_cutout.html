@@ -167,13 +167,29 @@ function initDrawing(mediaId) {
     var w = x2 - x1, h = y2 - y1;
     if (w < 5 || h < 5) { boxEl.remove(); return; }
 
+    // 坐标缩放: 页面显示 → 原图
+    var scaleX = img.naturalWidth / rect.width;
+    var scaleY = img.naturalHeight / rect.height;
+    var origX1 = Math.round(x1 * scaleX);
+    var origY1 = Math.round(y1 * scaleY);
+    var origX2 = Math.round(x2 * scaleX);
+    var origY2 = Math.round(y2 * scaleY);
+
+    // clamp to image bounds
+    origX1 = Math.max(0, Math.min(img.naturalWidth, origX1));
+    origY1 = Math.max(0, Math.min(img.naturalHeight, origY1));
+    origX2 = Math.max(0, Math.min(img.naturalWidth, origX2));
+    origY2 = Math.max(0, Math.min(img.naturalHeight, origY2));
+
     var sel = document.getElementById('targetType' + mediaId);
     var type = sel ? sel.value : 'main_product';
     var keep = type === 'main_product' || type === 'accessory';
 
     var target = {
       type: type, keep: keep,
-      bbox: [Math.round(x1), Math.round(y1), Math.round(x2), Math.round(y2)],
+      bbox: [origX1, origY1, origX2, origY2],
+      image_width: img.naturalWidth,
+      image_height: img.naturalHeight,
       label: type === 'main_product' ? '主商品' : (type === 'accessory' ? '配件' : sel.options[sel.selectedIndex].text)
     };
     targets.push(target);
