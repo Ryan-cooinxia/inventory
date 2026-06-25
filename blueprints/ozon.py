@@ -3303,17 +3303,16 @@ def adaptation_workspace(source_id):
                               ImageFact.media_id.in_(media_ids))
                        .order_by(ImageFact.created_at.desc()))
 
-    # 加载 ProductFactEvidence 证据列表并按 group_key 分组
+    # 加载 ProductFactEvidence 证据列表 + 产品详情聚合
     evidences = []
-    product_details = {}  # {group_key: [evidences]}
+    product_details = {}
     if fact:
+        from services.product_fact_service import build_product_detail_summary
         evidences = list(ProductFactEvidence.select().where(
             (ProductFactEvidence.user == current_user) &
             (ProductFactEvidence.fact == fact)
-        ).order_by(ProductFactEvidence.sort_order, ProductFactEvidence.field_path)[:100])
-        for ev in evidences:
-            gk = ev.group_key or _infer_group_key(ev.field_path)
-            product_details.setdefault(gk, []).append(ev)
+        ).order_by(ProductFactEvidence.sort_order, ProductFactEvidence.field_path)[:200])
+        product_details = build_product_detail_summary(fact)
 
     # 检查是否有已启用的视觉模型配置
     has_vision_config = (VisionModelConfig
