@@ -227,10 +227,10 @@
         <strong style="font-size:12px">📋 证据列表 ({{ evidences|length }} 条)</strong>
         <div style="max-height:180px;overflow-y:auto">
         {% for ev in evidences %}
-        <div class="d-flex justify-content-between align-items-start bg-light rounded p-1 mb-1" style="font-size:10px;border-left:3px solid {% if item.status == 'confirmed' %}#28a745{% elif item.status == 'conflict' %}#dc3545{% elif item.status == 'rejected' %}#6c757d{% else %}#ffc107{% endif %}">
+        <div class="d-flex justify-content-between align-items-start bg-light rounded p-1 mb-1" style="font-size:10px;border-left:3px solid {% if ev.fact_status == 'confirmed' %}#28a745{% elif ev.fact_status == 'conflict' %}#dc3545{% elif ev.fact_status == 'rejected' %}#6c757d{% else %}#ffc107{% endif %}">
           <div style="flex:1;min-width:0">
             <code>{{ ev.field_path }}</code>
-            <span class="badge {% if item.status == 'confirmed' %}bg-success{% elif item.status == 'conflict' %}bg-danger{% elif item.status == 'rejected' %}bg-secondary{% elif item.status == 'inferred' %}bg-info{% else %}bg-warning text-dark{% endif %}" style="font-size:8px">{{ item.status }}</span>
+            <span class="badge {% if ev.fact_status == 'confirmed' %}bg-success{% elif ev.fact_status == 'conflict' %}bg-danger{% elif ev.fact_status == 'rejected' %}bg-secondary{% elif ev.fact_status == 'inferred' %}bg-info{% else %}bg-warning text-dark{% endif %}" style="font-size:8px">{{ ev.fact_status }}</span>
             {% if ev.confidence %}<span style="font-size:8px;color:#6c757d">{{ '{:.0%}'.format(ev.confidence) }}</span>{% endif %}
             {% if ev.source_type %}<span style="font-size:8px;color:#adb5bd">[{{ ev.source_type }}]</span>{% endif %}
             <div class="text-truncate">{{ ev.value_json or ev.content or '' }}</div>
