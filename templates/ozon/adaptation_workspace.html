@@ -183,6 +183,37 @@
         </div>
 
         <hr class="my-2">
+        <!-- 商品事实操作 -->
+        <div class="d-flex gap-1 mb-2">
+          <button class="btn btn-sm btn-info" style="font-size:10px;padding:2px 8px" onclick="analyzeProductFacts()" {% if not fact %}disabled{% endif %}>🔍 批量分析</button>
+          <button class="btn btn-sm btn-outline-secondary" style="font-size:10px;padding:2px 8px" onclick="mergeProductFacts()" {% if not fact %}disabled{% endif %}>合并事实</button>
+          <span class="ms-auto" id="briefStatus" style="font-size:11px"></span>
+        </div>
+
+        {% if evidences %}
+        <strong style="font-size:12px">📋 证据列表 ({{ evidences|length }} 条)</strong>
+        <div style="max-height:180px;overflow-y:auto">
+        {% for ev in evidences %}
+        <div class="d-flex justify-content-between align-items-start bg-light rounded p-1 mb-1" style="font-size:10px;border-left:3px solid {% if ev.fact_status == 'confirmed' %}#28a745{% elif ev.fact_status == 'conflict' %}#dc3545{% elif ev.fact_status == 'rejected' %}#6c757d{% else %}#ffc107{% endif %}">
+          <div style="flex:1;min-width:0">
+            <code>{{ ev.field_path }}</code>
+            <span class="badge {% if ev.fact_status == 'confirmed' %}bg-success{% elif ev.fact_status == 'conflict' %}bg-danger{% elif ev.fact_status == 'rejected' %}bg-secondary{% elif ev.fact_status == 'inferred' %}bg-info{% else %}bg-warning text-dark{% endif %}" style="font-size:8px">{{ ev.fact_status }}</span>
+            {% if ev.confidence %}<span style="font-size:8px;color:#6c757d">{{ '{:.0%}'.format(ev.confidence) }}</span>{% endif %}
+            {% if ev.source_type %}<span style="font-size:8px;color:#adb5bd">[{{ ev.source_type }}]</span>{% endif %}
+            <div class="text-truncate">{{ ev.value_json or ev.content or '' }}</div>
+          </div>
+          <div class="d-flex gap-1 flex-shrink-0">
+            {% if ev.fact_status not in ('confirmed', 'rejected') %}
+            <button class="btn btn-sm btn-outline-success" style="font-size:8px;padding:0 4px" onclick="confirmEvidence({{ ev.id }})" title="确认">✓</button>
+            <button class="btn btn-sm btn-outline-danger" style="font-size:8px;padding:0 4px" onclick="rejectEvidence({{ ev.id }})" title="拒绝">✕</button>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+        </div>
+        <hr class="my-2">
+        {% endif %}
+
         {% if image_facts %}
         <strong style="font-size:12px">🔍 视觉识别结果 ({{ image_facts|length }} 条)</strong>
         <div id="imageFactsSection" style="max-height:200px;overflow-y:auto">
@@ -1300,5 +1331,32 @@ function aiSuggest() {
   }
   // else: 无类目，等待用户选择
 })();
+
+function analyzeProductFacts() {
+  var btn = event.target;
+  btn.disabled = true; btn.textContent = '分析中...';
+  fetch('/ozon/api/product-fact/{{ fact.id }}/analyze', {method:'POST'})
+    .then(r=>r.json()).then(d=>{
+      alert('分析完成: 文本'+d.text_facts+'条, 图片'+d.images_analyzed+'张, 冲突'+d.conflicts+'个');
+      location.reload();
+    }).catch(e=>{alert('失败:'+e)}).finally(()=>{btn.disabled=false;btn.textContent='批量分析'});
+}
+function mergeProductFacts() {
+  fetch('/ozon/api/product-fact/{{ fact.id }}/merge', {method:'POST'})
+    .then(r=>r.json()).then(d=>{
+      alert('合并: '+d.merged+' 条, 冲突: '+d.conflicts+' 个');
+      location.reload();
+    });
+}
+function confirmEvidence(id) {
+  fetch('/ozon/api/product-fact/evidence/'+id+'/confirm', {method:'POST'})
+    .then(r=>r.json()).then(d=>{ if(d.ok) location.reload(); else alert('确认失败'); });
+}
+function rejectEvidence(id) {
+  var reason = prompt('拒绝原因(可选):');
+  fetch('/ozon/api/product-fact/evidence/'+id+'/reject', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({reason:reason||''})})
+    .then(r=>r.json()).then(d=>{ if(d.ok) location.reload(); else alert('拒绝失败'); });
+}
+
 </script>
 {% endblock %}
