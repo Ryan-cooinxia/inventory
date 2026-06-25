@@ -2366,7 +2366,7 @@ def product_cutout_create(media_id):
     if not media:
         return jsonify({'ok': False, 'error': '图片不存在'}), 404
 
-    provider = request.form.get('provider', 'rembg').strip()
+    provider = request.form.get('provider', 'rembg_crop').strip()
     sku_id = request.form.get('sku_id', '').strip()
     sku = None
     if sku_id and sku_id.isdigit():
@@ -2374,7 +2374,16 @@ def product_cutout_create(media_id):
             (OzonSourceSku.id == int(sku_id)) & (OzonSourceSku.user == current_user)
         )
 
-    result = create_product_cutout(current_user, media, provider=provider, sku=sku)
+    # 目标框 JSON: [{"type":"main_product","bbox":[x1,y1,x2,y2],"keep":true,"label":"商品"}]
+    targets = None
+    targets_json = request.form.get('targets', '').strip()
+    if targets_json:
+        try:
+            targets = json.loads(targets_json)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+
+    result = create_product_cutout(current_user, media, provider=provider, sku=sku, targets=targets)
     return jsonify(result)
 
 

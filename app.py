@@ -264,6 +264,18 @@ def migrate_ozon_image_schema():
             ('generation_mode', "VARCHAR(20) NOT NULL DEFAULT 'reference'"),
             ('qa_required', 'INTEGER NOT NULL DEFAULT 1'),
         ],
+        'ozonproductcutout': [
+            ('target_spec_json', 'TEXT'),
+            ('raw_mask_path', 'VARCHAR(300)'),
+            ('cleaned_mask_path', 'VARCHAR(300)'),
+            ('segmentation_provider', 'VARCHAR(50)'),
+            ('target_count', 'INTEGER NOT NULL DEFAULT 1'),
+            ('has_accessories', 'INTEGER NOT NULL DEFAULT 0'),
+            ('outside_residual_score', 'REAL'),
+            ('completeness_score', 'REAL'),
+            ('edge_quality_score', 'REAL'),
+            ('revision', 'INTEGER NOT NULL DEFAULT 1'),
+        ],
         'ozonimagecandidate': [
             ('parent_candidate_id', 'INTEGER'),
             ('generation_mode', "VARCHAR(20) NOT NULL DEFAULT 'reference'"),

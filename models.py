@@ -652,6 +652,18 @@ class OzonProductCutout(BaseModel):
     is_primary = BooleanField(default=False)
     reviewer_notes = TextField(null=True)
 
+    # ── V2: 目标级分割 ──
+    target_spec_json = TextField(null=True)           # 商品/配件/排除对象及bbox
+    raw_mask_path = CharField(max_length=300, null=True)
+    cleaned_mask_path = CharField(max_length=300, null=True)
+    segmentation_provider = CharField(max_length=50, null=True)  # rembg_crop / rembg_full / sam2_box / manual
+    target_count = IntegerField(default=1)
+    has_accessories = BooleanField(default=False)
+    outside_residual_score = FloatField(null=True)
+    completeness_score = FloatField(null=True)
+    edge_quality_score = FloatField(null=True)
+    revision = IntegerField(default=1)
+
     created_at = DateTimeField(default=datetime.datetime.now)
     updated_at = DateTimeField(default=datetime.datetime.now)
 

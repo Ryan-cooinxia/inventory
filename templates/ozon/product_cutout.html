@@ -2,15 +2,19 @@
 {% block title %}产品母图 — 仓库记账系统{% endblock %}
 {% block head %}
 <style>
-  .cutout-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:16px; }
+  .cutout-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(420px, 1fr)); gap:16px; }
   .cutout-card { border:1px solid #dee2e6; border-radius:8px; overflow:hidden; background:#fff; }
   .cutout-card.approved { border-color:#198754; }
   .cutout-card.rejected { border-color:#dc3545; opacity:.6; }
+  .cutout-img-wrap { position:relative; display:inline-block; cursor:crosshair; max-width:100%; }
+  .cutout-img-wrap img { display:block; max-width:100%; height:auto; }
+  .target-box { position:absolute; border:2px solid; pointer-events:none; }
+  .target-box.keep { border-color:#198754; background:rgba(25,135,84,.1); }
+  .target-box.remove { border-color:#dc3545; background:rgba(220,53,69,.1); }
+  .target-box-label { position:absolute; font-size:10px; padding:1px 4px; border-radius:2px; color:#fff; white-space:nowrap; }
   .cutout-preview { position:relative; aspect-ratio:3/4; display:flex; align-items:center; justify-content:center; cursor:pointer; }
   .cutout-preview.checker { background:repeating-conic-gradient(#e0e0e0 0% 25%, #fff 0% 50%) 50% / 20px 20px; }
-  .cutout-preview.white { background:#fff; }
-  .cutout-preview.gray { background:#666; }
-  .cutout-preview.black { background:#000; }
+  .cutout-preview.white { background:#fff; } .cutout-preview.gray { background:#666; } .cutout-preview.black { background:#000; }
   .cutout-preview img { max-width:100%; max-height:100%; object-fit:contain; }
   .cutout-body { padding:12px; }
   .cutout-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
@@ -18,6 +22,8 @@
   .score-bar-fill { height:100%; border-radius:3px; }
   .bg-switch { display:flex; gap:4px; margin:4px 0; }
   .bg-switch button { width:24px; height:24px; border-radius:4px; border:1px solid #ccc; cursor:pointer; }
+  .target-toolbar { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:8px 0; padding:8px; background:#f8f9fa; border-radius:6px; font-size:12px; }
+  .target-list { font-size:11px; max-height:120px; overflow-y:auto; }
 </style>
 {% endblock %}
 {% block content %}
@@ -26,156 +32,238 @@
   <li class="breadcrumb-item active">产品母图准备</li>
 </ol></nav>
 
-<h3 class="mb-3">产品母图准备 — {{ source.title_cn or source.title or '#' ~ source.id }}</h3>
+<h3 class="mb-3">产品母图准备 — {{ source.title_cn or '#' ~ source.id }}</h3>
 
-<!-- 推荐图片 -->
-<div class="card mb-3">
-  <div class="card-header py-2"><strong>推荐原图（按抠图适合度排序）</strong></div>
-  <div class="card-body">
-    <div class="cutout-grid">
-      {% for rec in recommendations %}
-      {% set m = media_map.get(rec.media_id) %}
-      <div class="cutout-card" id="rec{{ rec.media_id }}">
-        <div class="cutout-preview checker" id="preview{{ rec.media_id }}">
-          {% if m and m.local_path %}
-          <img src="{{ url_for('ozon.serve_cutout', filename='../source_media/' ~ m.local_path.split('source_media/')[-1] if 'source_media/' in (m.local_path or '') else '') }}" alt="原图" loading="lazy">
-          {% endif %}
-        </div>
-        <div class="cutout-body">
-          <div class="d-flex justify-content-between">
-            <span class="badge bg-secondary">{{ rec.role or '未分类' }}</span>
-            <small>{{ rec.width }}×{{ rec.height }}</small>
-          </div>
-          <div class="score-bar"><div class="score-bar-fill" style="width:{{ rec.suitability_score }}%;background:{% if rec.suitability_score >= 80 %}#198754{% elif rec.suitability_score >= 60 %}#ffc107{% else %}#dc3545{% endif %}"></div></div>
-          <small class="text-muted">抠图适合度: {{ rec.suitability_score }}分</small>
-          <div class="cutout-actions">
-            <button class="btn btn-sm btn-primary" onclick="doCutout({{ rec.media_id }})">✂️ 抠图</button>
-          </div>
-          <div id="cutoutResult{{ rec.media_id }}"></div>
-        </div>
+<p class="text-muted small mb-3">
+  <b>操作：</b>在图片上拖拽框选需要保留的商品区域 → 设置目标类型 → 点「抠图」。
+  绿色框=保留，红色框=排除。复杂广告图必须框选商品，否则整图抠会保留文字和Logo。
+</p>
+
+<div class="cutout-grid">
+  {% for rec in recommendations %}
+  {% set m = media_map.get(rec.media_id) %}
+  <div class="cutout-card" id="rec{{ rec.media_id }}">
+    <div style="padding:8px;">
+      <div class="cutout-img-wrap" id="imgWrap{{ rec.media_id }}">
+        <img id="img{{ rec.media_id }}" src="{% if m and m.local_path %}{{ url_for('static', filename=m.local_path) if not m.local_path.startswith('uploads/') else '/' + m.local_path }}{% elif m and m.source_url %}{{ m.source_url }}{% endif %}" alt="原图" crossorigin="anonymous" referrerpolicy="no-referrer">
       </div>
-      {% endfor %}
-      {% if not recommendations %}
-      <p class="text-muted">该采集暂无适合抠图的图片</p>
-      {% endif %}
+      <div class="target-toolbar">
+        <select id="targetType{{ rec.media_id }}" class="form-select form-select-sm" style="width:130px">
+          <option value="main_product">🟢 保留-主商品</option>
+          <option value="accessory">🔵 保留-配件</option>
+          <option value="unwanted_text">🔴 排除-文字</option>
+          <option value="unwanted_logo">🔴 排除-Logo</option>
+          <option value="background_decoration">🔴 排除-装饰</option>
+          <option value="person">🔴 排除-人物</option>
+        </select>
+        <button class="btn btn-sm btn-outline-danger" onclick="clearTargets({{ rec.media_id }})">清空框</button>
+        <button class="btn btn-sm btn-outline-secondary" onclick="undoLastTarget({{ rec.media_id }})">撤销</button>
+        <span class="text-muted" id="targetCount{{ rec.media_id }}">0个目标</span>
+      </div>
+      <div class="target-list" id="targetList{{ rec.media_id }}"></div>
+      <div class="cutout-actions">
+        <button class="btn btn-sm btn-primary" onclick="doCutoutV2({{ rec.media_id }})">✂️ 目标抠图</button>
+        <button class="btn btn-sm btn-outline-secondary" onclick="doCutoutSimple({{ rec.media_id }})" title="快速抠图-仅白底图适用">⚡ 快速抠图</button>
+      </div>
+      <div id="cutoutResult{{ rec.media_id }}" style="font-size:11px;margin-top:4px;"></div>
     </div>
   </div>
+  {% endfor %}
 </div>
 
 <!-- 已有母图 -->
 {% if cutouts %}
-<div class="card">
-  <div class="card-header py-2 d-flex justify-content-between">
-    <strong>已有母图记录</strong>
-    <span class="small text-muted">{{ cutouts|length }} 条</span>
-  </div>
-  <div class="card-body">
-    <div class="cutout-grid">
-      {% for c in cutouts %}
-      <div class="cutout-card {{ c.status }}" id="cutout{{ c.id }}">
-        <div class="cutout-preview checker" id="cutoutPreview{{ c.id }}">
-          {% if c.preview_path %}
-          <img src="{{ url_for('ozon.serve_cutout', filename=c.preview_path) }}" alt="抠图预览" loading="lazy">
-          {% endif %}
+<div class="card mt-3">
+  <div class="card-header py-2 d-flex justify-content-between"><strong>已有母图记录</strong><span class="small text-muted">{{ cutouts|length }} 条</span></div>
+  <div class="card-body"><div class="cutout-grid">
+    {% for c in cutouts %}
+    <div class="cutout-card {{ c.status }}" id="cutout{{ c.id }}">
+      <div class="cutout-preview checker" id="cutoutPreview{{ c.id }}">
+        {% if c.preview_path %}<img src="{{ url_for('ozon.serve_cutout', filename=c.preview_path) }}" alt="抠图预览" loading="lazy">{% endif %}
+      </div>
+      <div class="cutout-body">
+        <div>
+          <span class="badge {% if c.status == 'approved' %}bg-success{% elif c.status == 'rejected' %}bg-danger{% else %}bg-warning text-dark{% endif %}">
+            {% if c.status == 'approved' %}✅ 已确认{% elif c.status == 'rejected' %}❌ 已拒绝{% elif c.status == 'generated' %}🎨 待确认{% else %}⏳ {{ c.status }}{% endif %}</span>
+          <span class="badge bg-secondary">{{ c.segmentation_provider or c.provider }}</span>
+          {% if c.is_primary %}<span class="badge bg-success">主母图</span>{% endif %}
+          {% if c.target_count %}<span class="badge bg-light text-dark">{{ c.target_count }}个目标</span>{% endif %}
         </div>
-        <div class="cutout-body">
-          <div>
-            <span class="badge {% if c.status == 'approved' %}bg-success{% elif c.status == 'rejected' %}bg-danger{% else %}bg-warning text-dark{% endif %}">
-              {% if c.status == 'approved' %}✅ 已确认
-              {% elif c.status == 'rejected' %}❌ 已拒绝
-              {% elif c.status == 'generated' %}🎨 待确认
-              {% else %}⏳ {{ c.status }}
-              {% endif %}
-            </span>
-            <span class="badge bg-secondary">{{ c.provider }}</span>
-            {% if c.is_primary %}<span class="badge bg-success">主母图</span>{% endif %}
-          </div>
-          {% if c.quality_score is not none %}
-          <div class="score-bar mt-1"><div class="score-bar-fill" style="width:{{ c.quality_score }}%;background:{% if c.quality_score >= 80 %}#198754{% elif c.quality_score >= 60 %}#ffc107{% else %}#dc3545{% endif %}"></div></div>
-          <small class="text-muted">质量: {{ c.quality_score }}分</small>
+        {% if c.quality_score is not none %}
+        <div class="score-bar mt-1"><div class="score-bar-fill" style="width:{{ c.quality_score }}%;background:{% if c.quality_score >= 80 %}#198754{% elif c.quality_score >= 60 %}#ffc107{% else %}#dc3545{% endif %}"></div></div>
+        <small class="text-muted">质量: {{ c.quality_score }}分
+          {% if c.outside_residual_score is not none %} | 框外残留: {{ "%.0f"|format((1-c.outside_residual_score)*100) }}%{% endif %}
+          {% if c.completeness_score is not none %} | 完整: {{ "%.0f"|format(c.completeness_score*100) }}%{% endif %}
+        </small>
+        {% endif %}
+        <div class="bg-switch mt-1">
+          <button style="background:#fff" title="白底" onclick="switchBg('cutoutPreview{{ c.id }}','white')"></button>
+          <button style="background:#666" title="灰底" onclick="switchBg('cutoutPreview{{ c.id }}','gray')"></button>
+          <button style="background:#000" title="黑底" onclick="switchBg('cutoutPreview{{ c.id }}','black')"></button>
+          <button style="background:repeating-conic-gradient(#e0e0e0 0% 25%,#fff 0% 50%) 50%/20px 20px" title="棋盘格" onclick="switchBg('cutoutPreview{{ c.id }}','checker')"></button>
+        </div>
+        <div class="cutout-actions">
+          {% if c.transparent_path %}<a href="{{ url_for('ozon.serve_cutout', filename=c.transparent_path) }}" class="btn btn-sm btn-outline-secondary" download title="下载透明PNG">📥</a>{% endif %}
+          {% if c.status not in ('approved', 'rejected') %}
+          <form onsubmit="event.preventDefault(); doApprove({{ c.id }});" style="display:inline"><button class="btn btn-sm btn-success">✅ 确认母图</button></form>
+          <form onsubmit="event.preventDefault(); doReject({{ c.id }});" style="display:inline"><button class="btn btn-sm btn-outline-danger">❌ 拒绝</button></form>
           {% endif %}
-          {% if c.quality_json %}
-          {% set qj = c.quality_json|tojson if c.quality_json is string else c.quality_json %}
-          {% if 'has_text_or_logo' in (c.quality_json or '') %}
-          <small class="text-warning">⚠️ 检测到文字/Logo，建议换原图</small>
-          {% endif %}
-          {% endif %}
-          <div class="bg-switch mt-1">
-            <button style="background:#fff" title="白底" onclick="switchBg('cutoutPreview{{ c.id }}','white')"></button>
-            <button style="background:#666" title="灰底" onclick="switchBg('cutoutPreview{{ c.id }}','gray')"></button>
-            <button style="background:#000" title="黑底" onclick="switchBg('cutoutPreview{{ c.id }}','black')"></button>
-            <button style="background:repeating-conic-gradient(#e0e0e0 0% 25%,#fff 0% 50%) 50%/20px 20px" title="棋盘格" onclick="switchBg('cutoutPreview{{ c.id }}','checker')"></button>
-          </div>
-          <div class="cutout-actions">
-            {% if c.transparent_path %}
-            <a href="{{ url_for('ozon.serve_cutout', filename=c.transparent_path) }}" class="btn btn-sm btn-outline-secondary" download title="下载透明PNG">📥</a>
-            {% endif %}
-            {% if c.status not in ('approved', 'rejected') %}
-            <form onsubmit="event.preventDefault(); doApprove({{ c.id }});" style="display:inline">
-              <button class="btn btn-sm btn-success">✅ 确认母图</button>
-            </form>
-            <form onsubmit="event.preventDefault(); doReject({{ c.id }});" style="display:inline">
-              <button class="btn btn-sm btn-outline-danger">❌ 拒绝</button>
-            </form>
-            {% endif %}
-          </div>
         </div>
       </div>
-      {% endfor %}
     </div>
-  </div>
+    {% endfor %}
+  </div></div>
 </div>
 {% endif %}
 {% endblock %}
 
 {% block scripts %}
 <script>
-function switchBg(containerId, bgClass) {
-  var el = document.getElementById(containerId);
-  if (!el) return;
-  el.classList.remove('white', 'gray', 'black', 'checker');
-  el.classList.add(bgClass);
+// 每个 media_id 的目标框存储
+var allTargets = {};
+
+function getTargets(mediaId) {
+  if (!allTargets[mediaId]) allTargets[mediaId] = [];
+  return allTargets[mediaId];
 }
 
-function doCutout(mediaId) {
-  var resultEl = document.getElementById('cutoutResult' + mediaId);
-  resultEl.innerHTML = '<span class="text-info">抠图中...</span>';
+function initDrawing(mediaId) {
+  var wrap = document.getElementById('imgWrap' + mediaId);
+  if (!wrap || wrap.dataset.init) return;
+  wrap.dataset.init = '1';
+  var img = document.getElementById('img' + mediaId);
+  var targets = getTargets(mediaId);
+  var startX, startY, drawing = false, boxEl = null;
+
+  wrap.addEventListener('mousedown', function(e) {
+    var rect = img.getBoundingClientRect();
+    startX = e.clientX - rect.left;
+    startY = e.clientY - rect.top;
+    drawing = true;
+    boxEl = document.createElement('div');
+    boxEl.className = 'target-box keep';
+    boxEl.style.left = startX + 'px'; boxEl.style.top = startY + 'px';
+    boxEl.style.width = '0px'; boxEl.style.height = '0px';
+    wrap.appendChild(boxEl);
+  });
+
+  wrap.addEventListener('mousemove', function(e) {
+    if (!drawing) return;
+    var rect = img.getBoundingClientRect();
+    var x = e.clientX - rect.left, y = e.clientY - rect.top;
+    boxEl.style.left = Math.min(startX, x) + 'px';
+    boxEl.style.top = Math.min(startY, y) + 'px';
+    boxEl.style.width = Math.abs(x - startX) + 'px';
+    boxEl.style.height = Math.abs(y - startY) + 'px';
+  });
+
+  wrap.addEventListener('mouseup', function(e) {
+    if (!drawing) return;
+    drawing = false;
+    var rect = img.getBoundingClientRect();
+    var ex = e.clientX - rect.left, ey = e.clientY - rect.top;
+    var x1 = Math.min(startX, ex), y1 = Math.min(startY, ey);
+    var x2 = Math.max(startX, ex), y2 = Math.max(startY, ey);
+    var w = x2 - x1, h = y2 - y1;
+    if (w < 5 || h < 5) { boxEl.remove(); return; }
+
+    var sel = document.getElementById('targetType' + mediaId);
+    var type = sel ? sel.value : 'main_product';
+    var keep = type === 'main_product' || type === 'accessory';
+
+    var target = {
+      type: type, keep: keep,
+      bbox: [Math.round(x1), Math.round(y1), Math.round(x2), Math.round(y2)],
+      label: type === 'main_product' ? '主商品' : (type === 'accessory' ? '配件' : sel.options[sel.selectedIndex].text)
+    };
+    targets.push(target);
+
+    boxEl.className = 'target-box ' + (keep ? 'keep' : 'remove');
+    var lbl = document.createElement('span');
+    lbl.className = 'target-box-label';
+    lbl.style.cssText = 'background:' + (keep ? '#198754' : '#dc3545');
+    lbl.textContent = (targets.length) + ':' + target.label;
+    boxEl.appendChild(lbl);
+
+    updateTargetUI(mediaId);
+  });
+}
+
+function clearTargets(mediaId) {
+  allTargets[mediaId] = [];
+  var wrap = document.getElementById('imgWrap' + mediaId);
+  if (wrap) {
+    wrap.querySelectorAll('.target-box').forEach(function(b) { b.remove(); });
+    wrap.dataset.init = '';
+  }
+  updateTargetUI(mediaId);
+  initDrawing(mediaId);
+}
+
+function undoLastTarget(mediaId) {
+  var targets = getTargets(mediaId);
+  if (!targets.length) return;
+  targets.pop();
+  var wrap = document.getElementById('imgWrap' + mediaId);
+  var boxes = wrap.querySelectorAll('.target-box');
+  if (boxes.length) boxes[boxes.length-1].remove();
+  updateTargetUI(mediaId);
+}
+
+function updateTargetUI(mediaId) {
+  var targets = getTargets(mediaId);
+  document.getElementById('targetCount' + mediaId).textContent = targets.length + '个目标';
+  var list = document.getElementById('targetList' + mediaId);
+  list.innerHTML = targets.map(function(t, i) {
+    var color = t.keep ? '#198754' : '#dc3545';
+    var b = t.bbox;
+    return '<span style="color:' + color + ';margin-right:8px;">' + (i+1) + '.' + t.label + ' [' + b.join(',') + ']</span>';
+  }).join('');
+}
+
+function doCutoutV2(mediaId) {
+  var targets = getTargets(mediaId);
+  if (!targets.length) { alert('请先在图片上拖拽框选商品区域！'); return; }
+  if (!targets.some(function(t) { return t.keep; })) { alert('至少需要一个保留目标（主商品或配件）！'); return; }
+  doCutout(mediaId, 'rembg_crop', targets);
+}
+
+function doCutoutSimple(mediaId) {
+  doCutout(mediaId, 'rembg_full', null);
+}
+
+function doCutout(mediaId, provider, targets) {
+  var el = document.getElementById('cutoutResult' + mediaId);
+  el.innerHTML = '<span class="text-info">抠图中...</span>';
   var fd = new FormData();
-  fd.append('provider', 'rembg');
+  fd.append('provider', provider);
+  if (targets) fd.append('targets', JSON.stringify(targets));
   fetch('/ozon/product-cutout/' + mediaId + '/create', { method: 'POST', body: fd })
-    .then(r => r.json())
-    .then(d => {
-      if (d.ok) {
-        resultEl.innerHTML = '<span class="text-success">抠图完成，质量 ' + (d.quality_score||'?') + '分。刷新查看。</span>';
-        setTimeout(function() { location.reload(); }, 1000);
-      } else {
-        resultEl.innerHTML = '<span class="text-danger">' + (d.error || '失败') + '</span>';
-      }
-    })
-    .catch(function(e) {
-      resultEl.innerHTML = '<span class="text-danger">请求失败: ' + e.message + '</span>';
-    });
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) { el.innerHTML = '<span class="text-success">抠图完成，质量 ' + (d.quality_score||'?') + '分。刷新查看结果。</span>'; setTimeout(function() { location.reload(); }, 1500); }
+      else { el.innerHTML = '<span class="text-danger">' + (d.error || '失败') + '</span>'; }
+    }).catch(function(e) { el.innerHTML = '<span class="text-danger">请求失败: ' + e.message + '</span>'; });
 }
 
-function doApprove(cutoutId) {
-  fetch('/ozon/product-cutout/' + cutoutId + '/approve', { method: 'POST' })
-    .then(r => r.json())
-    .then(d => {
-      if (d.ok) location.reload();
-      else alert(d.error || '失败');
-    });
-}
+// 预初始化
+document.addEventListener('DOMContentLoaded', function() {
+  document.querySelectorAll('[id^="imgWrap"]').forEach(function(wrap) {
+    var mediaId = parseInt(wrap.id.replace('imgWrap', ''));
+    if (mediaId) initDrawing(mediaId);
+  });
+});
 
-function doReject(cutoutId) {
-  var notes = prompt('拒绝原因（可选）:');
-  var fd = new FormData();
-  if (notes) fd.append('notes', notes);
-  fetch('/ozon/product-cutout/' + cutoutId + '/reject', { method: 'POST', body: fd })
-    .then(r => r.json())
-    .then(d => {
-      if (d.ok) location.reload();
-      else alert(d.error || '失败');
-    });
+function switchBg(id, cls) {
+  var el = document.getElementById(id); if (!el) return;
+  el.classList.remove('white','gray','black','checker'); el.classList.add(cls);
+}
+function doApprove(id) {
+  fetch('/ozon/product-cutout/' + id + '/approve', { method: 'POST' }).then(function(r) { return r.json(); }).then(function(d) { if (d.ok) location.reload(); else alert(d.error); });
+}
+function doReject(id) {
+  var n = prompt('拒绝原因（可选）:'); var fd = new FormData(); if (n) fd.append('notes', n);
+  fetch('/ozon/product-cutout/' + id + '/reject', { method: 'POST', body: fd }).then(function(r) { return r.json(); }).then(function(d) { if (d.ok) location.reload(); else alert(d.error); });
 }
 </script>
 {% endblock %}
