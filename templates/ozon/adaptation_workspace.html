@@ -521,6 +521,36 @@ function analyzeImages() {
 }
 
 function analyzeProductFacts(button) {
+  var btn = button || document.getElementById('btnAnalyze');
+  if (!btn || btn.disabled) return false;
+  var originalText = btn.textContent;
+  btn.disabled = true; btn.textContent = '分析中...';
+  var factId = {{ fact.id }};
+  fetch('/ozon/api/product-fact/' + factId + '/analyze', {method:'POST',headers:{'Accept':'application/json'}})
+    .then(function(r) { return r.json().then(function(data) { return {ok:r.ok,data:data}; }); })
+    .then(function(result) {
+      if (!result.ok || !result.data.ok) throw new Error(result.data.error || 'HTTP '+result.ok);
+      var d = result.data;
+      var lines = ['分析完成',
+        '图片总数：'+(d.total_images||0),'处理成功：'+(d.images||0),
+        '模型调用：'+(d.model_calls||0),'历史回填：'+(d.backfilled||0),
+        '跳过模型：'+(d.skipped||0),'失败：'+(d.failed||0),
+        '新增网页证据：'+(d.text_facts||0),'新增图片证据：'+(d.image_evidences||0),
+        '冲突：'+(d.conflicts||0)];
+      if (d.image_errors && d.image_errors.length) { lines.push(''); lines.push('失败详情：'); lines = lines.concat(d.image_errors); }
+      alert(lines.join(String.fromCharCode(10))); location.reload();
+    })
+    .catch(function(e) { console.error(e); alert('分析失败：'+e.message); })
+    .finally(function() { btn.disabled=false; btn.textContent=originalText||'分析商品资料'; });
+  return false;
+}
+
+
+function analyzeImages() {
+  return analyzeProductFacts(document.getElementById('btnAnalyze'));
+}
+
+function analyzeProductFacts(button) {
   const btn = button || document.getElementById('btnAnalyze');
   if (!btn || btn.disabled) return false;
   const originalText = btn.textContent;
