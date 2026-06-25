@@ -94,6 +94,12 @@
           <div class="score-bar mt-1"><div class="score-bar-fill" style="width:{{ c.quality_score }}%;background:{% if c.quality_score >= 80 %}#198754{% elif c.quality_score >= 60 %}#ffc107{% else %}#dc3545{% endif %}"></div></div>
           <small class="text-muted">质量: {{ c.quality_score }}分</small>
           {% endif %}
+          {% if c.quality_json %}
+          {% set qj = c.quality_json|tojson if c.quality_json is string else c.quality_json %}
+          {% if 'has_text_or_logo' in (c.quality_json or '') %}
+          <small class="text-warning">⚠️ 检测到文字/Logo，建议换原图</small>
+          {% endif %}
+          {% endif %}
           <div class="bg-switch mt-1">
             <button style="background:#fff" title="白底" onclick="switchBg('cutoutPreview{{ c.id }}','white')"></button>
             <button style="background:#666" title="灰底" onclick="switchBg('cutoutPreview{{ c.id }}','gray')"></button>

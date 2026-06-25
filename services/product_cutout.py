@@ -270,20 +270,19 @@ def _check_cutout_quality(
     mask: Optional[Image.Image],
     original: Image.Image,
 ) -> Dict[str, Any]:
-    """检查抠图质量。返回 score/pass/warnings。"""
+    """检查抠图质量 + 文字/Logo检测。返回 score/pass/warnings。"""
+    import numpy as np
     warnings = []
     check_items = {
-        'edge_residual': True,      # 边缘无残留
-        'completeness': True,       # 商品完整
-        'white_clipping': False,    # 白色商品未被吃掉
-        'person_hand': False,       # 无残留人手
+        'edge_residual': True,
+        'completeness': True,
+        'white_clipping': False,
+        'person_hand': False,
+        'has_text_or_logo': False,
     }
 
     if mask:
-        import numpy as np
         mask_arr = np.array(mask)
-
-        # 检查主体占比（太低 = 可能抠坏了）
         total = mask_arr.size
         foreground = np.count_nonzero(mask_arr)
         fg_ratio = foreground / total if total > 0 else 0
@@ -294,12 +293,24 @@ def _check_cutout_quality(
         elif fg_ratio > 0.95:
             warnings.append('主体占比过高 (>95%)，可能保留了背景')
 
-        # 边缘密度检查（过于复杂的边缘可能有问题）
         if mask_arr.shape[0] > 0 and mask_arr.shape[1] > 0:
             edge_pixels = np.sum(np.abs(np.diff(mask_arr.astype(int), axis=1)))
             edge_density = edge_pixels / (mask_arr.shape[0] * mask_arr.shape[1])
             if edge_density > 0.3:
                 warnings.append('边缘复杂度过高，可能有噪点残留')
+
+    # ── 文字/Logo 检测 ──
+    # 在原图前景区域检测高对比度文字特征
+    text_score = _detect_text_regions(original, mask)
+    if text_score > 0.3:
+        check_items['has_text_or_logo'] = True
+        if text_score > 0.6:
+            warnings.append(f'检测到明显文字/Logo区域 (置信度{int(text_score*100)}%)，建议更换更干净的原图')
+        else:
+            warnings.append(f'可能存在文字/Logo (置信度{int(text_score*100)}%)，请人工检查')
+    elif text_score > 0.1:
+        check_items['has_text_or_logo'] = True
+        warnings.append(f'边缘可能存在文字残留 (置信度{int(text_score*100)}%)')
 
     # 评分
     score = 90
@@ -307,6 +318,8 @@ def _check_cutout_quality(
         score -= 30
     if not check_items['edge_residual']:
         score -= 20
+    if check_items.get('has_text_or_logo'):
+        score -= int(text_score * 25)  # 文字越多扣分越多
     for w in warnings:
         score -= 5
     score = max(0, min(100, score))
@@ -317,6 +330,55 @@ def _check_cutout_quality(
         'warnings': warnings,
         'checks': check_items,
     }
+
+
+def _detect_text_regions(img: Image.Image, mask: Optional[Image.Image] = None) -> float:
+    """检测图片前景中的文字/Logo 区域，返回 0-1 置信度。
+
+    基于边缘密度和局部高对比度区域检测。
+    在抠图场景中，只在透明 PNG 的前景区域检测（如果提供了mask）。
+    """
+    import numpy as np
+    from PIL import ImageFilter
+
+    gray = img.convert('L')
+    gray_arr = np.array(gray, dtype=np.float32)
+
+    # 如果有 mask，只看前景区域
+    if mask:
+        mask_arr = np.array(mask.convert('L'))
+        if mask_arr.shape == gray_arr.shape:
+            gray_arr[mask_arr < 128] = 128  # 背景设为中性灰
+
+    # 边缘检测（Sobel 近似）
+    if gray_arr.shape[0] < 3 or gray_arr.shape[1] < 3:
+        return 0.0
+
+    gx = np.abs(np.diff(gray_arr, axis=1)[:, :-1])
+    gy = np.abs(np.diff(gray_arr, axis=0)[:-1, :])
+
+    # 取最小公共尺寸
+    h, w = min(gx.shape[0], gy.shape[0]), min(gx.shape[1], gy.shape[1])
+    gradient = np.sqrt(gx[:h, :w]**2 + gy[:h, :w]**2)
+
+    # 高梯度区域占比（文字/LoGo 区域通常有密集边缘）
+    high_grad = (gradient > 30).mean()
+
+    # 局部高对比度（文字通常和背景形成强烈对比）
+    if gray_arr.shape[0] >= 8 and gray_arr.shape[1] >= 8:
+        local_std = np.zeros((h//8, w//8))
+        for i in range(0, h - 7, 8):
+            for j in range(0, w - 7, 8):
+                block = gradient[i:i+8, j:j+8]
+                if block.size > 0:
+                    local_std[i//8, j//8] = block.std()
+        text_like_blocks = (local_std > 15).mean()
+    else:
+        text_like_blocks = 0
+
+    # 综合评分
+    score = high_grad * 0.4 + text_like_blocks * 0.6
+    return float(min(1.0, max(0.0, score)))
 
 
 # ═══════════════════════════════════════════════════════════════
