@@ -46,7 +46,7 @@
           <strong style="font-size:11px">源图片 ({{ source_media|length }})</strong>
           {% if has_vision_config %}
           <button class="btn btn-sm btn-outline-info" style="font-size:10px;padding:2px 8px" id="btnAnalyze" onclick="analyzeImages()">
-            🔍 AI识别图片
+            🔍 分析商品资料
           </button>
           {% endif %}
         </div>
@@ -102,7 +102,6 @@
         </div>
       </div>
     </div>
-  </div>
 
   
         <!-- 产品识别详情 (紧凑版) -->
@@ -136,6 +135,8 @@
           </div>
         </div>
         {% endif %}
+  </div>
+</div>
 
 <!-- 中栏：商品事实库 -->
   <div class="col-lg-5">
@@ -218,7 +219,7 @@
         <hr class="my-2">
         <!-- 商品事实操作 -->
         <div class="d-flex gap-1 mb-2">
-          <button class="btn btn-sm btn-info" style="font-size:10px;padding:2px 8px" onclick="analyzeProductFacts()" {% if not fact %}disabled{% endif %}>🔍 批量分析</button>
+          <button class="btn btn-sm btn-info" style="font-size:10px;padding:2px 8px" onclick="analyzeProductFacts()" {% if not fact %}disabled{% endif %}>🔍 分析商品资料</button>
           <button class="btn btn-sm btn-outline-secondary" style="font-size:10px;padding:2px 8px" onclick="mergeProductFacts()" {% if not fact %}disabled{% endif %}>合并事实</button>
           <span class="ms-auto" id="briefStatus" style="font-size:11px"></span>
         </div>
@@ -546,25 +547,8 @@ function generateDraft() {
 }
 
 function analyzeImages() {
-  var btn = document.getElementById('btnAnalyze');
-  btn.disabled = true;
-  btn.innerHTML = '⏳ 识别中...';
-  fetch('/ozon/api/adaptation/{{ source.id }}/analyze-images', { method: 'POST' })
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-      btn.disabled = false;
-      btn.textContent = '🔍 AI识别图片';
-      if (d.ok) {
-        alert('✅ ' + d.message);
-        location.reload();
-      } else {
-        alert('❌ ' + (d.error || '识别失败'));
-      }
-    })
-    .catch(function(err) {
-      btn.disabled = false;
-      btn.textContent = '🔍 AI识别图片';
-      alert('❌ 请求失败: ' + err.message);
+  analyzeProductFacts();
+  return false;
     });
 }
 
@@ -1394,7 +1378,7 @@ if (d.image_errors && d.image_errors.length) msg += '
 ');
 alert(msg);
       location.reload();
-    }).catch(e=>{alert('失败:'+e)}).finally(()=>{btn.disabled=false;btn.textContent='批量分析'});
+    }).catch(e=>{alert('失败:'+e)}).finally(()=>{btn.disabled=false;btn.textContent='分析商品资料'});
 }
 function mergeProductFacts() {
   fetch('/ozon/api/product-fact/{{ fact.id }}/merge', {method:'POST'})
