@@ -383,6 +383,48 @@ def create_fact_revision(fact: ProductFact, user) -> ProductFactRevision:
 # 为生图提供只读接口
 # ═══════════════════════════════════════════════════════════════
 
+def build_product_detail_summary(fact):
+    """聚合产品详情。返回 {group_key: [{label,value,status,confidence,sku_id,evidence_count}]}"""
+    user = fact.user
+    evs = list(ProductFactEvidence.select().where(
+        (ProductFactEvidence.user == user) & (ProductFactEvidence.fact == fact)
+    ).order_by(ProductFactEvidence.sort_order, ProductFactEvidence.field_path))
+
+    groups = {
+        'identity': [], 'sku': [], 'structure': [], 'specification': [],
+        'function': [], 'compatibility': [], 'package': [], 'selling_point': [],
+        'usage_scenario': [], 'target_customer': [], 'safety': [], 'certification': [],
+        'custom': [], 'unknown': [], 'conflict': [],
+    }
+    for ev in evs:
+        gk = ev.group_key or _infer_group(ev.field_path)
+        if ev.fact_status == 'conflict': gk = 'conflict'
+        if ev.fact_status == 'unknown': gk = 'unknown'
+        groups.setdefault(gk, []).append({
+            'id': ev.id, 'label': ev.label_cn or ev.field_path,
+            'value': ev.value_json or ev.content or '',
+            'status': ev.fact_status, 'confidence': ev.confidence,
+            'unit': ev.unit, 'sku_id': ev.applicable_sku_id,
+        })
+    return {k: v for k, v in groups.items() if v}
+
+
+def _infer_group(fp):
+    fp = fp or ""
+    if any(k in fp for k in ["product_identity", "name", "brand", "model", "product_type"]): return "identity"
+    if any(k in fp for k in ["skus[", "color", "size", "style", "variant"]): return "sku"
+    if any(k in fp for k in ["structure", "material", "component"]): return "structure"
+    if any(k in fp for k in ["specification", "param", "power", "weight", "dimension", "battery", "voltage"]): return "specification"
+    if any(k in fp for k in ["function", "feature"]): return "function"
+    if any(k in fp for k in ["compatib"]): return "compatibility"
+    if any(k in fp for k in ["package", "content"]): return "package"
+    if any(k in fp for k in ["selling_point"]): return "selling_point"
+    if any(k in fp for k in ["usage", "scenario"]): return "usage_scenario"
+    if any(k in fp for k in ["target_customer"]): return "target_customer"
+    if any(k in fp for k in ["safety", "certif"]): return "safety"
+    return "custom"
+
+
 def get_confirmed_facts_for_generation(fact: ProductFact) -> Dict[str, Any]:
     """只返回已确认的事实，用于生图 Prompt 构建。"""
     user = fact.user

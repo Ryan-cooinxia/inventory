@@ -90,55 +90,80 @@ def get_active_config(user) -> Optional[VisionModelConfig]:
             .first())
 
 
+def get_media_image_b64(media: OzonSourceMedia):
+    """加载图片base64。优先local_path → 相对URL → 公网URL。返回(base64, W, H)或(None,0,0)"""
+    from PIL import Image
+    import requests as req
+    path = (media.local_path or '').replace('\\', '/')
+    # 1. local_path
+    if path:
+        for prefix in ['', 'uploads/']:
+            p = Path(current_app.root_path) / prefix / path
+            if p.exists():
+                return _img_to_b64(Image.open(p).convert('RGB'))
+    # 2. 站内相对URL
+    url = media.source_url or ''
+    if url.startswith('/'):
+        # 尝试作为本地路径
+        clean = url.lstrip('/')
+        p = Path(current_app.root_path) / clean
+        if p.exists():
+            return _img_to_b64(Image.open(p).convert('RGB'))
+    # 3. 公网URL
+    if url and url.startswith('http') and 'example.com' not in url:
+        try:
+            resp = req.get(url, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://detail.1688.com/'}, timeout=20)
+            resp.raise_for_status()
+            return _img_to_b64(Image.open(io.BytesIO(resp.content)).convert('RGB'))
+        except Exception:
+            pass
+    return None, 0, 0
+
+
+def _img_to_b64(img):
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=85)
+    return base64.b64encode(buf.getvalue()).decode(), img.size[0], img.size[1]
+
+
 def analyze_product_image(
-    user,
-    media: OzonSourceMedia,
-    task_type: str = 'fact_extraction',
-    source_skus: Optional[List[OzonSourceSku]] = None,
-) -> Optional[dict]:
-    """统一入口：分析商品图片，返回结构化事实。
-
-    Args:
-        user: current_user
-        media: 图片记录
-        task_type: fact_extraction / sku_image / compliance_check
-        source_skus: 关联的源 SKU 列表（用于 SKU 归属判断）
-
-    Returns:
-        vision_result dict 或 None(失败)
-    """
+    user, media: OzonSourceMedia, task_type: str = 'fact_extraction',
+    source_skus: Optional[List] = None, fact: Optional[Any] = None,
+    force: bool = False,
+) -> dict:
+    """统一入口：分析商品图片。返回 {'ok':True/False, 'facts':N, 'error':''} """
     config = get_active_config(user)
     if not config:
-        return None
+        return {'ok': False, 'error': '未配置启用的视觉模型', 'facts': 0}
 
-    # 加载图片
-    img_b64, W, H = _load_image_base64(media)
+    # 任务指纹去重
+    img_b64, W, H = get_media_image_b64(media)
     if not img_b64:
-        return None
+        return {'ok': False, 'error': '无法加载图片', 'facts': 0}
+
+    task_hash = hashlib.sha256(
+        f'{media.id}|{task_type}|{config.provider}|{config.model_name}'.encode()
+    ).hexdigest()[:16]
+    if not force:
+        existing = ImageAnalysisJob.select().where(
+            (ImageAnalysisJob.user == user) & (ImageAnalysisJob.media == media) &
+            (ImageAnalysisJob.task_type == task_type) & (ImageAnalysisJob.status == 'success')
+        ).first()
+        if existing:
+            return {'ok': True, 'facts': 0, 'skipped': True, 'message': '已识别，跳过'}
 
     # 调用视觉模型
     api_key = _decrypt_key(config)
     try:
         response_text, raw_json = _call_vision_api(config, api_key, img_b64, PRODUCT_IMAGE_PROMPT)
-    except Exception as e:
-        _create_job(user, media, task_type, config, status='failed', error=str(e)[:500])
-        return None
-
-    # 解析
-    try:
         parsed = _parse_vision_response(response_text, W, H)
     except Exception as e:
-        _create_job(user, media, task_type, config, status='failed', error=f'Parse error: {str(e)[:500]}')
-        return None
+        _create_job(user, media, task_type, config, status='failed', error=str(e)[:500])
+        return {'ok': False, 'error': str(e)[:200], 'facts': 0}
 
-    # 保存 ImageAnalysisJob
-    job = _create_job(user, media, task_type, config,
-                      status='success', response=raw_json, parsed=parsed)
-
-    # 将事实写入 ImageFact 和 ProductFactEvidence
-    _save_image_facts(user, media, job, parsed, source_skus)
-
-    return parsed
+    job = _create_job(user, media, task_type, config, status='success', response=raw_json, parsed=parsed)
+    count = _save_image_facts(user, media, job, parsed, source_skus, fact)
+    return {'ok': True, 'facts': count, 'media_id': media.id}
 
 
 def analyze_image(media: OzonSourceMedia, task_type: str, user) -> Optional[dict]:
@@ -179,33 +204,6 @@ def check_image_compliance(media: OzonSourceMedia, user) -> dict:
 # ═══════════════════════════════════════════════════════════════
 # 内部实现
 # ═══════════════════════════════════════════════════════════════
-
-def _load_image_base64(media: OzonSourceMedia):
-    from PIL import Image
-    import requests as req
-    path = (media.local_path or '').replace('\\', '/')
-    if path:
-        for prefix in ['', 'uploads/']:
-            p = Path(current_app.root_path) / prefix / path
-            if p.exists():
-                img = Image.open(p).convert('RGB')
-                buf = io.BytesIO()
-                img.save(buf, format='JPEG', quality=85)
-                return base64.b64encode(buf.getvalue()).decode(), img.size[0], img.size[1]
-    if media.source_url and 'example.com' not in media.source_url:
-        try:
-            resp = req.get(media.source_url, headers={
-                'User-Agent': 'Mozilla/5.0', 'Referer': 'https://detail.1688.com/'
-            }, timeout=20)
-            resp.raise_for_status()
-            img = Image.open(io.BytesIO(resp.content)).convert('RGB')
-            buf = io.BytesIO()
-            img.save(buf, format='JPEG', quality=85)
-            return base64.b64encode(buf.getvalue()).decode(), img.size[0], img.size[1]
-        except Exception:
-            pass
-    return None, 0, 0
-
 
 def _decrypt_key(config) -> str:
     try:
@@ -269,71 +267,39 @@ def _create_job(user, media, task_type, config, status='success',
     )
 
 
-def _save_image_facts(user, media, job, parsed, source_skus):
-    """将识别结果写入 ImageFact 和 ProductFactEvidence，不直接覆盖 ProductFact。"""
+def _save_image_facts(user, media, job, parsed, source_skus, fact=None):
+    """写入 ImageFact + ProductFactEvidence。返回写入数量。"""
     facts = parsed.get('facts', [])
-    if not facts:
-        return
-
+    count = 0
     for f in facts:
         field_path = f.get('field_path', '')
-        value = f.get('value', '')
+        value = str(f.get('value', ''))[:2000]
         confidence = f.get('confidence', 0)
         status = f.get('status', 'extracted')
-        bbox = f.get('bbox')
-        sku_orders = f.get('applicable_sku_orders', [])
-
-        # 低于阈值 → inferred
         if confidence < 0.7 and status != 'inferred':
             status = 'inferred'
 
-        # 找匹配的 fact_sku
-        fact_sku = None
-        if sku_orders and source_skus:
-            for sku in source_skus:
-                if sku.source_order in sku_orders:
-                    fact_sku = sku
-                    break
-
-        # 写 ImageFact
-        ImageFact.create(
-            user=user,
-            image_analysis_job=job,
-            media=media,
-            field_path=field_path,
-            value=str(value)[:2000],
+        # ImageFact
+        ImageFact.create(user=user, image_analysis_job=job, media=media,
+            field_path=field_path, value=value,
             evidence_text=f.get('evidence_text', '')[:1000],
-            confidence=confidence,
-            requires_manual_confirmation=(confidence < 0.85),
-        )
+            confidence=confidence, requires_manual_confirmation=(confidence < 0.85))
+        count += 1
 
-        # 写 ProductFactEvidence（如果有关联的 fact）
-        fact = None
-        # 尝试找已存在的 ProductFact
-        if media.source:
-            from models import ProductFact as PF
-            fact = PF.select().where(
-                (PF.user == user) & (PF.source_id == media.source_id)
-            ).first()
-
+        # ProductFactEvidence（通过已有 fact 参数传入）
         if fact:
-            source_locator = json.dumps({'bbox': bbox, 'image_role': parsed.get('image_role', '')}, ensure_ascii=False) if bbox else None
             evidence_hash = _hash_evidence(fact.id, field_path, value, 'image', str(media.id))
-            existing = ProductFactEvidence.select().where(
-                (ProductFactEvidence.user == user) &
-                (ProductFactEvidence.fact == fact) &
+            if not ProductFactEvidence.select().where(
+                (ProductFactEvidence.user == user) & (ProductFactEvidence.fact == fact) &
                 (ProductFactEvidence.evidence_hash == evidence_hash)
-            ).first()
-            if not existing:
+            ).exists():
                 ProductFactEvidence.create(
-                    user=user, fact=fact, fact_sku=fact_sku,
-                    field_path=field_path, evidence_type='image',
-                    fact_status=status, confidence=confidence,
-                    source_type='image', source_locator_json=source_locator,
-                    media=media, source=media.source,
-                    value_json=str(value)[:2000],
-                    evidence_hash=evidence_hash,
-                )
+                    user=user, fact=fact, field_path=field_path, evidence_type='image',
+                    fact_status=status, confidence=confidence, source_type='image',
+                    media=media,
+                    value_json=value, evidence_hash=evidence_hash)
+                count += 1
+    return count
 
 
 def _hash_evidence(fact_id, field_path, value, etype, identifier):

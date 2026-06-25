@@ -3442,28 +3442,49 @@ def api_save_fact(group_id):
 @ozon_bp.route("/api/product-fact/<int:fact_id>/analyze", methods=["POST"])
 @login_required
 def api_analyze_product_fact(fact_id):
-    from services.product_fact_service import merge_fact_candidates, detect_fact_conflicts
-    from services.product_text_fact_extractor import extract_text_facts
     fact = ProductFact.get_or_none((ProductFact.id == fact_id) & (ProductFact.user == current_user))
-    if not fact: return jsonify({"ok": False, "error": "商品事实不存在"}), 404
-    # 通过 group → SourceProductGroupItem 获取 source
+    if not fact: return jsonify({'ok': False, 'error': '商品事实不存在'}), 404
+    from services.product_text_fact_extractor import extract_text_facts
+    from services.vision_tool import analyze_product_image
+    from services.product_fact_service import merge_fact_candidates, detect_fact_conflicts
+
+    # 通过 group -> items -> source 获取关联
     source = None
+    source_skus = []
     if fact.group:
         item = SourceProductGroupItem.get_or_none((SourceProductGroupItem.group == fact.group) & (SourceProductGroupItem.user == current_user))
-        if item: source = item.source
-    text_count = extract_text_facts(current_user, source, fact) if source else 0
-    img_count = 0
-    if source:
-        for m in OzonSourceMedia.select().where((OzonSourceMedia.user == current_user) & (OzonSourceMedia.source == source) & (OzonSourceMedia.compliance_status != "rejected")).limit(10):
-            try:
-                if analyze_product_image(current_user, m): img_count += 1
-            except: pass
-    merged = merge_fact_candidates(fact)
-    conflicts = detect_fact_conflicts(fact)
-    return jsonify({"ok": True, "text_facts": text_count, "images_analyzed": img_count, "merged": merged, "conflicts": len(conflicts)})
+        if item:
+            source = item.source
+            source_skus = list(OzonSourceSku.select().where(OzonSourceSku.source == source))
 
-@ozon_bp.route("/api/product-fact/<int:fact_id>/merge", methods=["POST"])
-@login_required
+    # 网页文本提取
+    result = {'ok': True, 'text_facts': 0, 'images': 0, 'image_errors': [], 'conflicts': 0}
+    if source:
+        result['text_facts'] = extract_text_facts(current_user, source, fact)
+    else:
+        result['error'] = '未找到关联的采集来源'
+        return jsonify(result)
+
+    # 全量图片识别（分批5张）
+    media_all = list(OzonSourceMedia.select().where(
+        (OzonSourceMedia.user == current_user) & (OzonSourceMedia.source == source)
+    ))
+    for i in range(0, len(media_all), 5):
+        batch = media_all[i:i+5]
+        for m in batch:
+            try:
+                r = analyze_product_image(current_user, m, fact=fact, source_skus=source_skus)
+                if r.get('ok'):
+                    result['images'] += 1
+                elif not r.get('skipped'):
+                    result['image_errors'].append(f'{m.id}:{r.get("error","?")[:50]}')
+            except Exception as e:
+                result['image_errors'].append(f'{m.id}:{str(e)[:80]}')
+
+    result['merged'] = merge_fact_candidates(fact)
+    result['conflicts'] = len(detect_fact_conflicts(fact))
+    return jsonify(result)
+
 def api_merge_fact(fact_id):
     fact = ProductFact.get_or_none((ProductFact.id == fact_id) & (ProductFact.user == current_user))
     if not fact: return jsonify({"ok": False, "error": "商品事实不存在"}), 404
