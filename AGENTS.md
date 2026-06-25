@@ -160,6 +160,12 @@ mcp__vision-tools__analyze_image
 - 图片生成需要 OpenAI DALL-E 3 或通义万相 Key
 - 加工页 → 生成内容 → 保存 → 图片方案 → 批量生成
 
+### 产品母图系统
+- 需求文档：`designs/product-cutout-flow/design_handoff/需求文档.xlsx`（6 个 Sheet）
+- **改动产品母图相关功能时，必须同步更新需求文档中的阶段规划、完成清单、问题状态和开发日志**
+- 核心原则：视觉模型只定位、分割模型出 mask、原图像素零修改、人工确认后批准
+- 当前阶段：P0 已完成，P1（SAM 2 分割 + 蒙版画笔 + 边缘去色）待开发
+
 ### 适配工作台属性加载
 - 选 type 后自动从本地 DB 加载属性（`loadAttributeForm`），不再需要手动同步
 - 属性加载成功则隐藏"同步属性/字典"按钮
