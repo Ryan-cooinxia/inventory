@@ -236,7 +236,7 @@
             <div class="text-truncate">{{ ev.value_json or ev.content or '' }}</div>
           </div>
           <div class="d-flex gap-1 flex-shrink-0">
-            {% if item.status not in ('confirmed', 'rejected') %}
+            {% if ev.fact_status not in ('confirmed', 'rejected') %}
             <button class="btn btn-sm btn-outline-success" style="font-size:8px;padding:0 4px" onclick="confirmEvidence({{ ev.id }})" title="确认">✓</button>
             <button class="btn btn-sm btn-outline-danger" style="font-size:8px;padding:0 4px" onclick="rejectEvidence({{ ev.id }})" title="拒绝">✕</button>
             {% endif %}
