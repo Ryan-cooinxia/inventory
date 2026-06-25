@@ -3145,6 +3145,21 @@ def adaptation_batch_delete():
     return redirect(url_for('ozon.adaptation_list'))
 
 
+def _infer_group_key(field_path):
+    fp = field_path or ""
+    if any(k in fp for k in ["product_identity", "name", "brand", "model", "product_type", "category"]): return "identity"
+    if any(k in fp for k in ["skus[", "sku_variant", "color", "size", "style", "variant"]): return "sku"
+    if any(k in fp for k in ["structure", "material", "component", "shape"]): return "structure"
+    if any(k in fp for k in ["specification", "param", "power", "weight", "dimension", "battery", "voltage", "capacity"]): return "specification"
+    if any(k in fp for k in ["function", "feature"]): return "function"
+    if any(k in fp for k in ["compatibility", "compatible"]): return "compatibility"
+    if any(k in fp for k in ["package", "contents", "accessory"]): return "package"
+    if any(k in fp for k in ["selling_point"]): return "selling_point"
+    if any(k in fp for k in ["usage", "scenario"]): return "usage_scenario"
+    if any(k in fp for k in ["target_customer"]): return "target_customer"
+    if any(k in fp for k in ["safety", "certification"]): return "safety"
+    return "custom"
+
 @ozon_bp.route('/adaptation/<int:source_id>')
 @login_required
 def adaptation_workspace(source_id):
