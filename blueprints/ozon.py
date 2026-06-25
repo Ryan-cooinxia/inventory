@@ -31,6 +31,8 @@ from models import (
     OzonOnlineProduct, OzonOnlineProductAction,
     # 新增：同步任务 + 常用 type
     OzonCategorySyncJob, OzonFavoriteCategoryType,
+    # 新增：产品母图
+    OzonImagePlan, OzonImageReference, OzonProductCutout,
 )
 from services.ozon_api import (
     create_client, test_account,
