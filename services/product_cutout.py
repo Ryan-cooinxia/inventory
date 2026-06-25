@@ -111,18 +111,7 @@ def create_product_cutout(
     if not img:
         return {'ok': False, 'error': 'Cannot load source image'}
 
-    # 检查是否已有同 provider 的成功记录（提示但不阻止重新生成）
-    existing = (OzonProductCutout
-                .select().where((OzonProductCutout.user == user) &
-                                (OzonProductCutout.source_media == media) &
-                                (OzonProductCutout.provider == provider) &
-                                (OzonProductCutout.status == 'generated')).first())
-    if existing:
-        # 返回已有结果并告知用户
-        result = _cutout_to_dict(existing)
-        result['already_exists'] = True
-        result['message'] = f'该图片已有 {provider} 抠图结果（母图 #{existing.id}），请查看页面底部"已有母图记录"区域'
-        return result
+    # 不阻止重复生成 — 每次点击都创建新修订版
 
     if provider == 'rembg_crop' and targets:
         transparent, raw_mask, cleaned_mask, seg_info = _cutout_rembg_crop(img, targets)
