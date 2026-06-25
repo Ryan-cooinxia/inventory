@@ -136,21 +136,25 @@ def analyze_product_image(
     if not config:
         return {'ok': False, 'error': '未配置启用的视觉模型', 'facts': 0}
 
-    # 任务指纹去重
+    # 任务指纹——包含图片哈希
     img_b64, W, H = get_media_image_b64(media)
     if not img_b64:
         return {'ok': False, 'error': '无法加载图片', 'facts': 0}
 
-    task_hash = hashlib.sha256(
-        f'{media.id}|{task_type}|{config.provider}|{config.model_name}'.encode()
-    ).hexdigest()[:16]
+    img_hash = hashlib.sha256(
+        (img_b64[:200] + img_b64[-200:]).encode()
+    ).hexdigest()[:16] if img_b64 else 'noimg'
+    task_fingerprint = hashlib.sha256(
+        f'{media.id}|{img_hash}|{task_type}|{config.provider}|{config.model_name}|v1.0'.encode()
+    ).hexdigest()[:20]
     if not force:
         existing = ImageAnalysisJob.select().where(
             (ImageAnalysisJob.user == user) & (ImageAnalysisJob.media == media) &
-            (ImageAnalysisJob.task_type == task_type) & (ImageAnalysisJob.status == 'success')
+            (ImageAnalysisJob.task_type == task_type) & (ImageAnalysisJob.status == 'success') &
+            (ImageAnalysisJob.request_json.contains(task_fingerprint))
         ).first()
         if existing:
-            return {'ok': True, 'facts': 0, 'skipped': True, 'message': '已识别，跳过'}
+            return {'ok': True, 'facts': 0, 'skipped': True, 'message': '指纹匹配，跳过'}
 
     # 调用视觉模型
     api_key = _decrypt_key(config)
@@ -251,26 +255,28 @@ def _parse_vision_response(text: str, W: int, H: int) -> dict:
 
 
 def _create_job(user, media, task_type, config, status='success',
-                response=None, parsed=None, error=None):
+                response=None, parsed=None, error=None, fingerprint=''):
     return ImageAnalysisJob.create(
-        user=user,
-        media=media,
-        source=media.source,
-        task_type=task_type,
-        provider=config.provider,
-        model_name=config.model_name,
-        status=status,
-        request_json=json.dumps({'task_type': task_type, 'model': config.model_name}, ensure_ascii=False),
+        user=user, media=media, source=media.source,
+        task_type=task_type, provider=config.provider,
+        model_name=config.model_name, status=status,
+        request_json=json.dumps({
+            'task_type': task_type, 'model': config.model_name,
+            'fingerprint': fingerprint
+        }, ensure_ascii=False),
         response_json=response,
         parsed_json=json.dumps(parsed, ensure_ascii=False) if parsed else None,
         error_message=error,
     )
 
 
-def _save_image_facts(user, media, job, parsed, source_skus, fact=None):
-    """写入 ImageFact + ProductFactEvidence。返回写入数量。"""
+def _save_image_facts(user, media, job, parsed, source_skus, fact=None) -> int:
+    """完整写入 ImageFact + ProductFactEvidence。返回新增数量。"""
     facts = parsed.get('facts', [])
     count = 0
+    image_role = parsed.get('image_role', '')
+    bbox_info = parsed.get('main_product', {}).get('bbox')
+
     for f in facts:
         field_path = f.get('field_path', '')
         value = str(f.get('value', ''))[:2000]
@@ -278,15 +284,41 @@ def _save_image_facts(user, media, job, parsed, source_skus, fact=None):
         status = f.get('status', 'extracted')
         if confidence < 0.7 and status != 'inferred':
             status = 'inferred'
+        bbox = f.get('bbox') or bbox_info
+        evidence_text = f.get('evidence_text', '')[:1000]
+        sku_orders = f.get('applicable_sku_orders', [])
+
+        # SKU 映射
+        fact_sku = None
+        applicable_sku_id = None
+        if sku_orders and source_skus:
+            for s in source_skus:
+                if s.source_order in sku_orders:
+                    # 查对应的 ProductFactSku
+                    pfs = ProductFactSku.get_or_none(
+                        (ProductFactSku.fact == fact) & (ProductFactSku.source_sku == s)
+                    ) if fact else None
+                    if pfs:
+                        fact_sku = pfs
+                        applicable_sku_id = pfs.id
+                    break
+
+        source_locator = json.dumps({
+            'bbox': bbox, 'image_role': image_role,
+            'media_id': media.id
+        }, ensure_ascii=False) if bbox else None
+
+        group_key = f.get('group_key') or _infer_group_key(field_path)
+        label_cn = f.get('label_cn') or field_path
 
         # ImageFact
         ImageFact.create(user=user, image_analysis_job=job, media=media,
             field_path=field_path, value=value,
-            evidence_text=f.get('evidence_text', '')[:1000],
-            confidence=confidence, requires_manual_confirmation=(confidence < 0.85))
+            evidence_text=evidence_text, confidence=confidence,
+            requires_manual_confirmation=(confidence < 0.85))
         count += 1
 
-        # ProductFactEvidence（通过已有 fact 参数传入）
+        # ProductFactEvidence
         if fact:
             evidence_hash = _hash_evidence(fact.id, field_path, value, 'image', str(media.id))
             if not ProductFactEvidence.select().where(
@@ -294,11 +326,105 @@ def _save_image_facts(user, media, job, parsed, source_skus, fact=None):
                 (ProductFactEvidence.evidence_hash == evidence_hash)
             ).exists():
                 ProductFactEvidence.create(
-                    user=user, fact=fact, field_path=field_path, evidence_type='image',
+                    user=user, fact=fact, fact_sku=fact_sku,
+                    field_path=field_path, evidence_type='image',
                     fact_status=status, confidence=confidence, source_type='image',
-                    media=media,
-                    value_json=value, evidence_hash=evidence_hash)
+                    source_locator_json=source_locator,
+                    media=media, source=media.source,
+                    group_key=group_key, label_cn=label_cn,
+                    applicable_sku_id=applicable_sku_id,
+                    value_json=value, content=evidence_text,
+                    evidence_hash=evidence_hash)
                 count += 1
+    return count
+
+
+def _infer_group_key(fp: str) -> str:
+    fp = fp or ''
+    if any(k in fp for k in ['product_identity','name','brand','model','product_type','category']): return 'identity'
+    if any(k in fp for k in ['skus[','color','size','style','variant']): return 'sku'
+    if any(k in fp for k in ['structure','material','component','shape']): return 'structure'
+    if any(k in fp for k in ['specification','param','power','weight','dimension','battery','voltage','capacity']): return 'specification'
+    if any(k in fp for k in ['function','feature']): return 'function'
+    if any(k in fp for k in ['compatib']): return 'compatibility'
+    if any(k in fp for k in ['package','content']): return 'package'
+    if any(k in fp for k in ['selling_point']): return 'selling_point'
+    if any(k in fp for k in ['usage','scenario']): return 'usage_scenario'
+    if any(k in fp for k in ['target_customer']): return 'target_customer'
+    if any(k in fp for k in ['safety','certif']): return 'safety'
+    return 'custom'
+
+
+def backfill_evidence_from_existing_jobs(user, fact, source) -> int:
+    """回填历史 ImageAnalysisJob 到 ProductFactEvidence。返回回填数量。"""
+    from models import ImageAnalysisJob, ImageFact as IMF
+    count = 0
+    media_ids = [m.id for m in OzonSourceMedia.select(OzonSourceMedia.id).where(
+        (OzonSourceMedia.user == user) & (OzonSourceMedia.source == source)
+    )]
+    if not media_ids:
+        return 0
+
+    jobs = list(ImageAnalysisJob.select().where(
+        (ImageAnalysisJob.user == user) & (ImageAnalysisJob.media.in_(media_ids)) &
+        (ImageAnalysisJob.status == 'success')
+    ))
+
+    for job in jobs:
+        parsed = None
+        if job.parsed_json:
+            try: parsed = json.loads(job.parsed_json)
+            except: pass
+
+        if parsed and parsed.get('facts'):
+            for f in parsed['facts']:
+                field_path = f.get('field_path', '')
+                value = str(f.get('value', ''))[:2000]
+                confidence = f.get('confidence', 0)
+                status = f.get('status', 'extracted')
+                if confidence < 0.7 and status != 'inferred':
+                    status = 'inferred'
+                bbox = f.get('bbox')
+                evidence_text = f.get('evidence_text', '')[:1000]
+                source_locator = json.dumps({'bbox': bbox, 'media_id': job.media_id}, ensure_ascii=False) if bbox else None
+
+                evidence_hash = _hash_evidence(fact.id, field_path, value, 'image', str(job.media_id))
+                if not ProductFactEvidence.select().where(
+                    (ProductFactEvidence.user == user) & (ProductFactEvidence.fact == fact) &
+                    (ProductFactEvidence.evidence_hash == evidence_hash)
+                ).exists():
+                    ProductFactEvidence.create(
+                        user=user, fact=fact, field_path=field_path,
+                        evidence_type='image', fact_status=status,
+                        confidence=confidence, source_type='image',
+                        source_locator_json=source_locator,
+                        media=job.media, source=source,
+                        group_key=_infer_group_key(field_path),
+                        label_cn=field_path, value_json=value,
+                        content=evidence_text, evidence_hash=evidence_hash)
+                    count += 1
+        else:
+            # 从 ImageFact 回填
+            img_facts = list(IMF.select().where(
+                (IMF.user == user) & (IMF.image_analysis_job == job)
+            ))
+            for imf in img_facts:
+                field_path = imf.field_path
+                value = str(imf.value or '')[:2000]
+                evidence_hash = _hash_evidence(fact.id, field_path, value, 'image', str(job.media_id))
+                if not ProductFactEvidence.select().where(
+                    (ProductFactEvidence.user == user) & (ProductFactEvidence.fact == fact) &
+                    (ProductFactEvidence.evidence_hash == evidence_hash)
+                ).exists():
+                    ProductFactEvidence.create(
+                        user=user, fact=fact, field_path=field_path,
+                        evidence_type='image', fact_status='extracted',
+                        confidence=imf.confidence, source_type='image',
+                        media=job.media, source=source,
+                        group_key=_infer_group_key(field_path),
+                        label_cn=field_path, value_json=value,
+                        evidence_hash=evidence_hash)
+                    count += 1
     return count
 
 

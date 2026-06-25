@@ -3444,42 +3444,52 @@ def api_analyze_product_fact(fact_id):
     fact = ProductFact.get_or_none((ProductFact.id == fact_id) & (ProductFact.user == current_user))
     if not fact: return jsonify({'ok': False, 'error': '商品事实不存在'}), 404
     from services.product_text_fact_extractor import extract_text_facts
-    from services.vision_tool import analyze_product_image
+    from services.vision_tool import analyze_product_image, backfill_evidence_from_existing_jobs
     from services.product_fact_service import merge_fact_candidates, detect_fact_conflicts
 
-    # 通过 group -> items -> source 获取关联
-    source = None
-    source_skus = []
+    # 获取source
+    source = None; source_skus = []
     if fact.group:
         item = SourceProductGroupItem.get_or_none((SourceProductGroupItem.group == fact.group) & (SourceProductGroupItem.user == current_user))
         if item:
             source = item.source
             source_skus = list(OzonSourceSku.select().where(OzonSourceSku.source == source))
 
-    # 网页文本提取
-    result = {'ok': True, 'text_facts': 0, 'images': 0, 'image_errors': [], 'conflicts': 0}
-    if source:
-        result['text_facts'] = extract_text_facts(current_user, source, fact)
-    else:
-        result['error'] = '未找到关联的采集来源'
+    result = {'ok': True, 'source': bool(source), 'text_facts': 0, 'backfilled': 0,
+              'images': 0, 'skipped': 0, 'model_calls': 0, 'failed': 0, 'image_errors': [], 'conflicts': 0}
+
+    if not source:
+        result['error'] = '未找到关联采集来源'
         return jsonify(result)
 
-    # 全量图片识别（分批5张）
+    # 1. 历史回填
+    result['backfilled'] = backfill_evidence_from_existing_jobs(current_user, fact, source)
+
+    # 2. 网页文本提取
+    result['text_facts'] = extract_text_facts(current_user, source, fact)
+
+    # 3. 全量图片分析（分批5张）
     media_all = list(OzonSourceMedia.select().where(
         (OzonSourceMedia.user == current_user) & (OzonSourceMedia.source == source)
     ))
-    for i in range(0, len(media_all), 5):
+    total = len(media_all)
+    for i in range(0, total, 5):
         batch = media_all[i:i+5]
         for m in batch:
             try:
                 r = analyze_product_image(current_user, m, fact=fact, source_skus=source_skus)
                 if r.get('ok'):
                     result['images'] += 1
-                elif not r.get('skipped'):
-                    result['image_errors'].append(f'{m.id}:{r.get("error","?")[:50]}')
+                    if not r.get('skipped'): result['model_calls'] += 1
+                    else: result['skipped'] += 1
+                else:
+                    result['failed'] += 1
+                    result['image_errors'].append(f'{m.id}:{r.get("error","?")[:60]}')
             except Exception as e:
+                result['failed'] += 1
                 result['image_errors'].append(f'{m.id}:{str(e)[:80]}')
 
+    result['total_images'] = total
     result['merged'] = merge_fact_candidates(fact)
     result['conflicts'] = len(detect_fact_conflicts(fact))
     return jsonify(result)
