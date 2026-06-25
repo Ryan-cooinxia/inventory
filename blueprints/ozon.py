@@ -47,6 +47,11 @@ from services.ecommerce_image_reference import (
     select_references_for_slot,
     has_usable_references,
 )
+from services.product_cutout import (
+    create_product_cutout,
+    find_best_media_for_cutout,
+    CUTOUT_DIR,
+)
 from crypto_utils import encrypt_api_key
 from crypto_utils import decrypt_api_key
 
@@ -2230,6 +2235,126 @@ def serve_ai_generated(filename):
         os.path.join(current_app.root_path, 'uploads', 'ai_generated'),
         filename
     )
+
+
+# ═══════════════════════════════════════════════════════
+# P5.2 — 产品母图准备
+# ═══════════════════════════════════════════════════════
+
+@ozon_bp.route('/uploads/cutouts/<path:filename>')
+@login_required
+def serve_cutout(filename):
+    """Serve cutout images (transparent PNG, mask, preview)."""
+    filename = filename.replace('\\', '/')
+    return send_from_directory(
+        os.path.join(current_app.root_path, 'uploads', CUTOUT_DIR),
+        filename
+    )
+
+
+@ozon_bp.route('/product-cutout/<int:source_id>')
+@login_required
+def product_cutout_page(source_id):
+    """产品母图准备页面"""
+    source = (OzonSource
+              .select()
+              .where((OzonSource.id == source_id) & (OzonSource.user == current_user))
+              .first())
+    if not source:
+        flash('采集记录不存在', 'danger')
+        return redirect(url_for('ozon.sources'))
+
+    # 推荐的图片列表
+    recommendations = find_best_media_for_cutout(current_user, source_id, max_count=8)
+
+    # 已有的抠图记录
+    cutouts = list(OzonProductCutout.select().where(
+        (OzonProductCutout.user == current_user) &
+        (OzonProductCutout.source == source)
+    ).order_by(OzonProductCutout.created_at.desc()))
+
+    # 图片详情 map
+    media_map = {}
+    if recommendations:
+        media_ids = [r['media_id'] for r in recommendations]
+        for m in OzonSourceMedia.select().where(OzonSourceMedia.id.in_(media_ids)):
+            media_map[m.id] = m
+
+    return render_template('ozon/product_cutout.html',
+                           source=source,
+                           recommendations=recommendations,
+                           media_map=media_map,
+                           cutouts=cutouts)
+
+
+@ozon_bp.route('/product-cutout/<int:media_id>/create', methods=['POST'])
+@login_required
+def product_cutout_create(media_id):
+    """对单张图片执行抠图"""
+    media = (OzonSourceMedia
+             .select()
+             .join(OzonSource)
+             .where((OzonSourceMedia.id == media_id) &
+                    (OzonSource.user == current_user))
+             .first())
+    if not media:
+        return jsonify({'ok': False, 'error': '图片不存在'}), 404
+
+    provider = request.form.get('provider', 'rembg').strip()
+    sku_id = request.form.get('sku_id', '').strip()
+    sku = None
+    if sku_id and sku_id.isdigit():
+        sku = OzonSourceSku.get_or_none(
+            (OzonSourceSku.id == int(sku_id)) & (OzonSourceSku.user == current_user)
+        )
+
+    result = create_product_cutout(current_user, media, provider=provider, sku=sku)
+    return jsonify(result)
+
+
+@ozon_bp.route('/product-cutout/<int:cutout_id>/approve', methods=['POST'])
+@login_required
+def product_cutout_approve(cutout_id):
+    """确认产品母图"""
+    cutout = (OzonProductCutout
+              .select()
+              .join(OzonSource)
+              .where((OzonProductCutout.id == cutout_id) &
+                     (OzonProductCutout.user == current_user))
+              .first())
+    if not cutout:
+        return jsonify({'ok': False, 'error': '记录不存在'}), 404
+
+    # 先取消同一 source 的旧 primary
+    OzonProductCutout.update(is_primary=False).where(
+        (OzonProductCutout.source == cutout.source) &
+        (OzonProductCutout.is_primary == True)
+    ).execute()
+
+    cutout.status = 'approved'
+    cutout.is_primary = True
+    cutout.reviewer_notes = request.form.get('notes', '')[:500] or None
+    cutout.save()
+    return jsonify({'ok': True, 'message': '母图已确认'})
+
+
+@ozon_bp.route('/product-cutout/<int:cutout_id>/reject', methods=['POST'])
+@login_required
+def product_cutout_reject(cutout_id):
+    """拒绝抠图结果"""
+    cutout = (OzonProductCutout
+              .select()
+              .join(OzonSource)
+              .where((OzonProductCutout.id == cutout_id) &
+                     (OzonProductCutout.user == current_user))
+              .first())
+    if not cutout:
+        return jsonify({'ok': False, 'error': '记录不存在'}), 404
+
+    cutout.status = 'rejected'
+    cutout.reviewer_notes = request.form.get('notes', '')[:500] or None
+    cutout.save()
+    return jsonify({'ok': True, 'message': '母图已拒绝'})
 
 
 # ═══════════════════════════════════════════════════════

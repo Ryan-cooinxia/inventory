@@ -25,7 +25,7 @@ from models import (
     # OZON 模型
     OzonAccount, OzonSource, OzonSourceSku, OzonSourceMedia,
     OzonDraft, OzonDraftSku, OzonImageSlot, OzonImageCandidate, OzonPublishJob,
-    OzonImagePlan, OzonImageReference,
+    OzonImagePlan, OzonImageReference, OzonProductCutout,
     OzonPrompt, OzonPricingRule,
     # OZON 适配层
     SourceProductGroup, SourceProductGroupItem,
@@ -168,7 +168,8 @@ def init_db():
                       OzonCategoryAttribute, OzonCategoryType,
                       OzonAttributeValue, OzonCategory,
                       OzonOnlineProduct, OzonOnlineProductAction,
-                      OzonImageCandidate, OzonImagePlan, OzonImageReference],
+                      OzonImageCandidate, OzonImagePlan, OzonImageReference,
+                      OzonProductCutout],
                      safe=True)
     migrate_ozon_source_quality_schema()
     migrate_product_bundle_schema()
@@ -251,6 +252,7 @@ def migrate_ozon_image_schema():
     """P0: ALTER TABLE 扩展 OzonImageSlot 和 OzonImageCandidate 字段（幂等）"""
     migrations = {
         'ozonimageslot': [
+            ('cutout_id', 'INTEGER'),
             ('plan_id', 'INTEGER'),
             ('buyer_question', 'TEXT'),
             ('main_claim', 'TEXT'),

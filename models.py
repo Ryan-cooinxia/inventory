@@ -633,11 +633,41 @@ class OzonImageReference(BaseModel):
         )
 
 
+class OzonProductCutout(BaseModel):
+    """产品母图 — 自动抠图生成的透明 PNG"""
+    user = ForeignKeyField(User, backref='ozon_product_cutouts')
+    source = ForeignKeyField(OzonSource, backref='product_cutouts')
+    source_media = ForeignKeyField(OzonSourceMedia, backref='cutouts')
+    source_sku = ForeignKeyField(OzonSourceSku, null=True, backref='cutouts')
+
+    transparent_path = CharField(max_length=300)          # 透明 PNG 路径
+    mask_path = CharField(max_length=300, null=True)      # 蒙版路径
+    preview_path = CharField(max_length=300, null=True)   # 预览缩略图
+
+    provider = CharField(max_length=50, default='rembg')  # rembg / dashscope / manual
+    quality_score = IntegerField(null=True)
+    quality_json = TextField(null=True)
+
+    status = CharField(max_length=20, default='pending')  # pending / generated / approved / rejected
+    is_primary = BooleanField(default=False)
+    reviewer_notes = TextField(null=True)
+
+    created_at = DateTimeField(default=datetime.datetime.now)
+    updated_at = DateTimeField(default=datetime.datetime.now)
+
+    class Meta:
+        indexes = (
+            (('user', 'source_media'), False),
+            (('user', 'status'), False),
+        )
+
+
 class OzonImageSlot(BaseModel):
     """图片槽位"""
     user = ForeignKeyField(User, backref='ozon_image_slots')
     draft = ForeignKeyField(OzonDraft, backref='image_slots')
     plan = ForeignKeyField(OzonImagePlan, null=True, backref='slots')
+    cutout = ForeignKeyField(OzonProductCutout, null=True, backref='slots')
 
     slot_order = IntegerField()                                   # 槽位序号 1-8
     role = CharField(max_length=30)                               # main / sku / scene / selling_point / function / detail / size / package
