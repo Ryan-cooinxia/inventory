@@ -45,7 +45,7 @@
   <div class="cutout-card" id="rec{{ rec.media_id }}">
     <div style="padding:8px;">
       <div class="cutout-img-wrap" id="imgWrap{{ rec.media_id }}">
-        <img id="img{{ rec.media_id }}" src="{% if m and m.source_url and 'example.com' not in m.source_url %}{{ m.source_url }}{% elif m and m.local_path %}/{{ m.local_path }}{% endif %}" alt="原图" crossorigin="anonymous" referrerpolicy="no-referrer" onerror="this.style.display='none';this.nextElementSibling.style.display='block';"><span style="display:none;color:#dc3545;font-size:12px">图片加载失败，请使用远程URL原图</span>
+        <img id="img{{ rec.media_id }}" src="{{ m.source_url if m and m.source_url else ('/' + m.local_path) if m and m.local_path else '#' }}" alt="product image" crossorigin="anonymous" referrerpolicy="no-referrer">
       </div>
       <div class="target-toolbar">
         <select id="targetType{{ rec.media_id }}" class="form-select form-select-sm" style="width:130px">
