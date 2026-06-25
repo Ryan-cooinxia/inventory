@@ -52,6 +52,7 @@ from services.ecommerce_image_reference import (
 from services.product_cutout import (
     create_product_cutout,
     find_best_media_for_cutout,
+    _load_media_image,
     CUTOUT_DIR,
 )
 from crypto_utils import encrypt_api_key
@@ -1486,6 +1487,69 @@ def source_detail(source_id):
     return render_template('ozon/source_detail.html', source=source,
                            usable_media=usable_media, rejected_media=rejected_media,
                            quality=quality)
+
+
+@ozon_bp.route('/sources/<int:source_id>/download-images')
+@login_required
+def source_download_images(source_id):
+    """一键下载该采集下所有图片的 ZIP 包"""
+    source = (OzonSource
+              .select()
+              .where((OzonSource.id == source_id) & (OzonSource.user == current_user))
+              .first())
+    if not source:
+        flash('采集记录不存在', 'danger')
+        return redirect(url_for('ozon.sources'))
+
+    media_list = list(OzonSourceMedia.select().where(
+        (OzonSourceMedia.source == source) &
+        (OzonSourceMedia.user == current_user)
+    ))
+
+    if not media_list:
+        flash('该采集下没有图片', 'warning')
+        return redirect(url_for('ozon.sources'))
+
+    import zipfile
+    import io as io_module
+
+    buf = io_module.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for i, m in enumerate(media_list):
+            img = _load_media_image(m)
+            if img:
+                img_bytes = io_module.BytesIO()
+                # 根据原始格式保存
+                fmt = 'JPEG' if m.source_url and '.jpg' in m.source_url.lower() else 'PNG'
+                img.save(img_bytes, format=fmt)
+                img_bytes.seek(0)
+                name = f'{i+1:02d}_{m.role or "img"}.{fmt.lower()}'
+                zf.writestr(name, img_bytes.read())
+            elif m.source_url:
+                # 直接下载原始文件
+                try:
+                    import requests
+                    resp = requests.get(m.source_url, headers={
+                        'User-Agent': 'Mozilla/5.0', 'Referer': 'https://detail.1688.com/'
+                    }, timeout=20)
+                    resp.raise_for_status()
+                    suffix = '.jpg' if 'jpg' in (m.source_url.lower()) else '.png'
+                    name = f'{i+1:02d}_{m.role or "img"}{suffix}'
+                    zf.writestr(name, resp.content)
+                except Exception:
+                    pass
+
+    buf.seek(0)
+    safe_name = (source.title_cn or f'product_{source_id}')[:30]
+    safe_name = ''.join(c for c in safe_name if c.isalnum() or c in '._- ')[:30]
+
+    from flask import send_file
+    return send_file(
+        buf,
+        mimetype='application/zip',
+        as_attachment=True,
+        download_name=f'{safe_name}_images.zip'
+    )
 
 
 @ozon_bp.route('/sources/<int:source_id>/delete', methods=['POST'])
