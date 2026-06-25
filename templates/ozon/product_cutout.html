@@ -290,6 +290,8 @@ function doDetectSubject(mediaId) {
         var mp = d.main_product;
         var t = { type: 'main_product', keep: true,
                   bbox: mp.bbox, image_width: d.image_width, image_height: d.image_height,
+                  positive_points: mp.positive_points || [[Math.round((mp.bbox[0]+mp.bbox[2])/2), Math.round((mp.bbox[1]+mp.bbox[3])/2)]],
+                  center_point: mp.center_point || null,
                   label: mp.label || '主商品', confidence: mp.confidence || 0, source: 'vision_model' };
         allTargets[mediaId].push(t);
         drawTargetBox(mediaId, t, 'keep');

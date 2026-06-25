@@ -1,17 +1,17 @@
 """
-产品母图服务 V3 — 只分割、不重绘
+产品母图服务 V3.2 — 视觉bbox降级为种子框 + 搜索框分割 + 连通区域选择
 
-rembg 只用于生成 mask，产品像素从原图直接取，禁止 AI 重绘。
+视觉模型只负责"商品在哪"，像素级分割由 rembg 在扩大后的搜索框中完成。
 
 工作流:
-原图 → 用户框选 → rembg only_mask → 蒙版清理 → 原图+mask合成 → 像素验证 → 人工确认
-
-后端:
-- rembg_crop (默认): bbox裁剪+rembg mask+框外透明
-- rembg_full: 简单白底图全图rembg mask
-- manual: 人工蒙版
+视觉bbox(种子) → 自动扩大为搜索框 → rembg only_mask → 正向点选连通区域 → mask反推真实bbox → 原图+mask合成
 """
 from __future__ import annotations
+
+# search bbox 扩展比例
+SEARCH_BOX_EXPANSION = {"left": 0.30, "right": 0.12, "top": 0.15, "bottom": 0.08}
+# 自动扩框最大重试次数
+MAX_EXPANSION_RETRIES = 2
 
 import json
 import io
@@ -196,68 +196,156 @@ def _next_revision(user, media, provider: str) -> int:
 def _cutout_rembg_crop(img: Image.Image, targets: List[Dict]) -> Tuple[
     Optional[Image.Image], Optional[Image.Image], Optional[Image.Image], Dict
 ]:
-    """对每个 keep 目标裁剪后 rembg only_mask，mask 贴回原图，产品像素不变。"""
+    """V3.2: 视觉bbox → 搜索框 → rembg → 连通区域选择 → mask反推真实bbox"""
     from rembg import remove
+    from scipy import ndimage
 
     W, H = img.size
     keep_targets = [t for t in targets if t.get('keep')]
+    remove_targets = [t for t in targets if not t.get('keep')]
     if not keep_targets:
         return None, None, None, {'error': 'No keep targets'}
 
-    merged_mask = Image.new('L', (W, H), 0)
-    seg_info = {'method': 'rembg_crop', 'mask_only': True, 'targets': []}
+    seg_info = {
+        'method': 'rembg_crop', 'mask_only': True,
+        'detected_bboxes': [], 'search_bboxes': [], 'segmented_bboxes': [],
+        'expansion_retries': 0, 'targets': []
+    }
+
+    merged_mask = np.zeros((H, W), dtype=np.uint8)
+    positive_points = []
 
     for i, t in enumerate(keep_targets):
-        bbox = t.get('bbox', [0, 0, W, H])
-        x1, y1, x2, y2 = _clamp_bbox(bbox, W, H)
+        detected_bbox = t.get('bbox', [0, 0, W, H])
+        x1, y1, x2, y2 = _clamp_bbox(detected_bbox, W, H)
+        seg_info['detected_bboxes'].append([x1, y1, x2, y2])
 
-        # 扩展 5% 给 rembg
-        pad_x = int((x2 - x1) * 0.05)
-        pad_y = int((y2 - y1) * 0.05)
-        cx1, cy1 = max(0, x1 - pad_x), max(0, y1 - pad_y)
-        cx2, cy2 = min(W, x2 + pad_x), min(H, y2 + pad_y)
+        # 收集正向点
+        pts = t.get('positive_points', [])
+        if not pts:
+            # 无正向点时，用 bbox 中心
+            pts = [[(x1 + x2) // 2, (y1 + y2) // 2]]
+        positive_points.extend(pts)
 
-        crop = img.crop((cx1, cy1, cx2, cy2))
-        try:
-            # V3: only_mask=True → 只出mask，不重绘产品像素
-            local_mask = remove(crop.convert('RGB'), only_mask=True, post_process_mask=True)
-        except Exception as e:
-            print(f'[rembg_crop] target {i} error: {e}')
-            continue
+        # ── 自动扩大为 search bbox ──
+        bw, bh = x2 - x1, y2 - y1
+        sx1 = max(0, x1 - int(bw * SEARCH_BOX_EXPANSION['left']))
+        sy1 = max(0, y1 - int(bh * SEARCH_BOX_EXPANSION['top']))
+        sx2 = min(W, x2 + int(bw * SEARCH_BOX_EXPANSION['right']))
+        sy2 = min(H, y2 + int(bh * SEARCH_BOX_EXPANSION['bottom']))
+        seg_info['search_bboxes'].append([sx1, sy1, sx2, sy2])
 
-        # 贴回全局坐标
-        global_mask = Image.new('L', (W, H), 0)
-        global_mask.paste(local_mask, (cx1, cy1))
-        merged_mask = np.maximum(np.array(merged_mask), np.array(global_mask)).astype(np.uint8)
-        merged_mask = Image.fromarray(merged_mask)
+        # ── 在搜索框内运行 rembg，支持自动扩框重试 ──
+        for retry in range(MAX_EXPANSION_RETRIES + 1):
+            crop = img.crop((sx1, sy1, sx2, sy2))
+            try:
+                local_mask = remove(crop.convert('RGB'), only_mask=True, post_process_mask=True)
+            except Exception as e:
+                print(f'[rembg_crop] target {i} error: {e}')
+                break
 
-        seg_info['targets'].append({'index': i, 'bbox': [x1, y1, x2, y2]})
+            local_arr = np.array(local_mask)
+            # 检查 mask 是否触碰搜索框边界（非图像边界）
+            touch_left = local_arr[:, 0].any() and sx1 > 0
+            touch_top = local_arr[0, :].any() and sy1 > 0
+            touch_right = local_arr[:, -1].any() and sx2 < W
+            touch_bottom = local_arr[-1, :].any() and sy2 < H
 
-    # 框外强制透明
-    cleaned_mask = _clean_target_mask(merged_mask, targets, keep_targets, W, H)
+            if (touch_left or touch_top or touch_right or touch_bottom) and retry < MAX_EXPANSION_RETRIES:
+                # 触边 → 扩大搜索框重试
+                if touch_left: sx1 = max(0, sx1 - int(bw * 0.15))
+                if touch_top: sy1 = max(0, sy1 - int(bh * 0.10))
+                if touch_right: sx2 = min(W, sx2 + int(bw * 0.08))
+                if touch_bottom: sy2 = min(H, sy2 + int(bh * 0.05))
+                seg_info['expansion_retries'] = retry + 1
+                seg_info['search_bboxes'][-1] = [sx1, sy1, sx2, sy2]
+                continue
+            break
 
-    # ── 排除框强制透明 ──
-    remove_targets = [t for t in targets if not t.get('keep')]
+        # ── 连通区域选择：只保留包含正向点的区域 ──
+        binary = (local_arr > 30).astype(np.uint8)
+        labeled, n_labels = ndimage.label(binary)
+        selected = np.zeros_like(binary)
+
+        if n_labels > 0:
+            selected_labels = set()
+            for px, py in pts:
+                # 转换到裁剪坐标
+                cx, cy = px - sx1, py - sy1
+                if 0 <= cx < (sx2 - sx1) and 0 <= cy < (sy2 - sy1):
+                    lbl = labeled[cy, cx]
+                    if lbl > 0:
+                        selected_labels.add(lbl)
+            if not selected_labels:
+                # 回退：选面积最大的区域
+                sizes = ndimage.sum(binary, labeled, range(1, n_labels + 1))
+                best = int(np.argmax(sizes)) + 1
+                selected_labels.add(best)
+
+            for lbl in selected_labels:
+                selected[labeled == lbl] = 1
+        else:
+            selected = binary
+
+        # 贴回全局 mask
+        full = np.zeros((H, W), dtype=np.uint8)
+        full[sy1:sy2, sx1:sx2] = selected * 255
+        merged_mask = np.maximum(merged_mask, full)
+
+        # ── 从 mask 反推真实商品框 ──
+        ys, xs = np.where(merged_mask > 30)
+        if len(xs) > 0:
+            seg_info['segmented_bboxes'].append([int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1])
+
+        seg_info['targets'].append({
+            'index': i,
+            'detected_bbox': [x1, y1, x2, y2],
+            'search_bbox': [sx1, sy1, sx2, sy2],
+            'positive_points': pts,
+        })
+
+    cleaned_mask = Image.fromarray(merged_mask)
+
+    # ── 排除框：只清除不属于已选商品连通区域的像素 ──
     if remove_targets:
-        mask_arr = np.array(cleaned_mask)
+        mask_arr = merged_mask.copy()
+        labeled, n_labels = ndimage.label(mask_arr > 30)
+        # 找出商品连通区域
+        product_labels = set()
+        for px, py in positive_points:
+            if 0 <= px < W and 0 <= py < H:
+                lbl = labeled[py, px]
+                if lbl > 0:
+                    product_labels.add(lbl)
+        # 排除框内不属于商品连通区域的像素清零
         for t in remove_targets:
             bbox = t.get('bbox', [0, 0, W, H])
             x1, y1, x2, y2 = _clamp_bbox(bbox, W, H)
-            mask_arr[y1:y2, x1:x2] = 0
+            region = mask_arr[y1:y2, x1:x2]
+            region_labels = labeled[y1:y2, x1:x2]
+            region[np.isin(region_labels, list(product_labels), invert=True)] = 0
+            mask_arr[y1:y2, x1:x2] = region
         cleaned_mask = Image.fromarray(mask_arr)
         seg_info['removed_regions'] = len(remove_targets)
 
-    # ── 核心：原图 RGBA + mask = 透明母图，产品像素零修改 ──
+    # ── 搜索框外强制透明 ──
+    mask_arr = np.array(cleaned_mask)
+    # 只在搜索框内保留
+    outside = np.ones((H, W), dtype=np.uint8)
+    for sb in seg_info.get('search_bboxes', []):
+        outside[sb[1]:sb[3], sb[0]:sb[2]] = 0
+    mask_arr[outside == 1] = 0
+    cleaned_mask = Image.fromarray(mask_arr)
+
+    # ── 核心：原图 RGBA + mask ──
     transparent = img.convert('RGBA')
     transparent.putalpha(cleaned_mask)
-
-    # 半透明像素设为完全透明（二值mask）
     mask_arr = np.array(cleaned_mask)
     rgba_arr = np.array(transparent)
     rgba_arr[mask_arr < 20] = [0, 0, 0, 0]
     transparent = Image.fromarray(rgba_arr)
 
-    return transparent, merged_mask, cleaned_mask, seg_info
+    return transparent, Image.fromarray(merged_mask), cleaned_mask, seg_info
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -285,46 +373,27 @@ def _clean_target_mask(
     mask: Image.Image, all_targets: List[Dict], keep_targets: List[Dict], W: int, H: int,
     preserve_components: Optional[List[int]] = None,
 ) -> Image.Image:
-    """清理蒙版: 框外透明 + 去噪 + 补孔 + 轻微闭运算 + 1px羽化"""
+    """清理蒙版: 去噪 + 补孔 + 轻微闭运算（不再硬裁detected bbox，裁剪由上层search_bbox处理）"""
     from scipy import ndimage
 
     mask_arr = np.array(mask)
 
-    # 1. 框外强制透明 + 排除框强制透明
-    outside = np.ones((H, W), dtype=np.uint8) * 255
-    for t in keep_targets:
-        bbox = t.get('bbox', [0, 0, W, H])
-        x1, y1, x2, y2 = _clamp_bbox(bbox, W, H)
-        outside[y1:y2, x1:x2] = 0
-    mask_arr[outside == 255] = 0
-    # 排除框内强制透明
-    for t in keep_targets:
-        pass  # keep_targets handled above
-    # 如果有 remove targets，对应区域强制透明
-    # (从调用方传入的 targets 参数获取，这里通过闭包不可用，所以在 _cutout_rembg_crop 中处理)
-    # 实际上 remove targets 在外面的 outside 处理中已经跳过了检查，这里只需确保不出现在最终 mask
-
-    # 2. 二值化
+    # 1. 二值化
     binary = (mask_arr > 30).astype(np.uint8) * 255
 
-    # 3. 去小噪点
+    # 2. 去小噪点
     labeled, n = ndimage.label(binary)
     if n > 0:
         sizes = ndimage.sum(binary, labeled, range(1, n+1))
-        min_size = (W * H) * 0.0002  # 最小0.02%面积
+        min_size = (W * H) * 0.0002
         for i in range(1, n+1):
             if sizes[i-1] < min_size:
                 binary[labeled == i] = 0
 
-    # 4. 闭运算补孔洞
-    from scipy.ndimage import binary_closing, binary_dilation
+    # 3. 闭运算补孔洞
+    from scipy.ndimage import binary_closing
     struct = np.ones((3, 3), dtype=np.uint8)
     binary = binary_closing(binary, structure=struct, iterations=1).astype(np.uint8) * 255
-
-    # 5. 1px羽化
-    eroded = ndimage.binary_erosion(binary, iterations=1).astype(np.uint8) * 255
-    edge = binary.astype(int) - eroded.astype(int)
-    binary = np.clip(binary.astype(int) + (edge * 0.5).astype(int), 0, 255).astype(np.uint8)
 
     return Image.fromarray(binary)
 

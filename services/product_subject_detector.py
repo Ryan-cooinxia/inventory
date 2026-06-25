@@ -49,7 +49,9 @@ CRITICAL RULES:
 - Large promotional text OUTSIDE the product must be excluded.
 - Do NOT guess accessories. Only mark items confirmed to be in the package.
 - If unsure about the main product, set requires_confirmation=true and explain in warnings.
-- All bbox coordinates must be in ORIGINAL IMAGE pixels.
+- center_point is the approximate center of the product.
+- positive_points are 3 points that DEFINITELY fall inside the product: center, lower-center, and left-of-center (for left-side structures like buttons).
+- All coordinates must be in ORIGINAL IMAGE pixels.
 - Output ONLY valid JSON, no markdown, no explanations.
 
 Return JSON:
@@ -59,6 +61,8 @@ Return JSON:
   "main_product": {{
     "label": "product name",
     "bbox": [x1, y1, x2, y2],
+    "center_point": [cx, cy],
+    "positive_points": [[cx, cy], [x_center, y_bottom], [x_left, y_center]],
     "confidence": 0.0,
     "description": "short description"
   }},
