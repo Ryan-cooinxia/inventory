@@ -324,22 +324,32 @@ def _check_cutout_quality(
 # ═══════════════════════════════════════════════════════════════
 
 def _load_media_image(media: OzonSourceMedia) -> Optional[Image.Image]:
-    """从 OzonSourceMedia 加载图片。优先本地路径。"""
-    path = media.local_path or ''
+    """从 OzonSourceMedia 加载图片。优先本地路径，其次远程下载。"""
+    import requests
+
+    # 1. 本地路径
+    path = (media.local_path or '').replace('\\', '/')
     if path:
-        abs_path = Path(current_app.root_path) / 'uploads' / path
+        # 路径可能已包含 uploads 前缀
+        abs_path = Path(current_app.root_path) / path
+        if not abs_path.exists():
+            abs_path = Path(current_app.root_path) / 'uploads' / path
         if abs_path.exists():
             return Image.open(abs_path).convert('RGB')
 
-    # 尝试 source_url
+    # 2. 远程 URL（带防盗链绕过 headers）
     if media.source_url:
-        import requests
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://detail.1688.com/',
+            'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+        }
         try:
-            resp = requests.get(media.source_url, timeout=30)
+            resp = requests.get(media.source_url, headers=headers, timeout=20)
             resp.raise_for_status()
             return Image.open(io.BytesIO(resp.content)).convert('RGB')
         except Exception as e:
-            print(f'[cutout] Cannot load from URL: {e}')
+            print(f'[cutout] Cannot load URL for media {media.id}: {str(e)[:150]}')
 
     return None
 
