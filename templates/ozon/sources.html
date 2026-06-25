@@ -264,6 +264,7 @@
             {% if s.status != 'drafted' %}
               <a href="{{ url_for('ozon.adaptation_workspace', source_id=s.id) }}" class="btn btn-sm btn-primary">🔄 进入适配</a>
             {% endif %}
+            <a href="{{ url_for('ozon.product_cutout_page', source_id=s.id) }}" class="btn btn-sm btn-outline-info" title="准备产品母图">✂️ 产品母图</a>
             {% set draft = s.drafts.first() if s.drafts else none %}
             {% if draft %}
               <a href="{{ url_for('ozon.listing_review', draft_id=draft.id) }}" class="btn btn-sm btn-outline-secondary">查看草稿</a>
