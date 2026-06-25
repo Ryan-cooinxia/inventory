@@ -20,7 +20,7 @@
 <div class="row g-2" style="min-height:calc(100vh - 160px)">
   <!-- 左栏：源商品资料 -->
   <div class="col-lg-3">
-    <div class="card">
+    <div class="card h-100">
       <div class="card-header py-2 d-flex justify-content-between align-items-center">
         <strong style="font-size:13px">📥 源商品资料</strong>
         <span class="badge bg-secondary">{{ source.platform }}</span>
@@ -46,7 +46,7 @@
           <strong style="font-size:11px">源图片 ({{ source_media|length }})</strong>
           {% if has_vision_config %}
           <button class="btn btn-sm btn-outline-info" style="font-size:10px;padding:2px 8px" id="btnAnalyze" onclick="analyzeImages()">
-            🔍 分析商品资料
+            🔍 AI识别图片
           </button>
           {% endif %}
         </div>
@@ -100,18 +100,15 @@
             <div id="uploadResult" class="mt-1" style="font-size:11px"></div>
           </div>
         </div>
-      </div>
-    </div>
 
-  
-        <!-- 产品识别详情 (紧凑版) -->
+        <!-- 产品识别详情 -->
         {% if product_details %}
         <div class="card mt-2 border-info" style="font-size:10px">
           <div class="card-header py-1 px-2 bg-info bg-opacity-10">
             <strong>产品识别详情</strong>
-            <span class="badge bg-info float-end" style="font-size:9px">{{ evidences|length }} 条</span>
+            <span class="badge bg-info float-end" style="font-size:9px">{{ evidences|length }}</span>
           </div>
-          <div class="card-body p-1" style="max-height:280px;overflow-y:auto">
+          <div class="card-body p-1" style="max-height:250px;overflow-y:auto">
             {% set groups = [
               ("identity", "身份"), ("sku", "SKU"), ("structure", "结构"),
               ("specification", "参数"), ("function", "功能"), ("compatibility", "兼容"),
@@ -123,9 +120,9 @@
             {% if items %}
             <div class="mb-1">
               <span class="fw-bold text-primary" style="font-size:10px">{{ gname }}</span>
-              {% for item in items[:5] %}
+              {% for item in items[:4] %}
               <span class="badge bg-light text-dark me-1 mb-1" style="font-size:9px;font-weight:normal">
-                {{ item.label[:20] }}: <b>{{ (item.value or '')[:30] }}</b>
+                {{ item.label[:15] }}: <b>{{ (item.value or '')[:25] }}</b>
                 {% if item.status=='confirmed' %}✅{% elif item.status=='conflict' %}⚠{% elif item.status=='inferred' %}💭{% endif %}
               </span>
               {% endfor %}
@@ -135,15 +132,18 @@
           </div>
         </div>
         {% endif %}
-  </div>
-</div>
 
-<!-- 中栏：商品事实库 -->
+      </div>
+    </div>
+  </div>
+
+  <!-- 中栏：商品事实库 -->
   <div class="col-lg-5">
-    <div class="card">
+    <div class="card h-100">
       <div class="card-header py-2 d-flex justify-content-between align-items-center">
         <strong style="font-size:13px">📋 商品事实库</strong>
         <div class="d-flex gap-1">
+          <button class="btn btn-sm btn-info" style="font-size:11px" onclick="analyzeProductFacts()">🔍 分析商品资料</button>
           <button class="btn btn-sm btn-outline-info" style="font-size:11px" id="btnAiSuggest" onclick="aiSuggest()">🤖 AI智能填充</button>
           <button class="btn btn-sm btn-outline-secondary" style="font-size:11px" onclick="saveFact()">💾 保存</button>
           <button class="btn btn-sm btn-outline-success" style="font-size:11px" onclick="approveFact()">✅ 审核通过</button>
@@ -217,37 +217,6 @@
         </div>
 
         <hr class="my-2">
-        <!-- 商品事实操作 -->
-        <div class="d-flex gap-1 mb-2">
-          <button class="btn btn-sm btn-info" style="font-size:10px;padding:2px 8px" onclick="analyzeProductFacts()" {% if not fact %}disabled{% endif %}>🔍 分析商品资料</button>
-          <button class="btn btn-sm btn-outline-secondary" style="font-size:10px;padding:2px 8px" onclick="mergeProductFacts()" {% if not fact %}disabled{% endif %}>合并事实</button>
-          <span class="ms-auto" id="briefStatus" style="font-size:11px"></span>
-        </div>
-
-        {% if evidences %}
-        <strong style="font-size:12px">📋 证据列表 ({{ evidences|length }} 条)</strong>
-        <div style="max-height:180px;overflow-y:auto">
-        {% for ev in evidences %}
-        <div class="d-flex justify-content-between align-items-start bg-light rounded p-1 mb-1" style="font-size:10px;border-left:3px solid {% if ev.fact_status == 'confirmed' %}#28a745{% elif ev.fact_status == 'conflict' %}#dc3545{% elif ev.fact_status == 'rejected' %}#6c757d{% else %}#ffc107{% endif %}">
-          <div style="flex:1;min-width:0">
-            <code>{{ ev.field_path }}</code>
-            <span class="badge {% if ev.fact_status == 'confirmed' %}bg-success{% elif ev.fact_status == 'conflict' %}bg-danger{% elif ev.fact_status == 'rejected' %}bg-secondary{% elif ev.fact_status == 'inferred' %}bg-info{% else %}bg-warning text-dark{% endif %}" style="font-size:8px">{{ ev.fact_status }}</span>
-            {% if ev.confidence %}<span style="font-size:8px;color:#6c757d">{{ '{:.0%}'.format(ev.confidence) }}</span>{% endif %}
-            {% if ev.source_type %}<span style="font-size:8px;color:#adb5bd">[{{ ev.source_type }}]</span>{% endif %}
-            <div class="text-truncate">{{ ev.value_json or ev.content or '' }}</div>
-          </div>
-          <div class="d-flex gap-1 flex-shrink-0">
-            {% if ev.fact_status not in ('confirmed', 'rejected') %}
-            <button class="btn btn-sm btn-outline-success" style="font-size:8px;padding:0 4px" onclick="confirmEvidence({{ ev.id }})" title="确认">✓</button>
-            <button class="btn btn-sm btn-outline-danger" style="font-size:8px;padding:0 4px" onclick="rejectEvidence({{ ev.id }})" title="拒绝">✕</button>
-            {% endif %}
-          </div>
-        </div>
-        {% endfor %}
-        </div>
-        <hr class="my-2">
-        {% endif %}
-
         {% if image_facts %}
         <strong style="font-size:12px">🔍 视觉识别结果 ({{ image_facts|length }} 条)</strong>
         <div id="imageFactsSection" style="max-height:200px;overflow-y:auto">
@@ -284,7 +253,7 @@
 
   <!-- 右栏：OZON Listing 草稿 -->
   <div class="col-lg-4">
-    <div class="card">
+    <div class="card h-100">
       <div class="card-header py-2 d-flex justify-content-between align-items-center">
         <strong style="font-size:13px">🎯 OZON Listing 草稿</strong>
         <button class="btn btn-sm btn-primary" style="font-size:11px" onclick="generateDraft()" {% if fact.review_status != 'approved' %}disabled{% endif %}>生成草稿</button>
@@ -547,8 +516,25 @@ function generateDraft() {
 }
 
 function analyzeImages() {
-  analyzeProductFacts();
-  return false;
+  var btn = document.getElementById('btnAnalyze');
+  btn.disabled = true;
+  btn.innerHTML = '⏳ 识别中...';
+  fetch('/ozon/api/adaptation/{{ source.id }}/analyze-images', { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      btn.disabled = false;
+      btn.textContent = '🔍 AI识别图片';
+      if (d.ok) {
+        alert('✅ ' + d.message);
+        location.reload();
+      } else {
+        alert('❌ ' + (d.error || '识别失败'));
+      }
+    })
+    .catch(function(err) {
+      btn.disabled = false;
+      btn.textContent = '🔍 AI识别图片';
+      alert('❌ 请求失败: ' + err.message);
     });
 }
 
@@ -1354,47 +1340,19 @@ function analyzeProductFacts() {
   btn.disabled = true; btn.textContent = '分析中...';
   fetch('/ozon/api/product-fact/{{ fact.id }}/analyze', {method:'POST'})
     .then(r=>r.json()).then(d=>{
-      var msg = '分析完成:
-'+
-    '已处理: '+(d.total_images||d.images)+'/'+(d.total_images||d.images)+'
-'+
-    '模型调用: '+(d.model_calls||'?')+'
-'+
-    '历史回填: '+(d.backfilled||0)+'
-'+
-    '跳过: '+(d.skipped||0)+'
-'+
-    '失败: '+(d.failed||0)+'
-'+
-    '新增网页证据: '+d.text_facts+'
-'+
-    '新增图片证据: '+d.images+'
-'+
-    '冲突: '+d.conflicts;
-if (d.image_errors && d.image_errors.length) msg += '
-
-失败详情:
-'+d.image_errors.join('
-');
-alert(msg);
+      var msg = '分析完成:'+String.fromCharCode(10)+
+        '已处理: '+(d.total_images||d.images)+'/'+(d.total_images||d.images)+String.fromCharCode(10)+
+        '模型调用: '+(d.model_calls||0)+String.fromCharCode(10)+
+        '历史回填: '+(d.backfilled||0)+String.fromCharCode(10)+
+        '跳过: '+(d.skipped||0)+String.fromCharCode(10)+
+        '失败: '+(d.failed||0)+String.fromCharCode(10)+
+        '新增网页证据: '+d.text_facts+String.fromCharCode(10)+
+        '新增图片证据: '+d.images+String.fromCharCode(10)+
+        '冲突: '+d.conflicts;
+      if (d.image_errors && d.image_errors.length) msg += String.fromCharCode(10)+String.fromCharCode(10)+'失败详情:'+String.fromCharCode(10)+d.image_errors.join(String.fromCharCode(10));
+      alert(msg);
       location.reload();
-    }).catch(e=>{alert('失败:'+e)}).finally(()=>{btn.disabled=false;btn.textContent='分析商品资料'});
-}
-function mergeProductFacts() {
-  fetch('/ozon/api/product-fact/{{ fact.id }}/merge', {method:'POST'})
-    .then(r=>r.json()).then(d=>{
-      alert('合并: '+d.merged+' 条, 冲突: '+d.conflicts+' 个');
-      location.reload();
-    });
-}
-function confirmEvidence(id) {
-  fetch('/ozon/api/product-fact/evidence/'+id+'/confirm', {method:'POST'})
-    .then(r=>r.json()).then(d=>{ if(d.ok) location.reload(); else alert('确认失败'); });
-}
-function rejectEvidence(id) {
-  var reason = prompt('拒绝原因(可选):');
-  fetch('/ozon/api/product-fact/evidence/'+id+'/reject', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({reason:reason||''})})
-    .then(r=>r.json()).then(d=>{ if(d.ok) location.reload(); else alert('拒绝失败'); });
+    }).catch(e=>{alert(e)}).finally(()=>{btn.disabled=false;btn.textContent='分析商品资料'});
 }
 
 </script>
