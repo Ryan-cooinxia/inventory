@@ -3426,7 +3426,11 @@ def api_analyze_product_fact(fact_id):
     from services.product_text_fact_extractor import extract_text_facts
     fact = ProductFact.get_or_none((ProductFact.id == fact_id) & (ProductFact.user == current_user))
     if not fact: return jsonify({"ok": False, "error": "商品事实不存在"}), 404
-    source = getattr(fact, "source", None)
+    # 通过 group → SourceProductGroupItem 获取 source
+    source = None
+    if fact.group:
+        item = SourceProductGroupItem.get_or_none((SourceProductGroupItem.group == fact.group) & (SourceProductGroupItem.user == current_user))
+        if item: source = item.source
     text_count = extract_text_facts(current_user, source, fact) if source else 0
     img_count = 0
     if source:
