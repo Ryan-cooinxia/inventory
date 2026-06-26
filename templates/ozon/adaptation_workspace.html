@@ -819,6 +819,8 @@ function submitManualUpload() {
   })
   .catch(function(e) {
     resultEl.innerHTML = '<span class="text-danger">❌ 请求失败: ' + e.message + '</span>';
+  });
+}
 
 </script>
 {% endblock %}
