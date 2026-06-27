@@ -3219,12 +3219,24 @@
   function addImage(src, role, el) {
       if (!src || !src.startsWith('http')) return;
       if (el && isInBadArea(el)) return;
-      // 去水印/缩略图处理：取最大尺寸
+      // 图标/Logo/支付/银行过滤
+      var u = src.toLowerCase();
+      if (/\/icon|\/logo|\/avatar|\/favicon|\/sprite|\/badge/.test(u)) return;
+      if (u.indexOf('bank') >= 0 || u.indexOf('payment') >= 0 || u.indexOf('static') >= 0) return;
+      // 其他产品链接过滤(关键!)
+      if (el && el.closest) {
+        var a = el.closest('a[href*=\"/product/\"]');
+        if (a) {
+          var aPath = (a.getAttribute('href')||'').split('?')[0];
+          var curPath = location.pathname.split('?')[0];
+          if (aPath !== curPath && aPath.indexOf('/product/') >= 0) return;
+        }
+      }
+      // 去水印/缩略图处理
       src = src.replace(/\/wc\d+(\/|$)/, '/wc1000/').replace(/\/\d{1,4}x\d{1,4}(\/|$)/, '/').replace(/[?&](size|w|h|quality|q)=\d+/gi, '').replace(/[?&]ts=\d+/gi, '').replace(/\?$/, '');
       var key = src.substring(0, 80);
       if (processedUrls[key]) return;
       processedUrls[key] = true;
-      if (src.indexOf('icon') >= 0 || src.indexOf('logo') >= 0 || src.indexOf('avatar') >= 0) return;
       images.push({ role: role, src: src });
     }
 
@@ -3234,9 +3246,14 @@
     for (var si2 = 0; si2 < skuImgs.length; si2++) { addImage(skuImgs[si2].src || skuImgs[si2].getAttribute('data-src'), 'sku', skuImgs[si2]); }
     // 详情图
     for (var di = 0; di < detailImgs.length; di++) { addImage(detailImgs[di].src || detailImgs[di].getAttribute('data-src'), 'detail', detailImgs[di]); }
-    // 兜底：从所有图片中补充未分类的
-    for (var ai = 0; ai < allImgs.length && images.length < 50; ai++) {
-      addImage(allImgs[ai].src || allImgs[ai].getAttribute('data-src'), 'detail', allImgs[ai]);
+    // 兜底：仅在白名单没抓到图时才从allImgs补充(且必须在评论/推荐区之上)
+    var mainCount = images.filter(function(x){return x.role==='main';}).length;
+    var detailCount = images.filter(function(x){return x.role==='detail';}).length;
+    if (mainCount === 0 || detailCount < 3) {
+      for (var ai = 0; ai < Math.min(allImgs.length, 30); ai++) {
+        var fallbackRole = (mainCount === 0 && ai < 10) ? 'main' : 'detail';
+        addImage(allImgs[ai].src || allImgs[ai].getAttribute('data-src'), fallbackRole, allImgs[ai]);
+      }
     }
 
     // ── 5. 视频提取 ──
