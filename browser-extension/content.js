@@ -3727,75 +3727,56 @@ function extractOzonProduct() {
     var images = [], skus = [], specs = [], videos = [];
     var processedUrls = {};
 
-    // Layer 1: 白名单区域 ── 主图库 + SKU区 + 详情区
-    var galleryEl = document.querySelector('[data-widget="webGallery"]') || document.querySelector('[class*="gallery"]') || document.querySelector('[class*="elevation"]');
+    // Layer 1: 白名单区域
+    var galleryEl = document.querySelector('[data-widget="webGallery"]') || document.querySelector('[class*="gallery"]') || document.querySelector('[class*="elevation"]') || document.querySelector('[class*="slider"]') || document.querySelector('[class*="carousel"]');
     if (galleryEl) {
-      var gImgs = galleryEl.querySelectorAll('img, source');
+      var gImgs = galleryEl.querySelectorAll('img, source, picture img');
       for (var gi = 0; gi < gImgs.length && images.length < 20; gi++) {
         var src = gImgs[gi].currentSrc || gImgs[gi].src || gImgs[gi].getAttribute('data-src') || gImgs[gi].getAttribute('srcset') || '';
         if (src && src.startsWith('http') && looksLikeProductImage(gImgs[gi], src, false)) {
-          src = src.replace(/\/wc\d{1,4}(\/|$)/, '/wc1000/').replace(/\/crop\/\d+x\d+(\/|$)/, '/').replace(/[?&](size|w|h|quality|q)=\d+/gi, '').replace(/[?&]ts=\d+/gi, '').replace(/\?$/, '');
+          src = src.replace(/\/wc\d{1,4}(\/|$)/, '/wc1000/').replace(/[?&](size|w|h|quality|q)=\d+/gi, '').replace(/[?&]ts=\d+/gi, '').replace(/\?$/, '');
           var key = src.substring(0, 100);
           if (!processedUrls[key]) { processedUrls[key] = true; images.push({ role: 'main', src: src }); }
         }
       }
-      collectBackgroundImages(galleryEl, images, processedUrls, 'main', 20);
     }
 
-    // SKU区
-    var skuEl = document.querySelector('[data-widget="webVariant"]') || document.querySelector('[class*="sku"]') || document.querySelector('[class*="variant"]');
-    if (skuEl) {
-      var sImgs = skuEl.querySelectorAll('img, source');
-      for (var si = 0; si < sImgs.length && images.length < 30; si++) {
-        var src2 = sImgs[si].currentSrc || sImgs[si].src || sImgs[si].getAttribute('data-src') || '';
-        if (src2 && src2.startsWith('http') && looksLikeProductImage(sImgs[si], src2, false)) {
-          src2 = src2.replace(/\/wc\d{1,4}(\/|$)/, '/wc1000/').replace(/[?&](size|w|h|quality|q)=\d+/gi, '').replace(/[?&]ts=\d+/gi, '').replace(/\?$/, '');
-          var key2 = src2.substring(0, 100);
-          if (!processedUrls[key2]) { processedUrls[key2] = true; images.push({ role: 'sku', src: src2 }); }
-        }
-      }
+    // Layer 2: 全页面可见大图（核心兜底）
+    var allImgs = document.querySelectorAll('img:not([width="1"]):not([height="1"]), source, picture img');
+    for (var ai = 0; ai < allImgs.length && images.length < 60; ai++) {
+      if (isBlockedNode(allImgs[ai])) continue;
+      if (isAfterReviewOrRecommendation(allImgs[ai])) break;
+      var src = allImgs[ai].currentSrc || allImgs[ai].src || allImgs[ai].getAttribute('data-src') || allImgs[ai].getAttribute('srcset') || '';
+      if (!src || !src.startsWith('http')) continue;
+      // 过滤明显的小图标
+      var u = src.toLowerCase();
+      if (/avatar|icon|logo|sprite|bank|payment|favicon|static\/|\/wc50\/|\/wc100\//.test(u)) continue;
+      if (!looksLikeProductImage(allImgs[ai], src, false)) continue;
+      var area = inferAreaByGeometry(allImgs[ai]);
+      var role = area === 'main_gallery' ? 'main' : 'detail';
+      var key = src.substring(0, 100);
+      if (processedUrls[key]) continue;
+      processedUrls[key] = true;
+      src = src.replace(/\/wc\d{1,4}(\/|$)/, '/wc1000/').replace(/[?&](size|w|h|quality|q)=\d+/gi, '').replace(/[?&]ts=\d+/gi, '').replace(/\?$/, '');
+      images.push({ role: role, src: src });
     }
 
-    // 详情区（只采集评论/推荐之前的）
-    var descEl = document.querySelector('[data-widget="webDescription"]') || document.querySelector('[class*="description"]') || document.querySelector('[class*="ra"]') || document.querySelector('[class*="widget"]');
-    if (descEl) {
-      var dImgs = descEl.querySelectorAll('img, source');
-      for (var di = 0; di < dImgs.length && images.length < 50; di++) {
-        if (isBlockedNode(dImgs[di])) continue;
-        if (isAfterReviewOrRecommendation(dImgs[di])) break;
-        var src3 = dImgs[di].currentSrc || dImgs[di].src || dImgs[di].getAttribute('data-src') || '';
-        if (src3 && src3.startsWith('http') && looksLikeProductImage(dImgs[di], src3, false)) {
-          src3 = src3.replace(/\/wc\d{1,4}(\/|$)/, '/wc1000/').replace(/[?&](size|w|h|quality|q)=\d+/gi, '').replace(/[?&]ts=\d+/gi, '').replace(/\?$/, '');
-          var key3 = src3.substring(0, 100);
-          if (!processedUrls[key3]) { processedUrls[key3] = true; images.push({ role: 'detail', src: src3 }); }
-        }
-      }
-      collectBackgroundImages(descEl, images, processedUrls, 'detail', 40);
-    }
-
-    // Layer 2: 可见大图几何兜底（只在图片少时启用）
-    var mainCount = images.filter(function(x){return x.role==='main';}).length;
-    var detailCount = images.filter(function(x){return x.role==='detail';}).length;
-    if (mainCount < 1 || detailCount < 5) {
-      collectVisibleProductImagesFallback(images, processedUrls);
-    }
-
-    // Layer 3: performance resource 兜底（CDN已加载图片）
-    if (images.length < 10 && window.performance && window.performance.getEntriesByType) {
+    // Layer 3: performance resource 兜底
+    if (images.length < 5 && window.performance && window.performance.getEntriesByType) {
       var resources = window.performance.getEntriesByType('resource');
       for (var ri = 0; ri < resources.length && images.length < 50; ri++) {
         var rUrl = resources[ri].name || '';
-        if (!rUrl || rUrl.indexOf('ozon') < 0) continue;
-        if (/static|icon|logo|avatar|bank|payment|favicon/.test(rUrl.toLowerCase())) continue;
-        var key4 = rUrl.substring(0, 100);
-        if (processedUrls[key4]) continue;
-        processedUrls[key4] = true;
+        if (!rUrl || /static|icon|logo|avatar|bank|payment|favicon/.test(rUrl.toLowerCase())) continue;
+        var key = rUrl.substring(0, 100);
+        if (processedUrls[key]) continue;
+        processedUrls[key] = true;
         rUrl = rUrl.replace(/\/wc\d{1,4}(\/|$)/, '/wc1000/').replace(/[?&](size|w|h|quality|q)=\d+/gi, '').replace(/[?&]ts=\d+/gi, '').replace(/\?$/, '');
         images.push({ role: 'detail_candidate', src: rUrl });
       }
     }
 
-    var debug = {
+
+var debug = {
       main_count: images.filter(function(x){return x.role==='main';}).length,
       sku_img_count: images.filter(function(x){return x.role==='sku';}).length,
       detail_count: images.filter(function(x){return x.role==='detail';}).length,
