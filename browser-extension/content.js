@@ -3151,8 +3151,32 @@
     var allImgs = document.querySelectorAll('img[src*="ozon"], img[src*="ir-2.ozone.ru"], img[src*="cdn1.ozone.ru"], img[src*="woody"], img[src*="product"]');
     var processedUrls = {};
 
-    function addImage(src, role) {
+    function isInBadArea(el) {
+    if (!el) return false;
+    // 检查祖先元素的 class/id/data-widget
+    var node = el;
+    for (var depth = 0; depth < 8 && node; depth++) {
+      var cls = ((node.className && node.className.baseVal) || node.className || '').toString().toLowerCase();
+      var id = (node.id || '').toLowerCase();
+      var dw = (node.getAttribute && node.getAttribute('data-widget')) || '';
+      // 评论区
+      if (cls.indexOf('review') >= 0 || cls.indexOf('comment') >= 0 || cls.indexOf('feedback') >= 0) return true;
+      if (id.indexOf('review') >= 0 || id.indexOf('comment') >= 0) return true;
+      if (dw.indexOf('webReview') >= 0 || dw.indexOf('webComment') >= 0) return true;
+      // 推荐/相似商品
+      if (cls.indexOf('recommend') >= 0 || cls.indexOf('similar') >= 0 || cls.indexOf('related') >= 0) return true;
+      if (dw.indexOf('webRecommend') >= 0 || dw.indexOf('webSimilar') >= 0 || dw.indexOf('webRelated') >= 0) return true;
+      if (cls.indexOf('carousel') >= 0 && dw.indexOf('webGallery') < 0) return true; // 推荐轮播，非主图轮播
+      // 导航/页脚/侧栏
+      if (cls.indexOf('nav') >= 0 || cls.indexOf('footer') >= 0 || cls.indexOf('sidebar') >= 0 || cls.indexOf('header') >= 0) return true;
+      node = node.parentElement;
+    }
+    return false;
+  }
+
+  function addImage(src, role) {function addImage(src, role, el) {
       if (!src || !src.startsWith('http')) return;
+      if (el && isInBadArea(el)) return;
       // 去水印/缩略图处理：取最大尺寸
       src = src.replace(/\/wc\d+(\/|$)/, '/wc1000/').replace(/\/\d{1,4}x\d{1,4}(\/|$)/, '/').replace(/[?&](size|w|h|quality|q)=\d+/gi, '').replace(/[?&]ts=\d+/gi, '').replace(/\?$/, '');
       var key = src.substring(0, 80);
@@ -3163,14 +3187,14 @@
     }
 
     // 主图
-    for (var mi = 0; mi < mainImgs.length; mi++) { addImage(mainImgs[mi].src || mainImgs[mi].getAttribute('data-src'), 'main'); }
+    for (var mi = 0; mi < mainImgs.length; mi++) { addImage(mainImgs[mi].src || mainImgs[mi].getAttribute('data-src'), 'main', mainImgs[mi]); }
     // SKU图
-    for (var si2 = 0; si2 < skuImgs.length; si2++) { addImage(skuImgs[si2].src || skuImgs[si2].getAttribute('data-src'), 'sku'); }
+    for (var si2 = 0; si2 < skuImgs.length; si2++) { addImage(skuImgs[si2].src || skuImgs[si2].getAttribute('data-src'), 'sku', skuImgs[si2]); }
     // 详情图
-    for (var di = 0; di < detailImgs.length; di++) { addImage(detailImgs[di].src || detailImgs[di].getAttribute('data-src'), 'detail'); }
+    for (var di = 0; di < detailImgs.length; di++) { addImage(detailImgs[di].src || detailImgs[di].getAttribute('data-src'), 'detail', detailImgs[di]); }
     // 兜底：从所有图片中补充未分类的
     for (var ai = 0; ai < allImgs.length && images.length < 50; ai++) {
-      addImage(allImgs[ai].src || allImgs[ai].getAttribute('data-src'), 'detail');
+      addImage(allImgs[ai].src || allImgs[ai].getAttribute('data-src'), 'detail', allImgs[ai]);
     }
 
     // ── 5. 视频提取 ──
