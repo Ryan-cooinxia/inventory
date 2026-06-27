@@ -487,6 +487,40 @@ def _normalize_value(v: Any) -> str:
     return str(v).strip().lower()
 
 
+def build_collection_summary(source):
+    if not source: return {'status': 'empty', 'score': 0, 'checks': [], 'missing_fields': ['source']}
+    checks = []
+    missing = []
+
+    def _check(key, label, value):
+        ok = bool(value)
+        if not ok: missing.append(label)
+        checks.append({'key': key, 'label': label, 'ok': ok})
+
+    _check('title', '标题', source.title_cn)
+    _check('category', '类目', source.category_cn)
+    _check('sku', 'SKU', source.sku_count > 0)
+    _check('price', '价格', getattr(source, 'price_manual_confirmed', False))
+    _check('images', '图片', source.image_count > 0)
+    _check('description', '描述', source.description_cn)
+    _check('shop', '供应商', source.shop_name)
+
+    # OZON 来源特殊检查
+    if getattr(source, 'platform', '') == 'ozon_product':
+        checks.append({'key': 'ozon_ref', 'label': 'OZON参考图(需替换)', 'ok': True, 'warning': True})
+
+    ok_count = sum(1 for c in checks if c.get('ok'))
+    score = int(ok_count / len(checks) * 100) if checks else 0
+
+    if score >= 90: status = 'complete'
+    elif score >= 60: status = 'partial'
+    elif score >= 30: status = 'missing'
+    else: status = 'need_manual'
+
+    return {'status': status, 'score': score, 'checks': checks, 'missing_fields': missing}
+
+
+
 def _parse_list(raw: Optional[str]) -> list:
     if not raw:
         return []

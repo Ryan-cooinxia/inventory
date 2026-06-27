@@ -1034,6 +1034,31 @@ def collect_quality_check(data: dict, source_url: str) -> dict:
         if bad_source_page:
             warnings.insert(0, "‼️ 1688 采集质量不足，强烈建议使用浏览器插件重新采集")
 
+    # ── OZON 商品采集质量检查 ──
+    platform = data.get('platform', '')
+    if platform == 'ozon_product':
+        mp = missing_fields
+        if not data.get('title_ru'): mp.append('商品标题(俄)')
+        if not data.get('price_min_rub') and not data.get('price_max_rub'): mp.append('价格')
+        if not data.get('skus', []): mp.append('SKU')
+        if not data.get('media', []): mp.append('图片')
+        ozon_ok = len(mp) <= 2
+        return {
+            'ok_for_adaptation': ozon_ok,
+            'missing_fields': mp,
+            'warnings': warnings,
+            'needs_manual_capture': len(mp) > 3,
+            'bad_source_page': False,
+            'detail_missing': not data.get('description_ru'),
+            'price_unconfirmed': not data.get('price_min_rub'),
+            'image_count': len(data.get('media', [])),
+            'usable_image_count': len(data.get('media', [])),
+            'rejected_image_count': 0,
+            'js_render_platform': False,
+            'source_page_type': 'ozon_product',
+            'price_candidates_count': 1 if data.get('price_min_rub') else 0,
+        }
+
     ok_for_adaptation = not needs_manual_capture and not bad_source_page
 
     return {
@@ -1051,3 +1076,94 @@ def collect_quality_check(data: dict, source_url: str) -> dict:
         "source_page_type": source_page_type,
         "price_candidates_count": len(price_candidates),
     }
+
+
+def collect_ozon_product_url(url: str, user=None, api_key: str = None, provider: str = None) -> dict:
+    """采集 OZON 商品链接，返回结构化数据。"""
+    import requests as req
+    from bs4 import BeautifulSoup
+
+    result = {
+        'platform': 'ozon_product',
+        'source_url': url,
+        'title_ru': '', 'title_cn': '',
+        'brand': '', 'seller_name': '',
+        'category_path': '', 'ozon_category_id': '', 'type_id': '',
+        'price_min_rub': None, 'price_max_rub': None,
+        'rating': None, 'review_count': None,
+        'description_ru': '',
+        'specs_json': [],
+        'skus': [], 'media': [],
+        'missing_fields': [], 'raw_json': {},
+    }
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'ru-RU,ru;q=0.9',
+    }
+
+    try:
+        resp = req.get(url, headers=headers, timeout=30)
+        resp.raise_for_status()
+        html = resp.text
+    except Exception as e:
+        result['missing_fields'].append(f'页面获取失败: {str(e)[:100]}')
+        return result
+
+    # 尝试从页面提取 JSON-LD 或 script data
+    soup = BeautifulSoup(html, 'html.parser')
+
+    # 提取标题
+    title_tag = soup.find('title')
+    if title_tag:
+        title = title_tag.text.strip()
+        result['title_ru'] = title[:300]
+        result['title_cn'] = title[:300]  # 后续可翻译
+
+    # 提取 meta 信息
+    for meta in soup.find_all('meta'):
+        if meta.get('name') == 'description':
+            result['description_ru'] = meta.get('content', '')[:2000]
+        if meta.get('property') == 'og:title':
+            result['title_ru'] = meta.get('content', '')[:300]
+        if meta.get('property') == 'og:image':
+            result['media'].append({'url': meta.get('content', ''), 'role': 'main'})
+
+    # 尝试从 script JSON 提取数据
+    for script in soup.find_all('script'):
+        text = script.string or ''
+        if 'window.__NUXT__' in text or 'window.__INITIAL_STATE__' in text:
+            try:
+                # 简单提取 JSON 片段
+                import re
+                json_match = re.search(r'(?:window\.__NUXT__\s*=|window\.__INITIAL_STATE__\s*=)\s*(\{.*?\});', text, re.DOTALL)
+                if json_match:
+                    result['raw_json'] = json_match.group(1)[:50000]
+            except Exception:
+                pass
+
+    # 提取图片
+    for img in soup.find_all('img'):
+        src = img.get('src') or img.get('data-src') or ''
+        if src and src.startswith('http') and 'ozon' in src.lower():
+            alt = img.get('alt', '')
+            role = 'main' if 'main' in alt.lower() else 'detail'
+            result['media'].append({'url': src, 'role': role, 'alt': alt[:200]})
+
+    # 去重图片
+    seen = set()
+    unique_media = []
+    for m in result['media']:
+        if m['url'] not in seen:
+            seen.add(m['url'])
+            unique_media.append(m)
+    result['media'] = unique_media[:30]
+
+    # 标记缺失字段
+    if not result['title_ru']: result['missing_fields'].append('title')
+    if not result['price_min_rub']: result['missing_fields'].append('price')
+    if not result['skus']: result['missing_fields'].append('skus')
+    if not result['description_ru']: result['missing_fields'].append('description')
+
+    return result

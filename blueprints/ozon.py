@@ -980,6 +980,77 @@ def source_import_1688_html():
 
 # ── 导入 jiyun/1688 采集结果 ──────────────────────────────
 
+@ozon_bp.route('/sources/collect-ozon-url', methods=['POST'])
+@login_required
+def source_collect_ozon_url():
+    """采集 OZON 商品链接"""
+    url = request.form.get('url', '').strip()
+    if not url:
+        flash('请输入 OZON 商品链接', 'danger')
+        return redirect(url_for('ozon.sources'))
+
+    # 校验 URL
+    if 'ozon.ru' not in url.lower() and 'ozon.by' not in url.lower() and 'ozon.kz' not in url.lower():
+        flash('请输入有效的 OZON 商品链接', 'warning')
+        return redirect(url_for('ozon.sources'))
+
+    from services.ozon_collector import collect_ozon_product_url
+
+    result = collect_ozon_product_url(url, user=current_user)
+
+    if not result.get('title_ru') and not result.get('title_cn'):
+        flash('采集失败：无法获取 OZON 商品信息，请检查链接是否有效', 'danger')
+        return redirect(url_for('ozon.sources'))
+
+    # 保存到 OzonSource
+    import datetime as dt
+    source = OzonSource.create(
+        user=current_user,
+        platform='ozon_product',
+        source_url=url,
+        title_cn=result.get('title_cn', '') or result.get('title_ru', '')[:300],
+        category_cn=result.get('category_path', '')[:100],
+        description_cn=result.get('description_ru', '')[:5000],
+        shop_name=result.get('seller_name', '')[:200],
+        sku_count=len(result.get('skus', [])),
+        image_count=len(result.get('media', [])),
+        raw_json=json.dumps(result, ensure_ascii=False),
+        capture_method='ozon_url',
+        status='collected',
+        captured_at=dt.datetime.now(),
+        quality_json=json.dumps({'missing_fields': result.get('missing_fields', [])}, ensure_ascii=False),
+    )
+
+    # 保存 SKU
+    for i, sku in enumerate(result.get('skus', [])[:50]):
+        OzonSourceSku.create(
+            user=current_user, source=source,
+            source_order=i + 1,
+            source_sku_id=sku.get('sku_id', str(i + 1))[:100],
+            source_sku_name=sku.get('name', '')[:200],
+            color_cn=sku.get('color', '')[:50],
+            size_cn=sku.get('size', '')[:50],
+            purchase_price_cny=None,
+        )
+
+    # 保存图片（标记为参考图）
+    for j, img in enumerate(result.get('media', [])[:30]):
+        OzonSourceMedia.create(
+            user=current_user, source=source,
+            media_id=f'ozon_{j + 1}',
+            media_source='ozon_reference',
+            role=img.get('role', 'detail')[:30],
+            source_url=img.get('url', '')[:500],
+            for_ozon=False,
+            review_status='pending',
+            compliance_status='needs_review',
+            reject_reason='OZON参考图，需替换为自有图片',
+        )
+
+    flash(f'OZON 商品采集完成：{source.title_cn[:40]}，{source.sku_count} SKU，{source.image_count} 张参考图', 'success')
+    return redirect(url_for('ozon.source_detail', source_id=source.id))
+
+
 @ozon_bp.route('/sources/import-1688-folder', methods=['POST'])
 @login_required
 def source_import_1688_folder():
@@ -3313,6 +3384,8 @@ def adaptation_workspace(source_id):
             (ProductFactEvidence.fact == fact)
         ).order_by(ProductFactEvidence.sort_order, ProductFactEvidence.field_path)[:200])
         product_details = build_product_detail_summary(fact)
+    from services.product_fact_service import build_collection_summary
+    collection_summary = build_collection_summary(source)
 
     # 检查是否有已启用的视觉模型配置
     has_vision_config = (VisionModelConfig
@@ -3361,6 +3434,7 @@ def adaptation_workspace(source_id):
                            image_facts=image_facts,
                            evidences=evidences,
                            product_details=product_details,
+                           collection_summary=collection_summary,
                            has_vision_config=has_vision_config,
                            # 新增：类目/Type/属性/字典
                            adaptation_types=adaptation_types,
@@ -3473,20 +3547,10 @@ def api_analyze_product_fact(fact_id):
         (OzonSourceMedia.user == current_user) & (OzonSourceMedia.source == source)
     ))
     total = len(media_all)
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    def _analyze_one(m):
+    # 串行处理（SQLite不支持多线程）
+    for i, m in enumerate(media_all):
         try:
-            return analyze_product_image(current_user, m, fact=fact, source_skus=source_skus)
-        except Exception as e:
-            return {'ok': False, 'error': str(e)[:200], 'media_id': m.id}
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        futures = {ex.submit(_analyze_one, m): m for m in media_all}
-        for future in as_completed(futures):
-            m = futures[future]
-            try:
-                r = future.result(timeout=60)
-            except Exception as e:
-                r = {'ok': False, 'error': str(e)[:200]}
+            r = analyze_product_image(current_user, m, fact=fact, source_skus=source_skus)
             if r.get('ok'):
                 result['images'] += 1
                 if not r.get('skipped'): result['model_calls'] += 1
@@ -3494,6 +3558,9 @@ def api_analyze_product_fact(fact_id):
             else:
                 result['failed'] += 1
                 result['image_errors'].append(f'{m.id}:{r.get("error","?")[:60]}')
+        except Exception as e:
+            result['failed'] += 1
+            result['image_errors'].append(f'{m.id}:{str(e)[:80]}')
 
     result['total_images'] = total
     result['merged'] = merge_fact_candidates(fact)

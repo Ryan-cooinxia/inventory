@@ -29,7 +29,29 @@
         <div class="mb-2"><span class="text-muted">标题：</span>{{ source.title_cn }}</div>
         <div class="mb-2"><span class="text-muted">供应商：</span>{{ source.shop_name or '-' }}</div>
         <div class="mb-2"><span class="text-muted">采购价：</span><span class="text-danger">¥{{ '{:,.2f}'.format(source_skus[0].purchase_price_cny) if source_skus and source_skus[0].purchase_price_cny else '-' }}</span></div>
-        <div class="mb-2"><span class="text-muted">采集时间：</span>{{ source.captured_at.strftime('%m-%d %H:%M') if source.captured_at else '' }}</div>
+        
+        <!-- 采集成果确认 -->
+        {% if collection_summary %}
+        <hr class="my-2">
+        <div class="card border-{% if collection_summary.status == 'complete' %}success{% elif collection_summary.status == 'partial' %}warning{% else %}danger{% endif %}" style="font-size:10px">
+          <div class="card-header py-1 px-2">
+            <strong>采集完整度: {{ collection_summary.score }}分</strong>
+            <span class="badge {% if collection_summary.status == 'complete' %}bg-success{% elif collection_summary.status == 'partial' %}bg-warning text-dark{% else %}bg-danger{% endif %} float-end">{{ collection_summary.status }}</span>
+          </div>
+          <div class="card-body p-1">
+            {% for c in collection_summary.checks %}
+            <span class="badge {% if c.ok %}bg-success{% elif c.warning %}bg-warning text-dark{% else %}bg-danger{% endif %} me-1 mb-1" style="font-size:9px">
+              {% if c.ok %}✅{% elif c.warning %}⚠️{% else %}❌{% endif %} {{ c.label }}
+            </span>
+            {% endfor %}
+            {% if collection_summary.missing_fields %}
+            <div class="text-danger mt-1" style="font-size:9px">缺失: {{ collection_summary.missing_fields|join(', ') }}</div>
+            {% endif %}
+          </div>
+        </div>
+        {% endif %}
+
+<div class="mb-2"><span class="text-muted">采集时间：</span>{{ source.captured_at.strftime('%m-%d %H:%M') if source.captured_at else '' }}</div>
 
         <hr class="my-2">
         <strong style="font-size:11px">源 SKU ({{ source_skus|length }})</strong>

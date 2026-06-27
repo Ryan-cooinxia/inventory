@@ -37,8 +37,25 @@
       <li class="nav-item" role="presentation">
         <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-text" type="button">📄 粘贴内容</button>
       </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-ozon" type="button">🛍️ OZON 链接</button>
+      </li>
     </ul>
     <div class="tab-content">
+      <!-- OZON 链接采集 -->
+      <div class="tab-pane fade" id="tab-ozon">
+        <form method="POST" action="{{ url_for(ozon.source_collect_ozon_url) }}" onsubmit="return showLoading(this)">
+          <div class="mb-2">
+            <label class="form-label fw-bold">OZON 商品链接</label>
+            <input type="url" name="url" class="form-control" placeholder="https://www.ozon.ru/product/... 或 https://ozon.by/product/..." required>
+          </div>
+          <small class="text-muted">粘贴 OZON 商品页链接，系统将采集标题、图片、SKU 等信息作为参考。图片默认标记为参考图，发布前需替换。</small>
+          <div class="d-flex gap-2 justify-content-end mt-2">
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById(collectPanel).classList.add(d-none)">取消</button>
+            <button type="submit" class="btn btn-warning">🛍️ 采集 OZON 商品</button>
+          </div>
+        </form>
+      </div>
       <!-- URL 采集 -->
       <div class="tab-pane fade show active" id="tab-url">
         <form method="POST" action="{{ url_for('ozon.source_collect_url') }}" onsubmit="return showLoading(this)">
@@ -212,6 +229,7 @@
           {% elif s.platform == 'taobao' %}<span class="badge bg-warning text-dark">淘宝</span>
           {% elif s.platform == 'pinduoduo' %}<span class="badge" style="background:#e6004c;color:#fff">拼多多</span>
           {% elif s.platform == 'ai_extract' %}<span class="badge bg-info">AI采集</span>
+          {% elif s.platform == 'ozon_product' %}<span class="badge bg-warning text-dark">OZON商品</span>
           {% else %}<span class="badge bg-secondary">{{ s.platform }}</span>
           {% endif %}
         </td>
