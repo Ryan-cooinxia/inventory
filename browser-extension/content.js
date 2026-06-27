@@ -3143,13 +3143,13 @@
     }
 
     // ── 4. 图片提取（区分主图/SKU图/详情图） ──
-    var mainImgs = document.querySelectorAll('[data-widget="webGallery"] img, [class*="gallery"] img[src*="ozon"], [data-widget="webPhoto"] img');
-    // SKU变体图片
-    var skuImgs = document.querySelectorAll('[data-widget="webVariant"] img, [class*="variant"] img[src*="ozon"], [class*="sku"] img[src*="ozon"]');
-    // 详情富文本图片
-    var detailImgs = document.querySelectorAll('[data-widget="webDescription"] img, [class*="description"] img, [class*="ra"] img, article img, [data-widget="webDetail"] img, [class*="detail"] img');
-    var allImgs = document.querySelectorAll('img[src*="ozon"]');
     var processedUrls = {};
+    var galleryImgContainer = document.querySelector('[data-widget="webGallery"]') || document.querySelector('[class*="gallery"]') || document.querySelector('[class*="elevation"]');
+    var mainImgs = galleryImgContainer ? galleryImgContainer.querySelectorAll('img') : document.querySelectorAll('img[src*="ozon.ru"]');
+    var skuImgs = document.querySelectorAll('[data-widget="webVariant"] img, [class*="sku"] img, [class*="variant"] img');
+    var descContainer = document.querySelector('[data-widget="webDescription"]') || document.querySelector('[class*="description"]') || document.querySelector('[class*="widget"]');
+    var detailImgs = descContainer ? descContainer.querySelectorAll('img') : document.querySelectorAll('img');
+    var allImgs = document.querySelectorAll('img');
 
     function addImage(src, role, el) {
       if (!src || !src.startsWith('http')) return;
@@ -3202,7 +3202,7 @@
     }
 
     // ── 5. 视频提取 ──
-    var videoEls = document.querySelectorAll('video, video source, [data-widget="webVideo"] video, [class*="video"] video, iframe[src*="youtube"], iframe[src*="vk.com"], iframe[src*="rutube"]');
+    var videoEls = document.querySelectorAll('video, video source, [data-widget="webVideo"] video, [data-widget="webVideo"] iframe, [class*="video"] video, [class*="player"] video, iframe[src*="youtube"], iframe[src*="vk.com"], iframe[src*="rutube"], iframe[src*="yandex"], iframe[src*="ozon"], iframe[src*="vkvideo"]');
     for (var vi = 0; vi < videoEls.length; vi++) {
       var vSrc = videoEls[vi].src || videoEls[vi].getAttribute('data-src') || '';
       if (vSrc && vSrc.startsWith('http')) videos.push(vSrc);
@@ -3218,7 +3218,7 @@
 
     // ── 6. SKU提取 ──
     // OZON变体选择器
-    var variantBtns = document.querySelectorAll('[data-widget="webVariant"] button, [class*="purchasing"] button, [class*="options"] button, [class*="variant"] button[class*="tsButton"]');
+    var variantBtns = document.querySelectorAll('[data-widget="webVariant"] button, [class*="sku"] button, [class*="variant"] button, [class*="option"] button, [class*="purchasing"] button, button[class*="tsButton"], [data-testid] button, select option');
     for (var vk = 0; vk < variantBtns.length; vk++) {
       var vName = (variantBtns[vk].textContent || '').trim();
       if (vName && vName.length > 1 && vName.length < 80 && vName.indexOf('В корзину') < 0 && vName.indexOf('Купить') < 0) {
