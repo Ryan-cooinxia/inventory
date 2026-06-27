@@ -3007,11 +3007,7 @@
     floatingBtn.textContent = '...';
 
     var platform = detectPlatform();
-    if (platform === 'ozon_product') {
-      await fetchOzonSplitState();
-      chrome.runtime.sendMessage({action:'startDebugCapture'}, function(r){ console.log('[OZON] debug capture:', r&&r.ok?'started':(r&&r.error)); });
-      await new Promise(function(r){ setTimeout(r, 1500); });
-    }
+    if (platform === 'ozon_product') { await fetchOzonSplitState(); }
 
     // 自动滚动到底部，触发懒加载图片
     await scrollToBottom();
@@ -3079,15 +3075,6 @@
   // ── 启动 ────────────────────────────────────────────
   // 延迟初始化，确保页面动态内容已渲染
   setTimeout(init, 800);
-
-
-var __ozonDebugCaptureData = null;
-chrome.runtime.onMessage.addListener(function(msg) {
-  if (msg.action === 'debugCaptureResult' && msg.data) {
-    __ozonDebugCaptureData = msg.data;
-    console.log('[OZON] API intercepted rich text:', (msg.data.rich_text_plain||'').length, 'chars');
-  }
-});
 
 })();
 
@@ -3682,19 +3669,10 @@ function sleep(ms) { return new Promise(function(r){setTimeout(r,ms);}); }
     var productInfo = {title:title, category:category||desc.substring(0,100), shop_name:shop, description:desc};
     var v4RichText = extractOzonRichText();
     // Supplement from SPLIT_STATE (MAIN world data)
-    // Merge from SPLIT_STATE or debug capture API
-    var capData = window.__ozonDebugCaptureData || window.__ozonSplitStateData;
-    if (capData && capData.rich_text_html && !v4RichText.plain_text) {
-      v4RichText.html = capData.rich_text_html;
-      v4RichText.plain_text = capData.rich_text_plain || '';
-      v4RichText.source = window.__ozonDebugCaptureData ? 'api_debug_capture' : 'split_state';
-    }
-    // Merge attributes from capture
-    if (capData && capData.attributes && capData.attributes.length && v4Attrs.length < 5) {
-      for (var ai=0; ai<capData.attributes.length; ai++) {
-        var a = capData.attributes[ai];
-        v4Attrs.push({name:a.name||a.key||'', value:a.value||a.text||'', source:'api_capture'});
-      }
+    if (window.__ozonSplitStateData && window.__ozonSplitStateData.rich_text_html && !v4RichText.plain_text) {
+      v4RichText.html = window.__ozonSplitStateData.rich_text_html;
+      v4RichText.plain_text = window.__ozonSplitStateData.rich_text_plain || '';
+      v4RichText.source = 'split_state';
     }
     var v4Pricing = extractOzonPricing(stateObjects);
     var v4Attrs = extractOzonAttributes(stateObjects);

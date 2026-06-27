@@ -1,212 +1,30 @@
 /**
- * 后台 Service Worker
- * 1. 代理 API 请求（绕过 HTTPS→HTTP 限制）
- * 2. chrome.debugger 拦截 OZON PDP API 响应，提取富文本/视频
+ * 后台 Service Worker — 代理 API 请求（绕过 HTTPS→HTTP 限制）
  */
-const API_URL = 'http://127.0.0.1:5000';
-
-// ── 网络代理 ──
 chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
   if (request.action === 'collect') {
-    fetch(request.apiUrl || (API_URL + '/ozon/api/sources/add'), {
+    fetch(request.apiUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': request.token },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Auth-Token': request.token
+      },
       body: JSON.stringify(request.payload)
     })
       .then(function (resp) { return resp.json(); })
       .then(function (result) { sendResponse({ ok: true, data: result }); })
       .catch(function (e) { sendResponse({ ok: false, error: e.message }); });
-    return true;
+    return true; // 保持通道开放（异步 sendResponse）
   }
 
   if (request.action === 'check') {
-    fetch(API_URL + '/')
+    fetch('http://127.0.0.1:5000/')
       .then(function (resp) { sendResponse({ ok: true, status: resp.status }); })
       .catch(function (e) { sendResponse({ ok: false, error: e.message }); });
     return true;
   }
 
-  // ── Debugger: 启动 OZON API 拦截 ──
-  if (request.action === 'startDebugCapture') {
-    startOzonNetworkCapture(sender.tab.id).then(function(result) {
-      sendResponse(result);
-    }).catch(function(e) {
-      sendResponse({ ok: false, error: e.message });
-    });
-    return true;
-  }
-
-  // ── Debugger: 停止并获取结果 ──
-  if (request.action === 'stopDebugCapture') {
-    stopOzonNetworkCapture(sender.tab.id).then(function(result) {
-      sendResponse(result);
-    });
-    return true;
-  }
-});
-
-// ═══════════════════════════════════════════════════
-// chrome.debugger OZON API 拦截
-// ═══════════════════════════════════════════════════
-
-const captureSessions = {}; // { tabId: { captured: [], debuggee: {...} } }
-
-function findOzonKey(obj, target) {
-  if (!obj || typeof obj !== 'object') return null;
-  if (obj[target] !== undefined) return obj[target];
-  if (Array.isArray(obj)) {
-    for (let i = 0; i < obj.length && i < 200; i++) {
-      const r = findOzonKey(obj[i], target);
-      if (r) return r;
-    }
-    return null;
-  }
-  for (const key in obj) {
-    if (key === target) return obj[key];
-    const r = findOzonKey(obj[key], target);
-    if (r) return r;
-  }
-  return null;
-}
-
-function decodeOzonHtml(str) {
-  if (typeof str !== 'string') return str;
-  return str
-    .replace(/\\"/g, '"')
-    .replace(/\\u003C/g, '<')
-    .replace(/\\u003E/g, '>')
-    .replace(/\\n/g, '\n')
-    .replace(/\\\\/g, '\\');
-}
-
-async function startOzonNetworkCapture(tabId) {
-  // Detach any existing debugger on this tab
-  try {
-    if (captureSessions[tabId]) {
-      await chrome.debugger.detach({ tabId: tabId });
-    }
-  } catch(e) {}
-
-  return new Promise((resolve) => {
-    chrome.debugger.attach({ tabId: tabId }, "1.3", () => {
-      if (chrome.runtime.lastError) {
-        resolve({ ok: false, error: chrome.runtime.lastError.message });
-        return;
-      }
-
-      captureSessions[tabId] = { captured: [], debuggee: { tabId: tabId } };
-
-      chrome.debugger.sendCommand({ tabId: tabId }, "Network.enable", {}, () => {
-        resolve({ ok: true, message: 'Network capture started' });
-      });
-    });
-  });
-}
-
-function stopOzonNetworkCapture(tabId) {
-  return new Promise((resolve) => {
-    const session = captureSessions[tabId];
-    if (!session) {
-      resolve({ ok: false, error: 'No active capture session' });
-      return;
-    }
-
-    // Wait a bit for pending responses, then detach
-    setTimeout(() => {
-      try {
-        chrome.debugger.detach({ tabId: tabId });
-      } catch(e) {}
-      delete captureSessions[tabId];
-
-      resolve({
-        ok: true,
-        captured: session.captured,
-        summary: `${session.captured.length} responses captured`
-      });
-    }, 2000);
-  });
-}
-
-// Global debugger event listener for network responses
-chrome.debugger.onEvent.addListener((source, method, params) => {
-  if (method !== "Network.responseReceived") return;
-  const tabId = source.tabId;
-  const session = captureSessions[tabId];
-  if (!session) return;
-
-  const response = params.response;
-  const url = response.url || '';
-
-  // Only capture OZON API responses that might contain product data
-  if (!url.includes('ozon.ru')) return;
-  if (url.match(/\.(jpg|jpeg|png|webp|gif|svg|css|js|woff|ico)(\?|$)/i)) return;
-
-  const requestId = params.requestId;
-  const mimeType = (response.mimeType || '').toLowerCase();
-  if (!mimeType.includes('json') && !mimeType.includes('html') && !mimeType.includes('javascript')) return;
-
-  // Get response body
-  setTimeout(() => {
-    chrome.debugger.sendCommand({ tabId: tabId }, "Network.getResponseBody", { requestId: requestId }, (result) => {
-      if (!result || !result.body) return;
-      const body = result.body;
-      // Check if this response contains OZON product data
-      if (body.includes('richContent') || body.includes('rich_text') || body.includes('description') ||
-          body.includes('video') || body.includes('webProductDescription') ||
-          body.includes('characteristics') || url.includes('/pdp/') || url.includes('/product/')) {
-
-        try {
-          const data = JSON.parse(body);
-          const richContent = findOzonKey(data, 'richContent') || findOzonKey(data, 'description') || findOzonKey(data, 'rich_text');
-          const videoData = findOzonKey(data, 'video') || findOzonKey(data, 'mediaList');
-          const characteristics = findOzonKey(data, 'characteristics');
-
-          let richHtml = '', richPlain = '';
-          if (richContent) {
-            if (typeof richContent === 'string') {
-              richHtml = decodeOzonHtml(richContent);
-            } else if (typeof richContent === 'object') {
-              richHtml = JSON.stringify(richContent);
-            }
-            richPlain = richHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-          }
-
-          let videoUrl = '', poster = '';
-          if (videoData) {
-            if (typeof videoData === 'string') {
-              videoUrl = videoData;
-            } else if (videoData.url || videoData.src || videoData.hdUrl) {
-              videoUrl = videoData.hdUrl || videoData.url || videoData.src || '';
-              poster = videoData.poster || videoData.cover || videoData.preview || '';
-            } else if (Array.isArray(videoData) && videoData.length) {
-              videoUrl = videoData[0].url || videoData[0].src || '';
-              poster = videoData[0].poster || videoData[0].cover || '';
-            }
-          }
-
-          session.captured.push({
-            url: url,
-            rich_text_html: richHtml.substring(0, 200000),
-            rich_text_plain: richPlain.substring(0, 50000),
-            video_url: videoUrl,
-            video_poster: poster,
-            attributes: characteristics || [],
-            captured_at: new Date().toISOString()
-          });
-
-          // Send to content script
-          chrome.tabs.sendMessage(tabId, {
-            action: 'debugCaptureResult',
-            data: session.captured[session.captured.length - 1]
-          }).catch(() => {}); // content script may not be listening
-        } catch(e) {}
-      }
-    });
-  }, 100);
-});
-
-// ── SPLIT_STATE fallback (keep previous approach) ──
-chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
+  // OZON: 穿透隔离沙箱，直接读取 window.__SPLIT_STATE__
   if (request.action === 'readSplitState') {
     chrome.scripting.executeScript({
       target: { tabId: sender.tab.id },
@@ -216,7 +34,7 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
       if (results && results[0] && results[0].result) {
         sendResponse({ ok: true, data: results[0].result });
       } else {
-        sendResponse({ ok: false, error: 'SPLIT_STATE not found' });
+        sendResponse({ ok: false, error: 'SPLIT_STATE not found or empty' });
       }
     }).catch(function(e) {
       sendResponse({ ok: false, error: e.message });
@@ -225,6 +43,7 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
   }
 });
 
+// 在 MAIN world 中执行的函数（可访问页面原生 window）
 function extractSplitStateData() {
   try {
     var state = window.__SPLIT_STATE__;
@@ -242,37 +61,88 @@ function extractSplitStateData() {
     }
     if (!state) return { error: '__SPLIT_STATE__ not found' };
 
-    var result = { rich_text_html: '', rich_text_plain: '', attributes: [], video_url: '', poster: '' };
+    var result = { rich_text_html: '', rich_text_plain: '', attributes: [], video_url: '', poster: '', video_data: null };
 
-    function findKey(obj, target) {
+    // Deep recursive search for any key matching target patterns
+    function findKeyInObject(obj, targetKey) {
       if (!obj || typeof obj !== 'object') return null;
-      if (obj[target] !== undefined) return obj[target];
-      if (Array.isArray(obj)) { for (var i=0;i<obj.length&&i<200;i++) { var r=findKey(obj[i],target); if(r)return r; } return null; }
-      for (var k in obj) { if (k===target) return obj[k]; var r=findKey(obj[k],target); if(r)return r; }
+      if (obj[targetKey] !== undefined) return obj[targetKey];
+      if (Array.isArray(obj)) {
+        for (var i=0;i<obj.length&&i<200;i++) {
+          var r = findKeyInObject(obj[i], targetKey);
+          if (r) return r;
+        }
+        return null;
+      }
+      for (var k in obj) {
+        if (k === targetKey) return obj[k];
+        var r = findKeyInObject(obj[k], targetKey);
+        if (r) return r;
+      }
       return null;
     }
 
+    // Find rich content - try multiple key names
     var richKeys = ['richContent','richContentHtml','description','Description','htmlContent','content'];
     for (var rk=0;rk<richKeys.length;rk++) {
-      var found = findKey(state, richKeys[rk]);
+      var found = findKeyInObject(state, richKeys[rk]);
       if (found && typeof found === 'string' && found.length > 100) {
-        result.rich_text_html = found.replace(/\\\"/g,'"').replace(/\\u003C/g,'<').replace(/\\u003E/g,'>').replace(/\\n/g,'\n').replace(/\\\\/g,'\\');
-        result.rich_text_plain = result.rich_text_html.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
+        result.rich_text_html = found
+          .replace(/\\"/g, '"').replace(/\\u003C/g, '<')
+          .replace(/\\u003E/g, '>').replace(/\\n/g, '\n').replace(/\\\\/g, '\\');
+        var div = document.createElement('div');
+        div.innerHTML = result.rich_text_html;
+        result.rich_text_plain = (div.textContent || div.innerText || '').trim();
         break;
       }
     }
 
-    var vidKeys = ['video','videoUrl','mediaList','media','videos'];
-    for (var vk=0;vk<vidKeys.length;vk++) {
-      var v = findKey(state, vidKeys[vk]);
+    // Find video data
+    var videoKeys = ['video','videoUrl','mediaList','media','videos'];
+    for (var vk=0;vk<videoKeys.length;vk++) {
+      var v = findKeyInObject(state, videoKeys[vk]);
       if (v) {
-        if (typeof v === 'string') result.video_url = v;
-        else if (typeof v === 'object') { result.video_url = v.url||v.src||v.videoUrl||''; result.poster = v.poster||v.cover||v.preview||''; }
-        if (result.video_url||result.poster) break;
+        if (typeof v === 'string' && v.length > 10) {
+          result.video_url = v;
+        } else if (typeof v === 'object') {
+          result.video_data = JSON.stringify(v);
+          result.video_url = v.url || v.src || v.videoUrl || '';
+          result.poster = v.poster || v.cover || v.preview || v.image || '';
+        }
+        if (result.video_url || result.poster) break;
       }
     }
 
-    try { var chars = findKey(state, 'characteristics'); if (chars&&Array.isArray(chars)) result.attributes=chars; } catch(e) {}
+    // Find characteristics/attributes
+    try {
+      var chars = findKeyInObject(state, 'characteristics');
+      if (chars && Array.isArray(chars)) result.attributes = chars;
+      if (!result.attributes.length) {
+        var specs = findKeyInObject(state, 'specifications');
+        if (specs && Array.isArray(specs)) result.attributes = specs;
+      }
+    } catch(e) {}
+
+    // Fallback: if still no rich text, stringify entire state and extract long HTML strings
+    if (!result.rich_text_html) {
+      var stateStr = JSON.stringify(state);
+      var m = stateStr.match(/"[^"]{500,20000}"/g);
+      if (m) {
+        for (var si=0;si<m.length;si++) {
+          var candidate = m[si].slice(1,-1);
+          if (candidate.indexOf('<div')>=0 || candidate.indexOf('<p')>=0 || candidate.indexOf('<span')>=0) {
+            result.rich_text_html = candidate
+              .replace(/\\"/g,'"').replace(/\\u003C/g,'<')
+              .replace(/\\u003E/g,'>').replace(/\\n/g,'\n').replace(/\\\\/g,'\\');
+            var d2 = document.createElement('div');
+            d2.innerHTML = result.rich_text_html;
+            result.rich_text_plain = (d2.textContent||d2.innerText||'').trim();
+            break;
+          }
+        }
+      }
+    }
+
     return result;
   } catch(e) { return { error: e.message }; }
 }
