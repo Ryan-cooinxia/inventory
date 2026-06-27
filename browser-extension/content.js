@@ -3143,4 +3143,394 @@
     return [{source_order:1,source_sku_id:'default',source_sku_name:name,style_cn:name,bundle_quantity:1,purchase_price_cny:pricing.reference_price_rub||null}];
   }
 
+function extractOzonRichText() {
+    var best = null, bestScore = 0;
+    document.querySelectorAll('[data-widget*="webDescription"],[data-widget*="rich"],[class*="description"],[class*="rich"],[class*="content"],article').forEach(function(root) {
+      if (typeof isInBadArea === 'function' && isInBadArea(root)) return;
+      var text = (root.innerText||root.textContent||'').trim();
+      var imgs = root.querySelectorAll('img').length;
+      var score = text.length + imgs * 300;
+      if (/\u043e\u043f\u0438\u0441\u0430\u043d\u0438\u0435|\u0445\u0430\u0440\u0430\u043a\u0442\u0435\u0440\u0438\u0441\u0442\u0438\u043a|description/i.test(text)) score += 500;
+      if (score > bestScore) { bestScore = score; best = root; }
+    });
+    if (!best) return {html:'',plain_text:'',source_selector:'',image_count:0};
+    var clone = best.cloneNode(true);
+    clone.querySelectorAll('script,style,svg,button,nav,footer,header').forEach(function(x){x.remove();});
+    return { html: clone.innerHTML.slice(0,200000), plain_text: (clone.innerText||clone.textContent||'').trim().slice(0,50000), source_selector: '', image_count: clone.querySelectorAll('img').length, captured_at: new Date().toISOString() };
+  }
 
+  function extractOzonAttributes(stateData) {
+    var attrs = [], seen = {};
+    function addAttr(name, value, source) {
+      name = (name||'').trim(); value = (value||'').trim();
+      if (!name || !value || name.length > 80 || value.length > 500) return;
+      var key = name.toLowerCase()+'='+value.toLowerCase();
+      if (seen[key]) return; seen[key] = true;
+      attrs.push({name:name,value:value,source:source||'dom',source_text:name+': '+value});
+    }
+    document.querySelectorAll('[data-widget*="webCharacteristics"] *,[data-widget*="webShortCharacteristics"] *,[class*="characteristic"] *,[class*="spec"] *').forEach(function(el) {
+      if (typeof isInBadArea === 'function' && isInBadArea(el)) return;
+      var txt = (el.textContent||'').trim();
+      if (!txt || txt.length > 300) return;
+      var parts = txt.split(/:|\uff1a|\u2014|\u2013/);
+      if (parts.length >= 2) addAttr(parts[0], parts.slice(1).join(':'), 'dom_characteristics');
+    });
+    if (stateData && stateData.length) {
+      walkOzonState(stateData[0], function(obj) {
+        var name = obj.name || obj.key || obj.title;
+        var value = obj.value || obj.text || obj.values;
+        if (!name || !value) return;
+        if (obj.value !== undefined || obj.characteristicId || obj.attributeId || obj.key) {
+          addAttr(name, Array.isArray(value)?value.join(', '):String(value), 'state_json');
+        }
+      });
+    }
+    return attrs.slice(0, 120);
+  // dl/dt+dd pattern
+    document.querySelectorAll('dl,[class*="props"],[class*="params"]').forEach(function(dl) {
+      var dts=dl.querySelectorAll('dt,[class*="name"],[class*="label"]');
+      var dds=dl.querySelectorAll('dd,[class*="value"]');
+      for (var i=0;i<Math.min(dts.length,dds.length);i++) addAttr(dts[i].textContent.trim(),dds[i].textContent.trim(),'dl');
+    });
+    // table rows
+    document.querySelectorAll('table tr,[class*="row"]').forEach(function(tr) {
+      var cells=tr.querySelectorAll('td,th');
+      if (cells.length>=2) addAttr(cells[0].textContent.trim(),cells[1].textContent.trim(),'table');
+    });
+    
+  }
+
+  function extractOzonVideos(stateData) {
+    var videos = [], seen = {};
+    document.querySelectorAll('video, video source').forEach(function(el) {
+      if (typeof isInBadArea === 'function' && isInBadArea(el)) return;
+      var src = el.src || el.getAttribute('src') || el.getAttribute('data-src') || '';
+      var poster = el.getAttribute('poster') || '';
+      var key = src || poster;
+      if (key && !seen[key]) { seen[key]=true; videos.push({src:src,poster:poster,role:'video',source:'dom_video'}); }
+    });
+    if (stateData && stateData.length) {
+      walkOzonState(stateData[0], function(obj) {
+        var url = obj.videoUrl || obj.video || obj.url || obj.src;
+        if (url && /\.(mp4|webm|mov|m3u8)/i.test(String(url)) && !seen[url]) { seen[url]=true; videos.push({src:String(url),poster:obj.poster||obj.preview||obj.cover||'',role:'video',source:'state_json'}); }
+      });
+    }
+    
+    document.querySelectorAll('iframe[src*="youtube"],iframe[src*="vk.com"],iframe[src*="rutube"],iframe[src*="yandex"],iframe[src*="vkvideo"],iframe[src*="player"]').forEach(function(el){
+      var s=el.src||el.getAttribute('data-src')||'';
+      if(s&&!seen[s]){seen[s]=true;videos.push({src:s,role:'video',source:'iframe'});}
+    });
+    
+    return videos;
+  }
+
+  function extractOzonProduct() {
+    // ── 1. 尝试从页面JSON状态提取 ──
+    var stateData = null;
+    var scripts = document.querySelectorAll('script');
+    for (var si = 0; si < scripts.length; si++) {
+      var text = scripts[si].textContent || scripts[si].innerHTML || '';
+      if (text.indexOf('window.__INITIAL_STATE__') >= 0 || text.indexOf('window.__NUXT__') >= 0) {
+        try {
+          var match = text.match(/(?:window\.__INITIAL_STATE__|window\.__NUXT__)\s*=\s*(\{.*?\});?\s*\n/);
+          if (!match) match = text.match(/(?:window\.__INITIAL_STATE__|window\.__NUXT__)\s*=\s*(\{.*?\});?\s*$/);
+          if (!match) match = text.match(/=\s*(\{.*?"product".*?\});/);
+          if (match) stateData = JSON.parse(match[1]);
+        } catch(e) {}
+      }
+      if (!stateData && (text.indexOf('"@type":"Product"') >= 0 || text.indexOf('"product"') >= 0)) {
+        try {
+          if (scripts[si].type === 'application/ld+json' || scripts[si].type === 'application/json') {
+            stateData = JSON.parse(text);
+          }
+        } catch(e) {}
+      }
+    }
+
+    var title = '', desc = '', shop = '', category = '';
+    var images = [], skus = [], specs = [], videos = [];
+
+    // ── 2. 从JSON状态提取 ──
+    if (stateData) {
+      var pd = stateData.product || stateData.state || stateData;
+
+      // 从JSON提取图集
+      try {
+        var js = JSON.stringify(stateData);
+        // 提取所有OZON CDN图片URL
+        var imgUrls = js.match(/https?:\/\/[^"'\s,]*ozon[^"'\s,]*\.(jpg|jpeg|png|webp|avif)[^"'\s,]*/gi);
+        if (imgUrls) {
+          for (var u2 = 0; u2 < imgUrls.length && images.length < 30; u2++) {
+            var cleanUrl = imgUrls[u2].replace(/\/wc\d{1,4}(\/|$)/, '/wc1000/').replace(/[?&](size|w|h|q)=\d+/gi, '').replace(/\?$/, '');
+            var k2 = cleanUrl.substring(0, 100);
+            if (!processedUrls[k2] && cleanUrl.indexOf('/icon') < 0 && cleanUrl.indexOf('/logo') < 0) {
+              processedUrls[k2] = true;
+              images.push({ role: images.length === 0 ? 'main' : 'detail', src: cleanUrl });
+            }
+          }
+        }
+        // 提取视频URL
+        var vidUrls = js.match(/https?:\/\/[^"'\s,]*(?:video|player|vkvideo|vk\.com)[^"'\s,]*/gi);
+        if (vidUrls) {
+          for (var v2 = 0; v2 < vidUrls.length; v2++) {
+            if (videos.indexOf(vidUrls[v2]) < 0) videos.push(vidUrls[v2]);
+          }
+        }
+      } catch(e) {}
+
+      // 递归查找product
+      function findProduct(obj, depth) {
+        if (!obj || depth > 5) return null;
+        if (obj.title || obj.name || obj.offerData) return obj;
+        for (var key in obj) {
+          if (key === 'product' || key === 'currentProduct' || key === 'skuInfo') {
+            var r = obj[key];
+            if (r && (r.title || r.name)) return r;
+          }
+          if (typeof obj[key] === 'object') {
+            var r2 = findProduct(obj[key], depth + 1);
+            if (r2) return r2;
+          }
+        }
+        return null;
+      }
+      var prod = findProduct(stateData, 0) || stateData;
+      title = prod.title || prod.name || '';
+      desc = prod.description || prod.richDescription || '';
+      category = prod.category || prod.categoryName || '';
+      shop = prod.sellerName || prod.seller || '';
+    }
+
+    // ── 3. DOM兜底 ──
+    if (!title) {
+      var ogTitle = document.querySelector('meta[property="og:title"]');
+      if (ogTitle) title = ogTitle.getAttribute('content') || '';
+      if (!title) title = (document.querySelector('h1') || {}).textContent || '';
+      if (!title) title = document.title || '';
+    }
+    if (!desc) {
+      var ogDesc = document.querySelector('meta[property="og:description"]');
+      if (ogDesc) desc = ogDesc.getAttribute('content') || '';
+    }
+    if (!shop) {
+      var sellerEl = document.querySelector('[data-widget="webCurrentSeller"], [class*="seller"], a[href*="seller"] span');
+      if (sellerEl) shop = sellerEl.textContent.trim();
+    }
+
+    // State objects for JSON extraction
+    var stateObjects = [];
+    try {
+      document.querySelectorAll('script').forEach(function(s) {
+        var t = s.textContent || s.innerHTML || '';
+        if (t.indexOf('__NUXT__') >= 0 || t.indexOf('__INITIAL_STATE__') >= 0) {
+          var m = t.match(/(?:__NUXT__|__INITIAL_STATE__)\s*=\s*(\{.*?\});?\s*\n/);
+          if (!m) m = t.match(/=\s*(\{.*?\});?\s*$/);
+          if (m) try { stateObjects.push(JSON.parse(m[1])); } catch(e){}
+        }
+      });
+    } catch(e) {}
+
+    // ── 4. 图片提取（区分主图/SKU图/详情图） ──
+    var mainImgs = document.querySelectorAll('[data-widget="webGallery"] img, [class*="gallery"] img[src*="ozon"], [data-widget="webPhoto"] img');
+    // SKU变体图片
+    var skuImgs = document.querySelectorAll('[data-widget="webVariant"] img, [class*="variant"] img[src*="ozon"], [class*="sku"] img[src*="ozon"]');
+    // 详情富文本图片
+    var detailImgs = document.querySelectorAll('[data-widget="webDescription"] img, [class*="description"] img, [class*="ra"] img, article img, [data-widget="webDetail"] img, [class*="detail"] img');
+    var allImgs = document.querySelectorAll('img[src*="ozon"], img[src*="ir-2.ozone.ru"], img[src*="cdn1.ozone.ru"], img[src*="woody"], img[src*="product"]');
+    var processedUrls = {};
+
+    // 预计算：找到评论区/推荐区的Y坐标边界
+  var reviewBoundaryY = 999999;
+  var markers = ['Отзывы', 'Вопросы', 'Похожие товары', 'С этим товаром покупают', 'Рекомендуем', 'Смотрите также'];
+  var allH = document.querySelectorAll('h2,h3');
+  for (var hi = 0; hi < allH.length; hi++) {
+    var txt = (allH[hi].textContent || '').trim();
+    for (var mi = 0; mi < markers.length; mi++) {
+      if (txt.indexOf(markers[mi]) >= 0) {
+        var y = window.scrollY + allH[hi].getBoundingClientRect().top;
+        if (y < reviewBoundaryY) reviewBoundaryY = y;
+      }
+    }
+  }
+
+  function isInBadArea(el) {
+    if (!el) return false;
+    // 位置检查：在评论区下方
+    if (reviewBoundaryY < 999999) {
+      var rect = el.getBoundingClientRect ? el.getBoundingClientRect() : {top:0};
+      var elY = window.scrollY + rect.top;
+      if (elY > reviewBoundaryY) return true;
+    }
+    // DOM祖先检查
+    var node = el;
+    for (var depth = 0; depth < 6 && node; depth++) {
+      var cls = (node.className || '').toString().toLowerCase();
+      var id = (node.id || '').toLowerCase();
+      var dw = (node.getAttribute && node.getAttribute('data-widget')) || '';
+      if (cls.indexOf('review') >= 0 || cls.indexOf('comment') >= 0) return true;
+      if (id.indexOf('review') >= 0 || id.indexOf('comment') >= 0) return true;
+      if (dw.indexOf('webReview') >= 0 || dw.indexOf('webComment') >= 0) return true;
+      if (cls.indexOf('recommend') >= 0 || cls.indexOf('similar') >= 0 || cls.indexOf('related') >= 0) return true;
+      if (dw.indexOf('webRecommend') >= 0 || dw.indexOf('webSimilar') >= 0) return true;
+      if (cls.indexOf('carousel') >= 0 && dw.indexOf('webGallery') < 0 && cls.indexOf('gallery') < 0) return true;
+      if (cls.indexOf('nav') >= 0 || cls.indexOf('footer') >= 0 || cls.indexOf('sidebar') >= 0) return true;
+      node = node.parentElement;
+    }
+    return false;
+  }
+
+  function addImage(src, role, el) {
+      if (!src || !src.startsWith('http')) return;
+      if (el && isInBadArea(el)) return;
+      // 图标/Logo/支付/银行过滤
+      var u = src.toLowerCase();
+      if (/\/icon|\/logo|\/avatar|\/favicon|\/sprite|\/badge/.test(u)) return;
+      if (u.indexOf('bank') >= 0 || u.indexOf('payment') >= 0 || u.indexOf('static') >= 0) return;
+      // 其他产品链接过滤(关键!)
+      if (el && el.closest) {
+        var a = el.closest('a[href*=\"/product/\"]');
+        if (a) {
+          var aPath = (a.getAttribute('href')||'').split('?')[0];
+          var curPath = location.pathname.split('?')[0];
+          if (aPath !== curPath && aPath.indexOf('/product/') >= 0) return;
+        }
+      }
+      // 去水印/缩略图处理
+      src = src.replace(/\/wc\d+(\/|$)/, '/wc1000/').replace(/\/\d{1,4}x\d{1,4}(\/|$)/, '/').replace(/[?&](size|w|h|quality|q)=\d+/gi, '').replace(/[?&]ts=\d+/gi, '').replace(/\?$/, '');
+      var key = src.substring(0, 80);
+      if (processedUrls[key]) return;
+      processedUrls[key] = true;
+      images.push({ role: role, src: src });
+    }
+
+    // 主图
+    for (var mi = 0; mi < mainImgs.length; mi++) { addImage(mainImgs[mi].src || mainImgs[mi].getAttribute('data-src'), 'main', mainImgs[mi]); }
+    // SKU图
+    for (var si2 = 0; si2 < skuImgs.length; si2++) { addImage(skuImgs[si2].src || skuImgs[si2].getAttribute('data-src'), 'sku', skuImgs[si2]); }
+    // 详情图
+    for (var di = 0; di < detailImgs.length; di++) { addImage(detailImgs[di].src || detailImgs[di].getAttribute('data-src'), 'detail', detailImgs[di]); }
+    // 兜底：仅在白名单没抓到图时才从allImgs补充(且必须在评论/推荐区之上)
+    var mainCount = images.filter(function(x){return x.role==='main';}).length;
+    var detailCount = images.filter(function(x){return x.role==='detail';}).length;
+    if (mainCount === 0 || detailCount < 3) {
+      for (var ai = 0; ai < Math.min(allImgs.length, 30); ai++) {
+        var fallbackRole = (mainCount === 0 && ai < 10) ? 'main' : 'detail';
+        addImage(allImgs[ai].src || allImgs[ai].getAttribute('data-src'), fallbackRole, allImgs[ai]);
+      }
+    }
+
+    // ── 5. 视频提取 ──
+    var videoEls = document.querySelectorAll('video, video source, video[src], [data-widget="webVideo"] video, [class*="video"] video, [class*="player"] video, [class*="media"] video');
+    for (var vi = 0; vi < videoEls.length; vi++) {
+      var vSrc = videoEls[vi].src || videoEls[vi].getAttribute('data-src') || videoEls[vi].getAttribute('src') || videoEls[vi].currentSrc || '';
+      if (vSrc && vSrc.startsWith('http') && videos.indexOf(vSrc) < 0) videos.push(vSrc);
+      var sources = videoEls[vi].querySelectorAll('source');
+      for (var si = 0; si < sources.length; si++) {
+        var sSrc = sources[si].src || sources[si].getAttribute('data-src') || '';
+        if (sSrc && sSrc.startsWith('http') && videos.indexOf(sSrc) < 0) videos.push(sSrc);
+      }
+    }
+    var iframes = document.querySelectorAll('iframe[src*="youtube"], iframe[src*="vk.com"], iframe[src*="rutube"], iframe[src*="yandex"], iframe[src*="vkvideo"], iframe[src*="player"]');
+    for (var fi = 0; fi < iframes.length; fi++) {
+      var iSrc = iframes[fi].src || iframes[fi].getAttribute('data-src') || '';
+      if (iSrc && iSrc.startsWith('http') && videos.indexOf(iSrc) < 0) videos.push(iSrc);
+    }
+    // 查找JSON中的视频URL
+    if (stateData) {
+      try {
+        var jsonStr = JSON.stringify(stateData);
+        var vMatches = jsonStr.match(/https?:\/\/[^"'\s]*\.(mp4|webm|mov)[^"'\s]*/gi);
+        if (vMatches) { for (var vm = 0; vm < vMatches.length; vm++) { if (videos.indexOf(vMatches[vm]) < 0) videos.push(vMatches[vm]); } }
+      } catch(e) {}
+    }
+
+    // ── 6. SKU提取 ──
+    // OZON变体选择器
+    var variantBtns = document.querySelectorAll('[data-widget="webVariant"] button, [class*="purchasing"] button, [class*="options"] button, [class*="sku"] button, [class*="variant"] button, [role="button"]');
+    for (var vk = 0; vk < variantBtns.length; vk++) {
+      var vName = (variantBtns[vk].textContent || '').trim();
+      if (vName && vName.length > 1 && vName.length < 80 && vName.indexOf('В корзину') < 0 && vName.indexOf('Купить') < 0) {
+        skus.push({ source_order: skus.length + 1, source_sku_name: vName });
+      }
+    }
+    // 从JSON提取SKU
+    if (skus.length === 0 && stateData) {
+      try {
+        var jStr = JSON.stringify(stateData);
+        var skuMatch = jStr.match(/"skuList"\s*:\s*(\[.*?\])/);
+        if (!skuMatch) skuMatch = jStr.match(/"variants"\s*:\s*(\[.*?\])/);
+        if (!skuMatch) skuMatch = jStr.match(/"offers"\s*:\s*(\[.*?\])/);
+        if (!skuMatch) skuMatch = jStr.match(/"skuMap"\s*:\s*(\{.*?\})/);
+        if (skuMatch) {
+          var skuData = JSON.parse(skuMatch[1]);
+          for (var sk = 0; sk < skuData.length; sk++) {
+            skus.push({ source_order: sk + 1, source_sku_name: (skuData[sk].name || skuData[sk].skuName || skuData[sk].id || '') + '' });
+          }
+        }
+      } catch(e) {}
+    }
+
+    // ── 7. 规格/属性提取 ──
+    var specEls = document.querySelectorAll('[data-widget="webCharacteristics"] div, [class*="characteristics"] div, [class*="tsSpec"] div, [class*="specs"] div, [class*="props"] div, [data-widget="webProductInfo"] div');
+    var specSeen = {};
+    for (var sp = 0; sp < specEls.length && specs.length < 80; sp++) {
+      var text = specEls[sp].textContent.trim();
+      if (text.length < 3 || text.length > 300) continue;
+      var sep = text.indexOf(':') > 0 ? ':' : (text.indexOf('：') > 0 ? '：' : '');
+      if (sep <= 0) {
+        // 尝试dt/dd结构
+        var dt = specEls[sp].querySelector('dt, .tsSpecTitle, [class*="title"]');
+        var dd = specEls[sp].querySelector('dd, .tsSpecValue, [class*="value"]');
+        if (dt && dd) {
+          var n2 = dt.textContent.trim();
+          var v2 = dd.textContent.trim();
+          if (n2.length > 1 && !specSeen[n2]) { specSeen[n2] = true; specs.push({ name: n2, value: v2 }); }
+        }
+        continue;
+      }
+      var n = text.substring(0, sep).trim();
+      var v = text.substring(sep + 1).trim();
+      if (n.length > 1 && n.length < 60 && v.length > 0 && v.length < 300 && !specSeen[n]) {
+        specSeen[n] = true;
+        specs.push({ name: n, value: v });
+      }
+    }
+    // 从JSON提取属性
+    if (specs.length === 0 && stateData) {
+      try {
+        var j2 = JSON.stringify(stateData);
+        var charMatch = j2.match(/"characteristics"\s*:\s*(\[.*?\])/);
+        if (charMatch) {
+          var chars = JSON.parse(charMatch[1]);
+          for (var cc = 0; cc < chars.length; cc++) {
+            specs.push({ name: chars[cc].name || chars[cc].key || '', value: chars[cc].value || chars[cc].text || '' });
+          }
+        }
+      } catch(e) {}
+    }
+
+    // ── 8. 富文本描述采集 ──
+    var richDesc = '';
+    var descWidget = document.querySelector('[data-widget="webDescription"], [data-widget="webDetail"], [class*="description"], [class*="ra"]');
+    if (descWidget) richDesc = descWidget.innerHTML || descWidget.textContent || '';
+    if (!richDesc) {
+      var articleEl = document.querySelector('article, [class*="content"], [class*="text"]');
+      if (articleEl) richDesc = articleEl.innerHTML || articleEl.textContent || '';
+    }
+    if (richDesc && richDesc.length > desc.length) desc = richDesc.substring(0, 50000);
+
+    var productInfo = {title:title, category:category||desc.substring(0,100), shop_name:shop, description:desc};
+    var v4RichText = extractOzonRichText();
+    var v4Pricing = extractOzonPricing(stateObjects);
+    var v4Attrs = extractOzonAttributes(stateObjects);
+    var v4Videos = extractOzonVideos(stateObjects);
+    var v4Skus = extractOzonSkus(stateObjects, productInfo, v4Pricing);
+    return {
+      title: title, category: category || desc.substring(0, 100), description: v4RichText.plain_text || desc,
+      shop_name: shop, skus: v4Skus.length ? v4Skus : skus, images: images,
+      specs: v4Attrs, attribute_candidates: v4Attrs,
+      videos: v4Videos.length ? v4Videos : videos, video_candidates: v4Videos,
+      rich_text: v4RichText, pricing: v4Pricing, price_candidates: v4Pricing.price_candidates || [],
+      detail_missing: !v4RichText.plain_text && desc.length < 100
+    };
+  }
