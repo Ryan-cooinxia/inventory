@@ -3151,24 +3151,41 @@
     var allImgs = document.querySelectorAll('img[src*="ozon"], img[src*="ir-2.ozone.ru"], img[src*="cdn1.ozone.ru"], img[src*="woody"], img[src*="product"]');
     var processedUrls = {};
 
-    function isInBadArea(el) {
+    // 预计算：找到评论区/推荐区的Y坐标边界
+  var reviewBoundaryY = 999999;
+  var markers = ['Отзывы', 'Вопросы', 'Похожие товары', 'С этим товаром покупают', 'Рекомендуем', 'Смотрите также'];
+  var allH = document.querySelectorAll('h2,h3');
+  for (var hi = 0; hi < allH.length; hi++) {
+    var txt = (allH[hi].textContent || '').trim();
+    for (var mi = 0; mi < markers.length; mi++) {
+      if (txt.indexOf(markers[mi]) >= 0) {
+        var y = window.scrollY + allH[hi].getBoundingClientRect().top;
+        if (y < reviewBoundaryY) reviewBoundaryY = y;
+      }
+    }
+  }
+
+  function isInBadArea(el) {
     if (!el) return false;
-    // 检查祖先元素的 class/id/data-widget
+    // 位置检查：在评论区下方
+    if (reviewBoundaryY < 999999) {
+      var rect = el.getBoundingClientRect ? el.getBoundingClientRect() : {top:0};
+      var elY = window.scrollY + rect.top;
+      if (elY > reviewBoundaryY) return true;
+    }
+    // DOM祖先检查
     var node = el;
-    for (var depth = 0; depth < 8 && node; depth++) {
-      var cls = ((node.className && node.className.baseVal) || node.className || '').toString().toLowerCase();
+    for (var depth = 0; depth < 6 && node; depth++) {
+      var cls = (node.className || '').toString().toLowerCase();
       var id = (node.id || '').toLowerCase();
       var dw = (node.getAttribute && node.getAttribute('data-widget')) || '';
-      // 评论区
-      if (cls.indexOf('review') >= 0 || cls.indexOf('comment') >= 0 || cls.indexOf('feedback') >= 0) return true;
+      if (cls.indexOf('review') >= 0 || cls.indexOf('comment') >= 0) return true;
       if (id.indexOf('review') >= 0 || id.indexOf('comment') >= 0) return true;
       if (dw.indexOf('webReview') >= 0 || dw.indexOf('webComment') >= 0) return true;
-      // 推荐/相似商品
       if (cls.indexOf('recommend') >= 0 || cls.indexOf('similar') >= 0 || cls.indexOf('related') >= 0) return true;
-      if (dw.indexOf('webRecommend') >= 0 || dw.indexOf('webSimilar') >= 0 || dw.indexOf('webRelated') >= 0) return true;
-      if (cls.indexOf('carousel') >= 0 && dw.indexOf('webGallery') < 0) return true; // 推荐轮播，非主图轮播
-      // 导航/页脚/侧栏
-      if (cls.indexOf('nav') >= 0 || cls.indexOf('footer') >= 0 || cls.indexOf('sidebar') >= 0 || cls.indexOf('header') >= 0) return true;
+      if (dw.indexOf('webRecommend') >= 0 || dw.indexOf('webSimilar') >= 0) return true;
+      if (cls.indexOf('carousel') >= 0 && dw.indexOf('webGallery') < 0 && cls.indexOf('gallery') < 0) return true;
+      if (cls.indexOf('nav') >= 0 || cls.indexOf('footer') >= 0 || cls.indexOf('sidebar') >= 0) return true;
       node = node.parentElement;
     }
     return false;
@@ -3198,10 +3215,20 @@
     }
 
     // ── 5. 视频提取 ──
-    var videoEls = document.querySelectorAll('video, video source, [data-widget="webVideo"] video, [class*="video"] video, iframe[src*="youtube"], iframe[src*="vk.com"], iframe[src*="rutube"]');
+    var videoEls = document.querySelectorAll('video, video source, video[src], [data-widget="webVideo"] video, [class*="video"] video, [class*="player"] video, [class*="media"] video');
     for (var vi = 0; vi < videoEls.length; vi++) {
-      var vSrc = videoEls[vi].src || videoEls[vi].getAttribute('data-src') || '';
-      if (vSrc && vSrc.startsWith('http')) videos.push(vSrc);
+      var vSrc = videoEls[vi].src || videoEls[vi].getAttribute('data-src') || videoEls[vi].getAttribute('src') || videoEls[vi].currentSrc || '';
+      if (vSrc && vSrc.startsWith('http') && videos.indexOf(vSrc) < 0) videos.push(vSrc);
+      var sources = videoEls[vi].querySelectorAll('source');
+      for (var si = 0; si < sources.length; si++) {
+        var sSrc = sources[si].src || sources[si].getAttribute('data-src') || '';
+        if (sSrc && sSrc.startsWith('http') && videos.indexOf(sSrc) < 0) videos.push(sSrc);
+      }
+    }
+    var iframes = document.querySelectorAll('iframe[src*="youtube"], iframe[src*="vk.com"], iframe[src*="rutube"], iframe[src*="yandex"], iframe[src*="vkvideo"], iframe[src*="player"]');
+    for (var fi = 0; fi < iframes.length; fi++) {
+      var iSrc = iframes[fi].src || iframes[fi].getAttribute('data-src') || '';
+      if (iSrc && iSrc.startsWith('http') && videos.indexOf(iSrc) < 0) videos.push(iSrc);
     }
     // 查找JSON中的视频URL
     if (stateData) {
