@@ -494,6 +494,11 @@ def api_source_add():
     specs = data.get('specs', [])  # v2.1 新增
     pricing = data.get('pricing') or {}
     price_candidates = data.get('price_candidates') or []
+    rich_text = data.get('rich_text') or {}
+    attribute_candidates = data.get('attribute_candidates') or []
+    video_candidates = data.get('video_candidates') or data.get('videos') or []
+    rejected_images = data.get('rejected_images') or []
+    debug_data = data.get('debug') or {}
 
     # OZON 参考商品经常没有显式 SKU 按钮；如果插件已经识别到标题/参考售价，
     # 这里兜底创建 1 个默认规格，避免适配工作台出现“源 SKU(0)”断流。
@@ -516,13 +521,19 @@ def api_source_add():
             "category_cn": data.get('category', ''),
             "description_cn": data.get('description', ''),
             "shop_name": data.get('shop_name', ''),
+            "rich_text_html": rich_text.get('html', ''),
+            "rich_text_plain": rich_text.get('plain_text', ''),
         },
+        "rich_text": rich_text,
+        "source_attributes": attribute_candidates,
         "skus": skus,
         "media": [{"source_url": img.get("src", ""), "role": img.get("role", "sku")} for img in images],
-        "specs_json": specs,
-        "videos": data.get('videos', []),
+        "specs_json": specs or attribute_candidates,
+        "videos": video_candidates,
         "pricing": pricing,
         "price_candidates": price_candidates,
+        "rejected_images": rejected_images,
+        "debug": debug_data,
         "platform": platform,
         "source_url": source_url,
         "capture_url": capture_url,
@@ -599,7 +610,7 @@ def api_source_add():
         source_item_id=data.get('item_id', ''),
         title_cn=title,
         category_cn=data.get('category', ''),
-        description_cn=data.get('description', ''),
+        description_cn=(rich_text.get('plain_text') or data.get('description', ''))[:50000],
         shop_name=data.get('shop_name', ''),
         sku_count=len(skus),
         image_count=saved_img_count,
@@ -648,6 +659,24 @@ def api_source_add():
             review_status=review_val,
             raw_json=json.dumps(meta_json, ensure_ascii=False),
         )
+
+    # ── 视频入库 ──
+    for vi, v in enumerate(video_candidates):
+        if isinstance(v, str):
+            v_src = v
+        else:
+            v_src = v.get('src') or v.get('url') or ''
+        if v_src and v_src.startswith('http'):
+            OzonSourceMedia.create(
+                user=user, source=source,
+                media_id=f'video-{vi+1:03d}',
+                media_source='ozon_reference' if is_ozon_product else 'browser_extension',
+                role='video', source_url=v_src,
+                for_ozon=False, compliance_status='needs_review',
+                reject_reason='OZON参考视频，发布前需人工确认/替换',
+                review_status='pending',
+                raw_json=json.dumps({'video_url': v_src}, ensure_ascii=False),
+            )
 
     for i, sku_data in enumerate(skus):
         OzonSourceSku.create(
