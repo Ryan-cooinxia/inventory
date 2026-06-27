@@ -3190,7 +3190,7 @@
 
     // ── 6. SKU提取 ──
     // OZON变体选择器
-    var variantBtns = document.querySelectorAll('[data-widget="webVariant"] button, [class*="purchasing"] button, [class*="options"] button, [class*="variant"] button[class*="tsButton"]');
+    var variantBtns = document.querySelectorAll('[data-widget="webVariant"] button, [class*="purchasing"] button, [class*="options"] button, [class*="sku"] button, [class*="variant"] button, [role="button"]');
     for (var vk = 0; vk < variantBtns.length; vk++) {
       var vName = (variantBtns[vk].textContent || '').trim();
       if (vName && vName.length > 1 && vName.length < 80 && vName.indexOf('В корзину') < 0 && vName.indexOf('Купить') < 0) {
@@ -3202,6 +3202,9 @@
       try {
         var jStr = JSON.stringify(stateData);
         var skuMatch = jStr.match(/"skuList"\s*:\s*(\[.*?\])/);
+        if (!skuMatch) skuMatch = jStr.match(/"variants"\s*:\s*(\[.*?\])/);
+        if (!skuMatch) skuMatch = jStr.match(/"offers"\s*:\s*(\[.*?\])/);
+        if (!skuMatch) skuMatch = jStr.match(/"skuMap"\s*:\s*(\{.*?\})/);
         if (skuMatch) {
           var skuData = JSON.parse(skuMatch[1]);
           for (var sk = 0; sk < skuData.length; sk++) {
