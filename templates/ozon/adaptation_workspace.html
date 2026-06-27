@@ -297,28 +297,40 @@
         {% endif %}
 
         <!-- V4: 源商品富文本详情 -->
-        {% if rich_text and (rich_text.plain_text or rich_text.html) %}
         <div class="card mt-2">
-          <div class="card-header py-1 d-flex justify-content-between">
-            <strong style="font-size:12px">源商品富文本详情</strong>
-            <span class="badge bg-info" style="font-size:10px">{{ rich_text.image_count or 0 }} 图</span>
-          </div>
-          <div class="card-body p-0">
-            <ul class="nav nav-tabs px-1 pt-1" style="font-size:10px">
-              <li class="nav-item"><button class="nav-link active py-0 px-2" data-bs-toggle="tab" data-bs-target="#rich-plain">纯文本</button></li>
-              <li class="nav-item"><button class="nav-link py-0 px-2" data-bs-toggle="tab" data-bs-target="#rich-html">HTML</button></li>
-            </ul>
-            <div class="tab-content p-1">
-              <div class="tab-pane fade show active" id="rich-plain">
-                <textarea class="form-control form-control-sm" rows="6" readonly style="font-size:10px">{{ rich_text.plain_text[:5000] }}</textarea>
-              </div>
-              <div class="tab-pane fade" id="rich-html" style="max-height:200px;overflow:auto">
-                <pre class="small p-1" style="font-size:10px">{{ rich_text.html[:10000] }}</pre>
-              </div>
-            </div>
-          </div>
+  <div class="card-header py-1 d-flex justify-content-between align-items-center">
+    <strong style="font-size:12px">源商品富文本详情</strong>
+    <div>
+      {% if rich_text and (rich_text.plain_text or rich_text.html) %}
+        <span class="badge bg-success" style="font-size:10px">已采集</span>
+        {% if rich_text.image_count %}<span class="badge bg-info" style="font-size:10px">{{ rich_text.image_count }} 图</span>{% endif %}
+      {% elif rich_text %}<span class="badge bg-warning text-dark" style="font-size:10px">字段为空</span>
+      {% else %}<span class="badge bg-secondary" style="font-size:10px">未采集</span>{% endif %}
+    </div>
+  </div>
+  <div class="card-body p-0">
+    {% if rich_text and (rich_text.plain_text or rich_text.html) %}
+      <ul class="nav nav-tabs px-1 pt-1" style="font-size:10px">
+        <li class="nav-item"><button class="nav-link active py-0 px-2" data-bs-toggle="tab" data-bs-target="#rich-plain">纯文本</button></li>
+        <li class="nav-item"><button class="nav-link py-0 px-2" data-bs-toggle="tab" data-bs-target="#rich-html">HTML</button></li>
+      </ul>
+      <div class="tab-content p-1">
+        <div class="tab-pane fade show active" id="rich-plain">
+          <textarea class="form-control form-control-sm" rows="6" readonly style="font-size:10px">{{ (rich_text.plain_text or '')[:5000] }}</textarea>
         </div>
-        {% endif %}
+        <div class="tab-pane fade" id="rich-html" style="max-height:200px;overflow:auto">
+          <pre class="small p-1" style="font-size:10px">{{ (rich_text.html or '')[:10000] }}</pre>
+        </div>
+      </div>
+    {% else %}
+      <div class="p-2 text-muted" style="font-size:11px">
+        <div class="mb-1">暂未采集到富文本详情。</div>
+        <ul class="mb-2 ps-3"><li>插件未识别到描述区域</li><li>页面尚未加载完成</li><li>该商品本身无富文本</li></ul>
+        <div class="alert alert-warning py-1 px-2 mb-1" style="font-size:11px">建议：滚动到OZON商品描述区域后重新采集</div>
+      </div>
+    {% endif %}
+  </div>
+</div>
 
         <!-- V4: OZON价格信息 -->
         {% if pricing and pricing.reference_price_rub %}
