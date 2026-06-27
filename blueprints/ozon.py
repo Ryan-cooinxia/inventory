@@ -504,6 +504,7 @@ def api_source_add():
         "skus": skus,
         "media": [{"source_url": img.get("src", ""), "role": img.get("role", "sku")} for img in images],
         "specs_json": specs,
+        "videos": data.get('videos', []),
         "platform": platform,
         "source_url": source_url,
         "capture_url": capture_url,

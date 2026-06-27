@@ -292,6 +292,7 @@
       skus: data.skus || [],
       images: data.images || [],
       specs: data.specs || [],
+      videos: data.videos || [],
       detail_missing: data.detail_missing || false,
       quality_warnings: data.quality_warnings || [],
       collect_source: 'browser_extension_pc'
@@ -3074,58 +3075,194 @@
 })();
 
   function extractOzonProduct() {
-    var title = '';
-    var ogTitle = document.querySelector('meta[property="og:title"]');
-    if (ogTitle) title = ogTitle.getAttribute('content') || '';
-    if (!title) title = (document.querySelector('h1') || {}).textContent || '';
-    if (!title) title = document.title || '';
-
-    var desc = '';
-    var ogDesc = document.querySelector('meta[property="og:description"]');
-    if (ogDesc) desc = ogDesc.getAttribute('content') || '';
-    var metaDesc = document.querySelector('meta[name="description"]');
-    if (!desc && metaDesc) desc = metaDesc.getAttribute('content') || '';
-
-    var shop = '';
-    var sellerEl = document.querySelector('[data-widget="webCurrentSeller"], [class*="seller"], a[href*="seller"] span');
-    if (sellerEl) shop = sellerEl.textContent.trim();
-
-    var skus = [];
-    var variants = document.querySelectorAll('[class*="variant"], [class*="sku"], select option');
-    for (var i = 0; i < variants.length && i < 30; i++) {
-      var name = (variants[i].textContent || variants[i].getAttribute('title') || '').trim();
-      if (name && name.length > 1 && name.length < 100) {
-        skus.push({ source_order: i + 1, source_sku_name: name });
+    // ── 1. 尝试从页面JSON状态提取 ──
+    var stateData = null;
+    var scripts = document.querySelectorAll('script');
+    for (var si = 0; si < scripts.length; si++) {
+      var text = scripts[si].textContent || scripts[si].innerHTML || '';
+      if (text.indexOf('window.__INITIAL_STATE__') >= 0 || text.indexOf('window.__NUXT__') >= 0) {
+        try {
+          var match = text.match(/(?:window\.__INITIAL_STATE__|window\.__NUXT__)\s*=\s*(\{.*?\});?\s*\n/);
+          if (!match) match = text.match(/(?:window\.__INITIAL_STATE__|window\.__NUXT__)\s*=\s*(\{.*?\});?\s*$/);
+          if (!match) match = text.match(/=\s*(\{.*?"product".*?\});/);
+          if (match) stateData = JSON.parse(match[1]);
+        } catch(e) {}
+      }
+      if (!stateData && (text.indexOf('"@type":"Product"') >= 0 || text.indexOf('"product"') >= 0)) {
+        try {
+          if (scripts[si].type === 'application/ld+json' || scripts[si].type === 'application/json') {
+            stateData = JSON.parse(text);
+          }
+        } catch(e) {}
       }
     }
 
-    var images = [];
-    var picImgs = document.querySelectorAll('img[src*="ir-2.ozone.ru"], img[src*="cdn1.ozone.ru"], img[src*="ozon.ru"]');
-    if (picImgs.length === 0) picImgs = document.querySelectorAll('[data-widget="webGallery"] img, [data-widget="webPhoto"] img');
-    if (picImgs.length === 0) picImgs = document.querySelectorAll('img[src*="product"]');
-    for (var j = 0; j < picImgs.length && j < 30; j++) {
-      var src = picImgs[j].src || picImgs[j].getAttribute('data-src') || '';
-      if (src && src.startsWith('http') && src.indexOf('icon') < 0 && src.indexOf('logo') < 0) {
-        images.push({ role: j === 0 ? 'main' : 'detail', src: src });
-      }
-    }
+    var title = '', desc = '', shop = '', category = '';
+    var images = [], skus = [], specs = [], videos = [];
 
-    var specs = [];
-    var specEls = document.querySelectorAll('[data-widget="webCharacteristics"] div, [class*="characteristics"] div, [class*="props"] div');
-    for (var k = 0; k < specEls.length && k < 50; k++) {
-      var text = specEls[k].textContent.trim();
-      var sep = text.indexOf(':') > 0 ? ':' : (text.indexOf('：') > 0 ? '：' : '');
-      if (sep > 0) {
-        var n = text.substring(0, sep).trim();
-        var v = text.substring(sep + 1).trim();
-        if (n.length > 1 && n.length < 50 && v.length > 0 && v.length < 200) {
-          specs.push({ name: n, value: v });
+    // ── 2. 从JSON状态提取 ──
+    if (stateData) {
+      var pd = stateData.product || stateData.state || stateData;
+      // 递归查找product
+      function findProduct(obj, depth) {
+        if (!obj || depth > 5) return null;
+        if (obj.title || obj.name || obj.offerData) return obj;
+        for (var key in obj) {
+          if (key === 'product' || key === 'currentProduct' || key === 'skuInfo') {
+            var r = obj[key];
+            if (r && (r.title || r.name)) return r;
+          }
+          if (typeof obj[key] === 'object') {
+            var r2 = findProduct(obj[key], depth + 1);
+            if (r2) return r2;
+          }
         }
+        return null;
+      }
+      var prod = findProduct(stateData, 0) || stateData;
+      title = prod.title || prod.name || '';
+      desc = prod.description || prod.richDescription || '';
+      category = prod.category || prod.categoryName || '';
+      shop = prod.sellerName || prod.seller || '';
+    }
+
+    // ── 3. DOM兜底 ──
+    if (!title) {
+      var ogTitle = document.querySelector('meta[property="og:title"]');
+      if (ogTitle) title = ogTitle.getAttribute('content') || '';
+      if (!title) title = (document.querySelector('h1') || {}).textContent || '';
+      if (!title) title = document.title || '';
+    }
+    if (!desc) {
+      var ogDesc = document.querySelector('meta[property="og:description"]');
+      if (ogDesc) desc = ogDesc.getAttribute('content') || '';
+    }
+    if (!shop) {
+      var sellerEl = document.querySelector('[data-widget="webCurrentSeller"], [class*="seller"], a[href*="seller"] span');
+      if (sellerEl) shop = sellerEl.textContent.trim();
+    }
+
+    // ── 4. 图片提取（区分主图/SKU图/详情图） ──
+    var mainImgs = document.querySelectorAll('[data-widget="webGallery"] img, [class*="gallery"] img[src*="ozon"], [data-widget="webPhoto"] img');
+    // SKU变体图片
+    var skuImgs = document.querySelectorAll('[data-widget="webVariant"] img, [class*="variant"] img[src*="ozon"], [class*="sku"] img[src*="ozon"]');
+    // 详情富文本图片
+    var detailImgs = document.querySelectorAll('[data-widget="webDescription"] img, [class*="description"] img, [class*="ra"] img, article img, [data-widget="webDetail"] img, [class*="detail"] img');
+    var allImgs = document.querySelectorAll('img[src*="ozon"]');
+    var processedUrls = {};
+
+    function addImage(src, role) {
+      if (!src || !src.startsWith('http')) return;
+      // 去水印/缩略图处理：取最大尺寸
+      src = src.replace(/\/wc\d+(\/|$)/, '/wc1000/').replace(/\/\d+x\d+(\/|$)/, '/').replace(/\?.*$/, '');
+      var key = src.substring(0, 80);
+      if (processedUrls[key]) return;
+      processedUrls[key] = true;
+      if (src.indexOf('icon') >= 0 || src.indexOf('logo') >= 0 || src.indexOf('avatar') >= 0) return;
+      images.push({ role: role, src: src });
+    }
+
+    // 主图
+    for (var mi = 0; mi < mainImgs.length; mi++) { addImage(mainImgs[mi].src || mainImgs[mi].getAttribute('data-src'), 'main'); }
+    // SKU图
+    for (var si2 = 0; si2 < skuImgs.length; si2++) { addImage(skuImgs[si2].src || skuImgs[si2].getAttribute('data-src'), 'sku'); }
+    // 详情图
+    for (var di = 0; di < detailImgs.length; di++) { addImage(detailImgs[di].src || detailImgs[di].getAttribute('data-src'), 'detail'); }
+    // 兜底：从所有图片中补充未分类的
+    for (var ai = 0; ai < allImgs.length && images.length < 50; ai++) {
+      addImage(allImgs[ai].src || allImgs[ai].getAttribute('data-src'), 'detail');
+    }
+
+    // ── 5. 视频提取 ──
+    var videoEls = document.querySelectorAll('video, video source, [data-widget="webVideo"] video, [class*="video"] video, iframe[src*="youtube"], iframe[src*="vk.com"], iframe[src*="rutube"]');
+    for (var vi = 0; vi < videoEls.length; vi++) {
+      var vSrc = videoEls[vi].src || videoEls[vi].getAttribute('data-src') || '';
+      if (vSrc && vSrc.startsWith('http')) videos.push(vSrc);
+    }
+    // 查找JSON中的视频URL
+    if (stateData) {
+      try {
+        var jsonStr = JSON.stringify(stateData);
+        var vMatches = jsonStr.match(/https?:\/\/[^"'\s]*\.(mp4|webm|mov)[^"'\s]*/gi);
+        if (vMatches) { for (var vm = 0; vm < vMatches.length; vm++) { if (videos.indexOf(vMatches[vm]) < 0) videos.push(vMatches[vm]); } }
+      } catch(e) {}
+    }
+
+    // ── 6. SKU提取 ──
+    // OZON变体选择器
+    var variantBtns = document.querySelectorAll('[data-widget="webVariant"] button, [class*="purchasing"] button, [class*="options"] button, [class*="variant"] button[class*="tsButton"]');
+    for (var vk = 0; vk < variantBtns.length; vk++) {
+      var vName = (variantBtns[vk].textContent || '').trim();
+      if (vName && vName.length > 1 && vName.length < 80 && vName.indexOf('В корзину') < 0 && vName.indexOf('Купить') < 0) {
+        skus.push({ source_order: skus.length + 1, source_sku_name: vName });
       }
     }
+    // 从JSON提取SKU
+    if (skus.length === 0 && stateData) {
+      try {
+        var jStr = JSON.stringify(stateData);
+        var skuMatch = jStr.match(/"skuList"\s*:\s*(\[.*?\])/);
+        if (skuMatch) {
+          var skuData = JSON.parse(skuMatch[1]);
+          for (var sk = 0; sk < skuData.length; sk++) {
+            skus.push({ source_order: sk + 1, source_sku_name: (skuData[sk].name || skuData[sk].skuName || skuData[sk].id || '') + '' });
+          }
+        }
+      } catch(e) {}
+    }
+
+    // ── 7. 规格/属性提取 ──
+    var specEls = document.querySelectorAll('[data-widget="webCharacteristics"] div, [class*="characteristics"] div, [class*="tsSpec"] div, [class*="specs"] div, [class*="props"] div, [data-widget="webProductInfo"] div');
+    var specSeen = {};
+    for (var sp = 0; sp < specEls.length && specs.length < 80; sp++) {
+      var text = specEls[sp].textContent.trim();
+      if (text.length < 3 || text.length > 300) continue;
+      var sep = text.indexOf(':') > 0 ? ':' : (text.indexOf('：') > 0 ? '：' : '');
+      if (sep <= 0) {
+        // 尝试dt/dd结构
+        var dt = specEls[sp].querySelector('dt, .tsSpecTitle, [class*="title"]');
+        var dd = specEls[sp].querySelector('dd, .tsSpecValue, [class*="value"]');
+        if (dt && dd) {
+          var n2 = dt.textContent.trim();
+          var v2 = dd.textContent.trim();
+          if (n2.length > 1 && !specSeen[n2]) { specSeen[n2] = true; specs.push({ name: n2, value: v2 }); }
+        }
+        continue;
+      }
+      var n = text.substring(0, sep).trim();
+      var v = text.substring(sep + 1).trim();
+      if (n.length > 1 && n.length < 60 && v.length > 0 && v.length < 300 && !specSeen[n]) {
+        specSeen[n] = true;
+        specs.push({ name: n, value: v });
+      }
+    }
+    // 从JSON提取属性
+    if (specs.length === 0 && stateData) {
+      try {
+        var j2 = JSON.stringify(stateData);
+        var charMatch = j2.match(/"characteristics"\s*:\s*(\[.*?\])/);
+        if (charMatch) {
+          var chars = JSON.parse(charMatch[1]);
+          for (var cc = 0; cc < chars.length; cc++) {
+            specs.push({ name: chars[cc].name || chars[cc].key || '', value: chars[cc].value || chars[cc].text || '' });
+          }
+        }
+      } catch(e) {}
+    }
+
+    // ── 8. 富文本描述采集 ──
+    var richDesc = '';
+    var descWidget = document.querySelector('[data-widget="webDescription"], [data-widget="webDetail"], [class*="description"], [class*="ra"]');
+    if (descWidget) richDesc = descWidget.innerHTML || descWidget.textContent || '';
+    if (!richDesc) {
+      var articleEl = document.querySelector('article, [class*="content"], [class*="text"]');
+      if (articleEl) richDesc = articleEl.innerHTML || articleEl.textContent || '';
+    }
+    if (richDesc && richDesc.length > desc.length) desc = richDesc.substring(0, 50000);
 
     return {
-      title: title, category: desc.substring(0, 100), description: desc,
-      shop_name: shop, skus: skus, images: images, specs: specs, detail_missing: false
+      title: title, category: category || desc.substring(0, 100), description: desc,
+      shop_name: shop, skus: skus, images: images, specs: specs, videos: videos,
+      detail_missing: (desc.length < 100)
     };
   }
