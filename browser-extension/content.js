@@ -3185,7 +3185,6 @@ function extractOzonRichText() {
         }
       });
     }
-    return attrs.slice(0, 120);
   // dl/dt+dd pattern
     document.querySelectorAll('dl,[class*="props"],[class*="params"]').forEach(function(dl) {
       var dts=dl.querySelectorAll('dt,[class*="name"],[class*="label"]');
@@ -3197,6 +3196,7 @@ function extractOzonRichText() {
       var cells=tr.querySelectorAll('td,th');
       if (cells.length>=2) addAttr(cells[0].textContent.trim(),cells[1].textContent.trim(),'table');
     });
+    return attrs.slice(0, 120);
     
   }
 
