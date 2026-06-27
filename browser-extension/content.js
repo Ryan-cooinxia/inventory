@@ -3519,6 +3519,26 @@ function extractOzonRichText() {
     }
     if (richDesc && richDesc.length > desc.length) desc = richDesc.substring(0, 50000);
 
+    
+    // V5: 当前页面变体快照 (不采全部SKU)
+    var currentVariantSnapshot = {
+      title: title,
+      brand: '', shop_name: shop,
+      current_price: v4Pricing.reference_price_rub ? {currency:'RUB',value:v4Pricing.reference_price_rub,text:v4Pricing.reference_price_rub+' RUB',source:v4Pricing.source||'page',confidence:0.9,confirmed:false} : null,
+      selected_attributes: {},
+      main_image_url: images.length>0 && images[0].role==='main' ? images[0].src : '',
+      page_url: location.href,
+      collected_at: new Date().toISOString()
+    };
+    // Try to get selected variant text
+    var selectedVariant = document.querySelector('[class*="selected"],[aria-selected="true"],[class*="active"]');
+    if (selectedVariant) {
+      var vt = (selectedVariant.textContent||'').trim();
+      if (vt && vt.length>1 && vt.length<60) currentVariantSnapshot.selected_attributes['变体'] = vt;
+    }
+
+    var packageList = [];
+
     var productInfo = {title:title, category:category||desc.substring(0,100), shop_name:shop, description:desc};
     var v4RichText = extractOzonRichText();
     var v4Pricing = extractOzonPricing(stateObjects);
@@ -3531,6 +3551,8 @@ function extractOzonRichText() {
       specs: v4Attrs, attribute_candidates: v4Attrs,
       videos: v4Videos.length ? v4Videos : videos, video_candidates: v4Videos,
       rich_text: v4RichText, pricing: v4Pricing, price_candidates: v4Pricing.price_candidates || [],
-      detail_missing: !v4RichText.plain_text && desc.length < 100
+      detail_missing: !v4RichText.plain_text && desc.length < 100,
+      current_variant_snapshot: currentVariantSnapshot,
+      package_list: packageList
     };
   }
