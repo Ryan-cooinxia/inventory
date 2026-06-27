@@ -3007,10 +3007,10 @@
     floatingBtn.textContent = '...';
 
     var platform = detectPlatform();
-    if (platform === ' + chr(39) + 'ozon_product' + chr(39) + ') {
+    if (platform === 'ozon_product') {
       await fetchOzonSplitState();
-      chrome.runtime.sendMessage({action:'startDebugCapture'}, function(r){console.log('[OZON DEBUG] debug capture:',r&&r.ok?'started':r&&r.error);});
-      await new Promise(function(r){setTimeout(r,1500);});
+      chrome.runtime.sendMessage({action:'startDebugCapture'}, function(r){ console.log('[OZON] debug capture:', r&&r.ok?'started':(r&&r.error)); });
+      await new Promise(function(r){ setTimeout(r, 1500); });
     }
 
     // 自动滚动到底部，触发懒加载图片
@@ -3085,7 +3085,7 @@ var __ozonDebugCaptureData = null;
 chrome.runtime.onMessage.addListener(function(msg) {
   if (msg.action === 'debugCaptureResult' && msg.data) {
     __ozonDebugCaptureData = msg.data;
-    console.log('[OZON DEBUG] API intercepted:', msg.data.rich_text_plain ? msg.data.rich_text_plain.length : 0, 'chars of rich text');
+    console.log('[OZON] API intercepted rich text:', (msg.data.rich_text_plain||'').length, 'chars');
   }
 });
 
@@ -3682,20 +3682,19 @@ function sleep(ms) { return new Promise(function(r){setTimeout(r,ms);}); }
     var productInfo = {title:title, category:category||desc.substring(0,100), shop_name:shop, description:desc};
     var v4RichText = extractOzonRichText();
     // Supplement from SPLIT_STATE (MAIN world data)
+    // Merge from SPLIT_STATE or debug capture API
     var capData = window.__ozonDebugCaptureData || window.__ozonSplitStateData;
     if (capData && capData.rich_text_html && !v4RichText.plain_text) {
       v4RichText.html = capData.rich_text_html;
       v4RichText.plain_text = capData.rich_text_plain || '';
-      v4RichText.source = capData.video_url ? 'api_debug_capture' : 'split_state';
-      if (capData.attributes && capData.attributes.length && v4Attrs.length < 3) {
-        v4Attrs = v4Attrs.concat(capData.attributes.map(function(a){return {name:a.name||a.key||'',value:a.value||a.text||'',source:'api_capture'};}));
-      }
+      v4RichText.source = window.__ozonDebugCaptureData ? 'api_debug_capture' : 'split_state';
     }
-    /* OLD SPLIT_STATE check — replaced by unified capData above
-    if (window.__ozonSplitStateData && window.__ozonSplitStateData.rich_text_html && !v4RichText.plain_text) {
-      v4RichText.html = window.__ozonSplitStateData.rich_text_html;
-      v4RichText.plain_text = window.__ozonSplitStateData.rich_text_plain || '';
-      v4RichText.source = 'split_state';
+    // Merge attributes from capture
+    if (capData && capData.attributes && capData.attributes.length && v4Attrs.length < 5) {
+      for (var ai=0; ai<capData.attributes.length; ai++) {
+        var a = capData.attributes[ai];
+        v4Attrs.push({name:a.name||a.key||'', value:a.value||a.text||'', source:'api_capture'});
+      }
     }
     var v4Pricing = extractOzonPricing(stateObjects);
     var v4Attrs = extractOzonAttributes(stateObjects);
