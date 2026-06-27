@@ -3151,26 +3151,54 @@
     var allImgs = document.querySelectorAll('img[src*="ozon"]');
     var processedUrls = {};
 
-    function addImage(src, role) {
+    function addImage(src, role, el) {
       if (!src || !src.startsWith('http')) return;
-      // 去水印/缩略图处理：取最大尺寸
-      src = src.replace(/\/wc\d+(\/|$)/, '/wc1000/').replace(/\/\d+x\d+(\/|$)/, '/').replace(/\?.*$/, '');
-      var key = src.substring(0, 80);
+      if (src.indexOf('data:image') === 0) return;
+
+      // 优先从元素属性取原图URL
+      if (el) {
+        var fullSrc = el.getAttribute('data-full-size') || el.getAttribute('data-large') ||
+                      el.getAttribute('data-original') || el.getAttribute('data-full') || '';
+        if (fullSrc && fullSrc.startsWith('http') && fullSrc.length > src.length) src = fullSrc;
+      }
+
+      // 去水印/缩略图处理：OZON CDN URL规范化
+      src = src
+        .replace(/\/wc\d{1,4}(\/|$)/, '/wc1000/')     // wc50/200/500 → wc1000
+        .replace(/\/crop\/\d+x\d+(\/|$)/, '/')         // 裁剪缩略图
+        .replace(/\/resize\/\d+x\d+(\/|$)/, '/')       // 缩放缩略图
+        .replace(/\/\d{2,4}x\d{2,4}(\/|$)/, '/')      // 尺寸后缀(80x80, 200x200等)
+        .replace(/[?&](size|w|h|quality|q)=\d+/gi, '') // 查询参数
+        .replace(/[?&]ts=\d+/gi, '')                   // 时间戳
+        .replace(/\?$/, '')                            // 尾随问号
+        .replace(/\/$/, '');                           // 尾随斜杠
+
+      var key = src.substring(0, 100);
       if (processedUrls[key]) return;
       processedUrls[key] = true;
-      if (src.indexOf('icon') >= 0 || src.indexOf('logo') >= 0 || src.indexOf('avatar') >= 0) return;
+      if (src.indexOf('/icon') >= 0 || src.indexOf('/logo') >= 0 || src.indexOf('/avatar') >= 0 || src.length < 40) return;
       images.push({ role: role, src: src });
     }
 
     // 主图
-    for (var mi = 0; mi < mainImgs.length; mi++) { addImage(mainImgs[mi].src || mainImgs[mi].getAttribute('data-src'), 'main'); }
+    for (var mi = 0; mi < mainImgs.length; mi++) {
+      var el = mainImgs[mi];
+      addImage(el.src || el.getAttribute('data-src') || el.getAttribute('srcset'), 'main', el);
+    }
     // SKU图
-    for (var si2 = 0; si2 < skuImgs.length; si2++) { addImage(skuImgs[si2].src || skuImgs[si2].getAttribute('data-src'), 'sku'); }
+    for (var si2 = 0; si2 < skuImgs.length; si2++) {
+      var el2 = skuImgs[si2];
+      addImage(el2.src || el2.getAttribute('data-src') || el2.getAttribute('srcset'), 'sku', el2);
+    }
     // 详情图
-    for (var di = 0; di < detailImgs.length; di++) { addImage(detailImgs[di].src || detailImgs[di].getAttribute('data-src'), 'detail'); }
+    for (var di = 0; di < detailImgs.length; di++) {
+      var el3 = detailImgs[di];
+      addImage(el3.src || el3.getAttribute('data-src') || el3.getAttribute('srcset'), 'detail', el3);
+    }
     // 兜底：从所有图片中补充未分类的
     for (var ai = 0; ai < allImgs.length && images.length < 50; ai++) {
-      addImage(allImgs[ai].src || allImgs[ai].getAttribute('data-src'), 'detail');
+      var el4 = allImgs[ai];
+      addImage(el4.src || el4.getAttribute('data-src') || el4.getAttribute('srcset'), 'detail', el4);
     }
 
     // ── 5. 视频提取 ──
