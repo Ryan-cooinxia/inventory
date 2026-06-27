@@ -159,189 +159,8 @@
     </div>
   </div>
 
-  <!-- 中栏：商品事实库 -->
+  <!-- 右栏：OZON Listing 草稿 -->
   <div class="col-lg-5">
-    <div class="card">
-      <div class="card-header py-2 d-flex justify-content-between align-items-center">
-        <strong style="font-size:13px">📋 商品事实库</strong>
-        <div class="d-flex gap-1">
-          <button class="btn btn-sm btn-info" style="font-size:11px" onclick="return analyzeProductFacts(this)">🔍 分析商品资料</button>
-          <button class="btn btn-sm btn-outline-info" style="font-size:11px" id="btnAiSuggest" onclick="aiSuggest()">🤖 AI智能填充</button>
-          <button class="btn btn-sm btn-outline-secondary" style="font-size:11px" onclick="saveFact()">💾 保存</button>
-          <button class="btn btn-sm btn-outline-success" style="font-size:11px" onclick="approveFact()">✅ 审核通过</button>
-        </div>
-      </div>
-      <div class="card-body p-2" style="font-size:12px">
-        <div class="mb-2">
-          <label class="form-label mb-0" style="font-size:11px">标准商品名</label>
-          <input type="text" class="form-control form-control-sm" id="factNameCn" value="{{ fact.standard_name_cn or '' }}">
-        </div>
-        <div class="row g-1 mb-2">
-          <div class="col-6">
-            <label class="form-label mb-0" style="font-size:11px">商品类型</label>
-            <input type="text" class="form-control form-control-sm" id="factProductType" value="{{ fact.product_type or '' }}" placeholder="如：无线麦克风">
-          </div>
-          <div class="col-6">
-            <label class="form-label mb-0" style="font-size:11px">本地品类</label>
-            <input type="text" class="form-control form-control-sm" id="factCategoryHint" value="{{ fact.category_hint_cn or '' }}" placeholder="如：3C数码 > 音频">
-          </div>
-        </div>
-        <div class="row g-1 mb-2">
-          <div class="col-4">
-            <label class="form-label mb-0" style="font-size:11px">品牌</label>
-            <input type="text" class="form-control form-control-sm" id="factBrand" value="{{ fact.brand_name or '' }}">
-          </div>
-          <div class="col-4">
-            <label class="form-label mb-0" style="font-size:11px">型号</label>
-            <input type="text" class="form-control form-control-sm" id="factModel" value="{{ fact.model or '' }}">
-          </div>
-          <div class="col-4">
-            <label class="form-label mb-0" style="font-size:11px">材质</label>
-            <input type="text" class="form-control form-control-sm" id="factMaterial" value="{{ fact.material or '' }}">
-          </div>
-        </div>
-        <div class="row g-1 mb-2">
-          <div class="col-6">
-            <label class="form-label mb-0" style="font-size:11px">产地</label>
-            <input type="text" class="form-control form-control-sm" id="factOrigin" value="{{ fact.origin or '' }}">
-          </div>
-          <div class="col-6">
-            <label class="form-label mb-0" style="font-size:11px">保修</label>
-            <input type="text" class="form-control form-control-sm" id="factWarranty" value="{{ fact.warranty or '' }}">
-          </div>
-        </div>
-
-        <hr class="my-2">
-        <strong style="font-size:12px">SKU 事实确认</strong>
-        <div id="skuFacts">
-        {% for sku in fact_skus %}
-        <div class="card mb-1 {% if sku.manual_status == 'confirmed' %}border-success{% elif sku.confidence and sku.confidence < 0.7 %}border-warning{% endif %}">
-          <div class="card-body p-2" style="font-size:11px">
-            <div class="d-flex justify-content-between align-items-start">
-              <strong>SKU {{ sku.source_order }}: {{ sku.standard_sku_name_cn or sku.color_cn or '' }}</strong>
-              <div class="form-check form-switch" style="font-size:10px">
-                <input class="form-check-input sku-confirm" type="checkbox" data-sku-id="{{ sku.id }}" {% if sku.manual_status == 'confirmed' %}checked{% endif %} style="width:28px;height:14px">
-                <label class="form-check-label">已确认</label>
-              </div>
-            </div>
-            <div class="row g-1 mt-1">
-              <div class="col-4"><span class="text-muted">颜色:</span><input class="form-control form-control-sm sku-field" data-sku-id="{{ sku.id }}" data-field="color_cn" value="{{ sku.color_cn or '' }}" style="font-size:10px;height:24px"></div>
-              <div class="col-4"><span class="text-muted">尺寸:</span><input class="form-control form-control-sm sku-field" data-sku-id="{{ sku.id }}" data-field="size_cn" value="{{ sku.size_cn or '' }}" style="font-size:10px;height:24px"></div>
-              <div class="col-4"><span class="text-muted">款式:</span><input class="form-control form-control-sm sku-field" data-sku-id="{{ sku.id }}" data-field="style_cn" value="{{ sku.style_cn or '' }}" style="font-size:10px;height:24px"></div>
-            </div>
-            <div class="d-flex gap-2 mt-1">
-              <span class="text-muted">套装:<input class="form-control form-control-sm sku-field" data-sku-id="{{ sku.id }}" data-field="bundle_quantity" value="{{ sku.bundle_quantity }}" style="width:50px;font-size:10px;height:24px;display:inline"></span>
-              <span class="text-muted">采购价:<input class="form-control form-control-sm sku-field" data-sku-id="{{ sku.id }}" data-field="purchase_price_cny" value="{{ sku.purchase_price_cny or '' }}" style="width:80px;font-size:10px;height:24px;display:inline"> ¥</span>
-            </div>
-          </div>
-        </div>
-        {% endfor %}
-        </div>
-
-        <hr class="my-2">
-        {% if image_facts %}
-        <strong style="font-size:12px">🔍 视觉识别结果 ({{ image_facts|length }} 条)</strong>
-        <div id="imageFactsSection" style="max-height:200px;overflow-y:auto">
-        {% for imgf in image_facts %}
-        <div class="d-flex justify-content-between align-items-start bg-light rounded p-1 mb-1 fact-item-{{ imgf.id }}"
-             style="font-size:11px;border-left:3px solid {% if imgf.accepted %}#28a745{% else %}#0d6efd{% endif %}">
-          <div style="flex:1;min-width:0">
-            <div class="d-flex align-items-center gap-1">
-              <img src="{{ imgf.media.source_url }}" referrerpolicy="no-referrer" style="width:24px;height:24px;object-fit:cover;border-radius:2px" onerror="this.style.display='none'">
-              <code style="font-size:10px">{{ imgf.field_path }}</code>
-              <span class="badge {% if imgf.confidence >= 0.85 %}bg-success{% elif imgf.confidence >= 0.6 %}bg-warning text-dark{% else %}bg-danger{% endif %}" style="font-size:9px">{{ '{:.0%}'.format(imgf.confidence) }}</span>
-            </div>
-            <div class="text-truncate" style="max-width:300px"><strong>{{ imgf.value }}</strong></div>
-            <div class="text-muted" style="font-size:9px">{{ imgf.evidence_text or '' }}</div>
-          </div>
-          <div class="d-flex gap-1 ms-1 flex-shrink-0">
-            {% if imgf.accepted %}
-            <span class="badge bg-success" style="font-size:9px">✅ 已接受</span>
-            {% else %}
-            <button class="btn btn-sm btn-outline-success" style="font-size:9px;padding:1px 5px" onclick="acceptFact({{ imgf.id }}, this)" title="接受">✓</button>
-            <button class="btn btn-sm btn-outline-danger" style="font-size:9px;padding:1px 5px" onclick="rejectFact({{ imgf.id }}, this)" title="拒绝">✕</button>
-            {% endif %}
-          </div>
-        </div>
-        {% endfor %}
-        </div>
-        <hr class="my-2">
-        {% endif %}
-        <div class="text-muted mb-1" style="font-size:11px">⚠️ 未知字段 / 待确认</div>
-        <textarea class="form-control form-control-sm" id="factUnknown" rows="2" style="font-size:11px" placeholder="JSON: [&quot;material&quot;, &quot;weight&quot;, &quot;battery_capacity&quot;]">{{ fact.unknown_fields_json or '' }}</textarea>
-      </div>
-    </div>
-  </div>
-
-  
-
-
-        <!-- V4: 源产品属性字典 -->
-        {% if source_attributes %}
-        <div class="card mt-2">
-          <div class="card-header py-1 d-flex justify-content-between">
-            <strong style="font-size:12px">源产品属性字典</strong>
-            <span class="badge bg-secondary" style="font-size:10px">{{ source_attributes|length }} 条</span>
-          </div>
-          <div class="card-body p-1" style="max-height:200px;overflow-y:auto;font-size:11px">
-            <table class="table table-sm mb-0" style="font-size:10px">
-              <thead><tr><th>属性</th><th>值</th><th>来源</th></tr></thead>
-              <tbody>
-              {% for a in source_attributes[:50] %}
-                <tr><td>{{ a.get('name','') }}</td><td>{{ a.get('value','') }}</td><td class="text-muted">{{ a.get('source','') }}</td></tr>
-              {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        </div>
-        {% endif %}
-
-        <!-- V4: 源商品富文本详情 -->
-        <div class="card mt-2">
-  <div class="card-header py-1 d-flex justify-content-between align-items-center">
-    <strong style="font-size:12px">源商品富文本详情</strong>
-    <div>
-      {% if rich_text and (rich_text.plain_text or rich_text.html) %}
-        <span class="badge bg-success" style="font-size:10px">已采集</span>
-        {% if rich_text.image_count %}<span class="badge bg-info" style="font-size:10px">{{ rich_text.image_count }} 图</span>{% endif %}
-      {% elif rich_text %}<span class="badge bg-warning text-dark" style="font-size:10px">字段为空</span>
-      {% else %}<span class="badge bg-secondary" style="font-size:10px">未采集</span>{% endif %}
-    </div>
-  </div>
-  <div class="card-body p-0">
-    {% if rich_text and (rich_text.plain_text or rich_text.html) %}
-      <ul class="nav nav-tabs px-1 pt-1" style="font-size:10px">
-        <li class="nav-item"><button class="nav-link active py-0 px-2" data-bs-toggle="tab" data-bs-target="#rich-plain">纯文本</button></li>
-        <li class="nav-item"><button class="nav-link py-0 px-2" data-bs-toggle="tab" data-bs-target="#rich-html">HTML</button></li>
-      </ul>
-      <div class="tab-content p-1">
-        <div class="tab-pane fade show active" id="rich-plain">
-          <textarea class="form-control form-control-sm" rows="6" readonly style="font-size:10px">{{ (rich_text.plain_text or '')[:5000] }}</textarea>
-        </div>
-        <div class="tab-pane fade" id="rich-html" style="max-height:200px;overflow:auto">
-          <pre class="small p-1" style="font-size:10px">{{ (rich_text.html or '')[:10000] }}</pre>
-        </div>
-      </div>
-    {% else %}
-      <div class="p-2 text-muted" style="font-size:11px">
-        <div class="mb-1">暂未采集到富文本详情。</div>
-        <ul class="mb-2 ps-3"><li>插件未识别到描述区域</li><li>页面尚未加载完成</li><li>该商品本身无富文本</li></ul>
-        <div class="alert alert-warning py-1 px-2 mb-1" style="font-size:11px">建议：滚动到OZON商品描述区域后重新采集</div>
-      </div>
-    {% endif %}
-  </div>
-</div>
-
-        <!-- V4: OZON价格信息 -->
-        {% if pricing and pricing.reference_price_rub %}
-        <div class="alert alert-info py-1 px-2 mt-1" style="font-size:11px">
-          <strong>OZON参考售价: {{ pricing.reference_price_rub }} RUB</strong>
-          <span class="text-muted">| 来源: {{ pricing.source or '页面' }} | 待确认</span>
-        </div>
-        {% endif %}
-
-<!-- 右栏：OZON Listing 草稿 -->
-  <div class="col-lg-4">
     <div class="card h-100">
       <div class="card-header py-2 d-flex justify-content-between align-items-center">
         <strong style="font-size:13px">🎯 OZON Listing 草稿</strong>
@@ -921,4 +740,185 @@ function submitManualUpload() {
 }
 
 </script>
+<!-- 中栏：商品事实库 -->
+  <div class="col-lg-4">
+    <div class="card">
+      <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <strong style="font-size:13px">📋 商品事实库</strong>
+        <div class="d-flex gap-1">
+          <button class="btn btn-sm btn-info" style="font-size:11px" onclick="return analyzeProductFacts(this)">🔍 分析商品资料</button>
+          <button class="btn btn-sm btn-outline-info" style="font-size:11px" id="btnAiSuggest" onclick="aiSuggest()">🤖 AI智能填充</button>
+          <button class="btn btn-sm btn-outline-secondary" style="font-size:11px" onclick="saveFact()">💾 保存</button>
+          <button class="btn btn-sm btn-outline-success" style="font-size:11px" onclick="approveFact()">✅ 审核通过</button>
+        </div>
+      </div>
+      <div class="card-body p-2" style="font-size:12px">
+        <div class="mb-2">
+          <label class="form-label mb-0" style="font-size:11px">标准商品名</label>
+          <input type="text" class="form-control form-control-sm" id="factNameCn" value="{{ fact.standard_name_cn or '' }}">
+        </div>
+        <div class="row g-1 mb-2">
+          <div class="col-6">
+            <label class="form-label mb-0" style="font-size:11px">商品类型</label>
+            <input type="text" class="form-control form-control-sm" id="factProductType" value="{{ fact.product_type or '' }}" placeholder="如：无线麦克风">
+          </div>
+          <div class="col-6">
+            <label class="form-label mb-0" style="font-size:11px">本地品类</label>
+            <input type="text" class="form-control form-control-sm" id="factCategoryHint" value="{{ fact.category_hint_cn or '' }}" placeholder="如：3C数码 > 音频">
+          </div>
+        </div>
+        <div class="row g-1 mb-2">
+          <div class="col-4">
+            <label class="form-label mb-0" style="font-size:11px">品牌</label>
+            <input type="text" class="form-control form-control-sm" id="factBrand" value="{{ fact.brand_name or '' }}">
+          </div>
+          <div class="col-4">
+            <label class="form-label mb-0" style="font-size:11px">型号</label>
+            <input type="text" class="form-control form-control-sm" id="factModel" value="{{ fact.model or '' }}">
+          </div>
+          <div class="col-4">
+            <label class="form-label mb-0" style="font-size:11px">材质</label>
+            <input type="text" class="form-control form-control-sm" id="factMaterial" value="{{ fact.material or '' }}">
+          </div>
+        </div>
+        <div class="row g-1 mb-2">
+          <div class="col-6">
+            <label class="form-label mb-0" style="font-size:11px">产地</label>
+            <input type="text" class="form-control form-control-sm" id="factOrigin" value="{{ fact.origin or '' }}">
+          </div>
+          <div class="col-6">
+            <label class="form-label mb-0" style="font-size:11px">保修</label>
+            <input type="text" class="form-control form-control-sm" id="factWarranty" value="{{ fact.warranty or '' }}">
+          </div>
+        </div>
+
+        <hr class="my-2">
+        <strong style="font-size:12px">SKU 事实确认</strong>
+        <div id="skuFacts">
+        {% for sku in fact_skus %}
+        <div class="card mb-1 {% if sku.manual_status == 'confirmed' %}border-success{% elif sku.confidence and sku.confidence < 0.7 %}border-warning{% endif %}">
+          <div class="card-body p-2" style="font-size:11px">
+            <div class="d-flex justify-content-between align-items-start">
+              <strong>SKU {{ sku.source_order }}: {{ sku.standard_sku_name_cn or sku.color_cn or '' }}</strong>
+              <div class="form-check form-switch" style="font-size:10px">
+                <input class="form-check-input sku-confirm" type="checkbox" data-sku-id="{{ sku.id }}" {% if sku.manual_status == 'confirmed' %}checked{% endif %} style="width:28px;height:14px">
+                <label class="form-check-label">已确认</label>
+              </div>
+            </div>
+            <div class="row g-1 mt-1">
+              <div class="col-4"><span class="text-muted">颜色:</span><input class="form-control form-control-sm sku-field" data-sku-id="{{ sku.id }}" data-field="color_cn" value="{{ sku.color_cn or '' }}" style="font-size:10px;height:24px"></div>
+              <div class="col-4"><span class="text-muted">尺寸:</span><input class="form-control form-control-sm sku-field" data-sku-id="{{ sku.id }}" data-field="size_cn" value="{{ sku.size_cn or '' }}" style="font-size:10px;height:24px"></div>
+              <div class="col-4"><span class="text-muted">款式:</span><input class="form-control form-control-sm sku-field" data-sku-id="{{ sku.id }}" data-field="style_cn" value="{{ sku.style_cn or '' }}" style="font-size:10px;height:24px"></div>
+            </div>
+            <div class="d-flex gap-2 mt-1">
+              <span class="text-muted">套装:<input class="form-control form-control-sm sku-field" data-sku-id="{{ sku.id }}" data-field="bundle_quantity" value="{{ sku.bundle_quantity }}" style="width:50px;font-size:10px;height:24px;display:inline"></span>
+              <span class="text-muted">采购价:<input class="form-control form-control-sm sku-field" data-sku-id="{{ sku.id }}" data-field="purchase_price_cny" value="{{ sku.purchase_price_cny or '' }}" style="width:80px;font-size:10px;height:24px;display:inline"> ¥</span>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+        </div>
+
+        <hr class="my-2">
+        {% if image_facts %}
+        <strong style="font-size:12px">🔍 视觉识别结果 ({{ image_facts|length }} 条)</strong>
+        <div id="imageFactsSection" style="max-height:200px;overflow-y:auto">
+        {% for imgf in image_facts %}
+        <div class="d-flex justify-content-between align-items-start bg-light rounded p-1 mb-1 fact-item-{{ imgf.id }}"
+             style="font-size:11px;border-left:3px solid {% if imgf.accepted %}#28a745{% else %}#0d6efd{% endif %}">
+          <div style="flex:1;min-width:0">
+            <div class="d-flex align-items-center gap-1">
+              <img src="{{ imgf.media.source_url }}" referrerpolicy="no-referrer" style="width:24px;height:24px;object-fit:cover;border-radius:2px" onerror="this.style.display='none'">
+              <code style="font-size:10px">{{ imgf.field_path }}</code>
+              <span class="badge {% if imgf.confidence >= 0.85 %}bg-success{% elif imgf.confidence >= 0.6 %}bg-warning text-dark{% else %}bg-danger{% endif %}" style="font-size:9px">{{ '{:.0%}'.format(imgf.confidence) }}</span>
+            </div>
+            <div class="text-truncate" style="max-width:300px"><strong>{{ imgf.value }}</strong></div>
+            <div class="text-muted" style="font-size:9px">{{ imgf.evidence_text or '' }}</div>
+          </div>
+          <div class="d-flex gap-1 ms-1 flex-shrink-0">
+            {% if imgf.accepted %}
+            <span class="badge bg-success" style="font-size:9px">✅ 已接受</span>
+            {% else %}
+            <button class="btn btn-sm btn-outline-success" style="font-size:9px;padding:1px 5px" onclick="acceptFact({{ imgf.id }}, this)" title="接受">✓</button>
+            <button class="btn btn-sm btn-outline-danger" style="font-size:9px;padding:1px 5px" onclick="rejectFact({{ imgf.id }}, this)" title="拒绝">✕</button>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+        </div>
+        <hr class="my-2">
+        {% endif %}
+        <div class="text-muted mb-1" style="font-size:11px">⚠️ 未知字段 / 待确认</div>
+        <textarea class="form-control form-control-sm" id="factUnknown" rows="2" style="font-size:11px" placeholder="JSON: [&quot;material&quot;, &quot;weight&quot;, &quot;battery_capacity&quot;]">{{ fact.unknown_fields_json or '' }}</textarea>
+      </div>
+    </div>
+  </div>
+
+  
+
+
+        <!-- V4: 源产品属性字典 -->
+        {% if source_attributes %}
+        <div class="card mt-2">
+          <div class="card-header py-1 d-flex justify-content-between">
+            <strong style="font-size:12px">源产品属性字典</strong>
+            <span class="badge bg-secondary" style="font-size:10px">{{ source_attributes|length }} 条</span>
+          </div>
+          <div class="card-body p-1" style="max-height:200px;overflow-y:auto;font-size:11px">
+            <table class="table table-sm mb-0" style="font-size:10px">
+              <thead><tr><th>属性</th><th>值</th><th>来源</th></tr></thead>
+              <tbody>
+              {% for a in source_attributes[:50] %}
+                <tr><td>{{ a.get('name','') }}</td><td>{{ a.get('value','') }}</td><td class="text-muted">{{ a.get('source','') }}</td></tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {% endif %}
+
+        <!-- V4: 源商品富文本详情 -->
+        <div class="card mt-2">
+  <div class="card-header py-1 d-flex justify-content-between align-items-center">
+    <strong style="font-size:12px">源商品富文本详情</strong>
+    <div>
+      {% if rich_text and (rich_text.plain_text or rich_text.html) %}
+        <span class="badge bg-success" style="font-size:10px">已采集</span>
+        {% if rich_text.image_count %}<span class="badge bg-info" style="font-size:10px">{{ rich_text.image_count }} 图</span>{% endif %}
+      {% elif rich_text %}<span class="badge bg-warning text-dark" style="font-size:10px">字段为空</span>
+      {% else %}<span class="badge bg-secondary" style="font-size:10px">未采集</span>{% endif %}
+    </div>
+  </div>
+  <div class="card-body p-0">
+    {% if rich_text and (rich_text.plain_text or rich_text.html) %}
+      <ul class="nav nav-tabs px-1 pt-1" style="font-size:10px">
+        <li class="nav-item"><button class="nav-link active py-0 px-2" data-bs-toggle="tab" data-bs-target="#rich-plain">纯文本</button></li>
+        <li class="nav-item"><button class="nav-link py-0 px-2" data-bs-toggle="tab" data-bs-target="#rich-html">HTML</button></li>
+      </ul>
+      <div class="tab-content p-1">
+        <div class="tab-pane fade show active" id="rich-plain">
+          <textarea class="form-control form-control-sm" rows="6" readonly style="font-size:10px">{{ (rich_text.plain_text or '')[:5000] }}</textarea>
+        </div>
+        <div class="tab-pane fade" id="rich-html" style="max-height:200px;overflow:auto">
+          <pre class="small p-1" style="font-size:10px">{{ (rich_text.html or '')[:10000] }}</pre>
+        </div>
+      </div>
+    {% else %}
+      <div class="p-2 text-muted" style="font-size:11px">
+        <div class="mb-1">暂未采集到富文本详情。</div>
+        <ul class="mb-2 ps-3"><li>插件未识别到描述区域</li><li>页面尚未加载完成</li><li>该商品本身无富文本</li></ul>
+        <div class="alert alert-warning py-1 px-2 mb-1" style="font-size:11px">建议：滚动到OZON商品描述区域后重新采集</div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+        <!-- V4: OZON价格信息 -->
+        {% if pricing and pricing.reference_price_rub %}
+        <div class="alert alert-info py-1 px-2 mt-1" style="font-size:11px">
+          <strong>OZON参考售价: {{ pricing.reference_price_rub }} RUB</strong>
+          <span class="text-muted">| 来源: {{ pricing.source or '页面' }} | 待确认</span>
+        </div>
+        {% endif %}
+
 {% endblock %}
