@@ -44,7 +44,7 @@
     <div class="tab-content">
       <!-- OZON 链接采集 -->
       <div class="tab-pane fade" id="tab-ozon">
-        <form method="POST" action="{{ url_for(ozon.source_collect_ozon_url) }}" onsubmit="return showLoading(this)">
+        <form method="POST" action="{{ url_for('ozon.source_collect_ozon_url') }}" onsubmit="return showLoading(this)">
           <div class="mb-2">
             <label class="form-label fw-bold">OZON 商品链接</label>
             <input type="url" name="url" class="form-control" placeholder="https://www.ozon.ru/product/... 或 https://ozon.by/product/..." required>
