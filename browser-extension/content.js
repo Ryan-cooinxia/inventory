@@ -3144,22 +3144,15 @@
   }
 
 function extractOzonRichText() {
-    var best = null, bestScore = 0;
-    document.querySelectorAll('[data-widget*="webDescription"],[data-widget*="rich"],[class*="description"],[class*="rich"],[class*="content"],article').forEach(function(root) {
-      if (typeof isInBadArea === 'function' && isInBadArea(root)) return;
-      var text = (root.innerText||root.textContent||'').trim();
-      var imgs = root.querySelectorAll('img').length;
-      var score = text.length + imgs * 300;
-      if (/\u043e\u043f\u0438\u0441\u0430\u043d\u0438\u0435|\u0445\u0430\u0440\u0430\u043a\u0442\u0435\u0440\u0438\u0441\u0442\u0438\u043a|description/i.test(text)) score += 500;
-      if (score > bestScore) { bestScore = score; best = root; }
-    });
-    if (!best) return {html:'',plain_text:'',source_selector:'',image_count:0};
-    var clone = best.cloneNode(true);
-    clone.querySelectorAll('script,style,svg,button,nav,footer,header').forEach(function(x){x.remove();});
-    return { html: clone.innerHTML.slice(0,200000), plain_text: (clone.innerText||clone.textContent||'').trim().slice(0,50000), source_selector: '', image_count: clone.querySelectorAll('img').length, captured_at: new Date().toISOString() };
+    if (window.__ozonCollectedRichText && window.__ozonCollectedRichText.plain_text && window.__ozonCollectedRichText.plain_text.length > 50) {
+      return window.__ozonCollectedRichText;
+    }
+    var fallback = extractOzonRichTextAtViewport();
+    if (fallback.plain_text && fallback.plain_text.length > 50) return fallback;
+    return {plain_text:'',html:'',image_count:0,source:'',captured_at:new Date().toISOString(),debug:{reason:'rich_text_not_loaded_or_image_only',hint:'详情文字可能在图片中，需后续OCR'}};
   }
 
-  function extractOzonAttributes(stateData) {
+function extractOzonAttributes(stateData) {
     var attrs = [], seen = {};
     function addAttr(name, value, source) {
       name = (name||'').trim(); value = (value||'').trim();
@@ -3226,6 +3219,8 @@ function extractOzonRichText() {
 
 
   async function preloadOzonDetailSections() {
+    window.__ozonCollectedRichText = null;
+    window.__ozonCollectedVideos = null;
     var startY = window.scrollY;
     try {
       var btns = Array.from(document.querySelectorAll('button,a,div[role="button"],span'));
@@ -3233,16 +3228,53 @@ function extractOzonRichText() {
         var t = (el.innerText||el.textContent||'').trim();
         return /Перейти к описанию|Описание|Характеристики|О товаре/i.test(t) && t.length < 50;
       });
-      if (descBtn && descBtn.click) { descBtn.click(); await sleep(300); await sleep(1200); }
-      var maxY = Math.min(document.body.scrollHeight, startY + 6000);
-      for (var y = window.scrollY; y < maxY; y += 700) {
-        window.scrollTo(0, y); await sleep(400);
-        if (findOzonTextAnchor(['Описание','Характеристики','О товаре'])) { await sleep(800); break; }
+      if (descBtn && descBtn.click) { descBtn.click(); await sleep(300); await sleep(1500); }
+      var maxY = Math.min(document.body.scrollHeight, startY + 9000);
+      for (var y = window.scrollY; y < maxY; y += 600) {
+        window.scrollTo(0, y); await sleep(500);
+        var rich = extractOzonRichTextAtViewport();
+        if (rich && rich.plain_text && rich.plain_text.length > 100) {
+          window.__ozonCollectedRichText = rich;
+          break;
+        }
       }
     } catch(e) { console.warn('[OZON] preload failed',e); }
     finally { window.scrollTo(0, startY); await sleep(200); }
   }
-  function sleep(ms) { return new Promise(function(r){setTimeout(r,ms);}); }
+  function extractOzonRichTextAtViewport() {
+    var result = {plain_text:'',html:'',image_urls:[],image_count:0,source:'viewport',captured_at:new Date().toISOString(),debug:{}};
+    var best=null,bestScore=0;
+    Array.from(document.querySelectorAll('section,article,div')).forEach(function(el){
+      if (typeof isInBadArea==='function'&&isInBadArea(el)) return;
+      var rect=el.getBoundingClientRect?el.getBoundingClientRect():{};
+      if (rect.top>window.innerHeight*2||rect.bottom<0) return;
+      var t=(el.innerText||el.textContent||'').trim();
+      if (!t||t.length<100||t.length>20000) return;
+      var score=t.length;
+      if (/Описание|Профессиональный|звук|режим|шумоподав|передача|заряд|Характеристики/i.test(t.slice(0,500))) score+=1000;
+      if (/Отзывы|Фото и видео покупателей|Вопросы|Похожие|Рекомендуем/i.test(t.slice(0,500))) score-=3000;
+      if (score>bestScore){bestScore=score;best=el;}
+    });
+    if (!best){result.debug={reason:'no_visible_text_block'};return result;}
+    var clone=best.cloneNode(true);
+    clone.querySelectorAll('script,style,button,nav,header,footer,svg').forEach(function(x){x.remove();});
+    Array.from(clone.querySelectorAll('*')).forEach(function(el){
+      var t=(el.innerText||el.textContent||'').slice(0,200);
+      if (/Отзывы|Фото и видео покупателей|Вопросы|Похожие|Рекомендуем|Магазин/i.test(t)) el.remove();
+    });
+    var text=(clone.innerText||clone.textContent||'').trim();
+    result.plain_text=text.slice(0,50000);
+    result.html=clone.innerHTML.slice(0,200000);
+    result.image_urls=Array.from(clone.querySelectorAll('img')).map(function(img){return img.src||img.getAttribute('data-src')||'';}).filter(Boolean);
+    result.image_count=result.image_urls.length;
+    result.debug={reason:'viewport_captured',text_len:text.length};
+    return result;
+  }
+  function isElementVisible(el) {
+    var r=el.getBoundingClientRect?el.getBoundingClientRect():{};
+    return r.top<window.innerHeight*2&&r.bottom>0&&r.width>0&&r.height>0;
+  }
+function sleep(ms) { return new Promise(function(r){setTimeout(r,ms);}); }
   function findOzonTextAnchor(words) {
     return Array.from(document.querySelectorAll('h1,h2,h3,h4,div,span,p')).find(function(el) {
       var t = (el.innerText||el.textContent||'').trim();
