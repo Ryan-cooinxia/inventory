@@ -29,6 +29,579 @@
     injectFloatingButton(platform);
   }
 
+// OZON product extractor v2.3
+// Purpose: collect only product-owned evidence (main gallery / SKU area / detail content),
+// and avoid reviews, recommendations, seller widgets, platform icons and finance banners.
+
+  function isBlockedNode(el) {
+    if (!el || !el.tagName) return true;
+    var tag = el.tagName.toLowerCase();
+    if (tag === 'script' || tag === 'style' || tag === 'noscript') return true;
+    var cls = (el.className || '').toString().toLowerCase();
+    var blocked = ['review', 'comment', 'feedback', 'recommend', 'similar', 'related', 'banner', 'advertisement', 'footer', 'header', 'nav-menu', 'sidebar', 'popup', 'modal', 'cookie', 'chat', 'support', 'help-widget'];
+    for (var b = 0; b < blocked.length; b++) { if (cls.indexOf(blocked[b]) >= 0) return true; }
+    var id = (el.id || '').toLowerCase();
+    if (id.indexOf('review') >= 0 || id.indexOf('comment') >= 0 || id.indexOf('footer') >= 0) return true;
+    return false;
+  }
+
+  function looksLikeProductImage(el, src) {
+    if (!src) return false;
+    var u = src.toLowerCase();
+    if (/avatar|icon(?![^\/]*product)|logo|sprite|bank|payment|seller|shop(?!\/product)|static\/|favicon|qr|barcode|placeholder|loader|preview-small/.test(u)) return false;
+    var rect = el.getBoundingClientRect ? el.getBoundingClientRect() : {width:0,height:0};
+    var w = rect.width || el.naturalWidth || 0;
+    var h = rect.height || el.naturalHeight || 0;
+    if (w < 120 || h < 120) return false;
+    if (isBlockedNode(el)) return false;
+    return true;
+  }
+
+  function inferAreaByGeometry(el) {
+    var rect = el.getBoundingClientRect ? el.getBoundingClientRect() : {top:0};
+    var y = window.scrollY + rect.top;
+    var vh = window.innerHeight || 800;
+    if (y < vh * 1.3 && rect.width > 180 && rect.height > 180) return 'main_gallery';
+    if (rect.width > 180 && rect.height > 180) return 'detail_content';
+    return 'unknown';
+  }
+
+  function isAfterReviewOrRecommendation(el) {
+    var rect = el.getBoundingClientRect ? el.getBoundingClientRect() : {top:0};
+    var y = window.scrollY + rect.top;
+    var markers = ['Отзывы', 'Вопросы', 'Похожие товары', 'С этим товаром покупают', 'Рекомендуем', 'Смотрите также'];
+    for (var mi = 0; mi < markers.length; mi++) {
+      var els = document.querySelectorAll('h2,h3,div,span');
+      for (var ei = 0; ei < els.length; ei++) {
+        var text = (els[ei].innerText || els[ei].textContent || '');
+        if (text.indexOf(markers[mi]) >= 0) {
+          var my = window.scrollY + els[ei].getBoundingClientRect().top;
+          if (my > 0 && y > my) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function collectBackgroundImages(root, images, processedUrls, role, limit) {
+    var nodes = root.querySelectorAll ? root.querySelectorAll('*') : [];
+    for (var ni = 0; ni < nodes.length && (!limit || images.length < limit); ni++) {
+      if (isBlockedNode(nodes[ni])) continue;
+      var bg = getComputedStyle(nodes[ni]).backgroundImage || '';
+      var m = bg.match(/url\(["']?(https?:\/\/[^"')]+)["']?\)/);
+      if (!m) continue;
+      var src = m[1];
+      if (!looksLikeProductImage(nodes[ni], src)) continue;
+      if (isAfterReviewOrRecommendation(nodes[ni])) continue;
+      var key = src.substring(0, 100);
+      if (processedUrls[key]) continue;
+      processedUrls[key] = true;
+      // Normalize
+      src = src.replace(/\/wc\d{1,4}(\/|$)/, '/wc1000/').replace(/\/crop\/\d+x\d+(\/|$)/, '/').replace(/[?&](size|w|h|quality|q)=\d+/gi, '').replace(/[?&]ts=\d+/gi, '').replace(/\?$/, '');
+      images.push({ role: role, src: src });
+    }
+  }
+
+  function collectVisibleProductImagesFallback(images, processedUrls) {
+    var all = document.querySelectorAll('img, source');
+    for (var ai = 0; ai < all.length && images.length < 60; ai++) {
+      if (isBlockedNode(all[ai])) continue;
+      var src = all[ai].currentSrc || all[ai].src || all[ai].getAttribute('srcset') || all[ai].getAttribute('data-src') || '';
+      if (!src || !src.startsWith('http')) continue;
+      if (!looksLikeProductImage(all[ai], src)) continue;
+      if (isAfterReviewOrRecommendation(all[ai])) continue;
+      var area = inferAreaByGeometry(all[ai]);
+      if (area === 'unknown') continue;
+      var role = area === 'main_gallery' ? 'main' : 'detail';
+      var key = src.substring(0, 100);
+      if (processedUrls[key]) continue;
+      processedUrls[key] = true;
+      src = src.replace(/\/wc\d{1,4}(\/|$)/, '/wc1000/').replace(/\/crop\/\d+x\d+(\/|$)/, '/').replace(/[?&](size|w|h|quality|q)=\d+/gi, '').replace(/[?&]ts=\d+/gi, '').replace(/\?$/, '');
+      images.push({ role: role, src: src });
+    }
+  }
+
+function extractOzonProduct() {
+  var title = '';
+  var desc = '';
+  var shopName = '';
+  var category = '';
+  var images = [];
+  var skus = [];
+  var specs = [];
+  var videos = [];
+  var processed = {};
+  var stateObjects = [];
+
+  function cleanText(v) {
+    return (v || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function textFrom(el, maxLen) {
+    if (!el) return '';
+    return cleanText(el.innerText || el.textContent || '').substring(0, maxLen || 240);
+  }
+
+  function parseJsonSafe(s) {
+    try { return JSON.parse(s); } catch (e) { return null; }
+  }
+
+  function collectStateObjects() {
+    var scripts = document.querySelectorAll('script');
+    for (var i = 0; i < scripts.length; i++) {
+      var script = scripts[i];
+      var text = script.textContent || script.innerHTML || '';
+      if (!text || text.length < 20) continue;
+
+      if (script.type === 'application/ld+json' || script.type === 'application/json') {
+        var direct = parseJsonSafe(text.trim());
+        if (direct) stateObjects.push(direct);
+      }
+
+      var named = text.match(/(?:window\.__INITIAL_STATE__|window\.__NUXT__|window\.__APP_STATE__|window\.__STATE__)\s*=\s*(\{[\s\S]*?\});/);
+      if (named) {
+        var obj = parseJsonSafe(named[1]);
+        if (obj) stateObjects.push(obj);
+      }
+
+      if (text.indexOf('"@type"') >= 0 && text.indexOf('Product') >= 0) {
+        var fromProduct = parseJsonSafe(text.trim());
+        if (fromProduct) stateObjects.push(fromProduct);
+      }
+    }
+  }
+
+  collectStateObjects();
+
+  function walk(obj, visitor, depth) {
+    if (!obj || depth > 8) return;
+    if (Array.isArray(obj)) {
+      for (var i = 0; i < obj.length && i < 400; i++) walk(obj[i], visitor, depth + 1);
+      return;
+    }
+    if (typeof obj !== 'object') return;
+    if (visitor(obj) === false) return;
+    var keys = Object.keys(obj);
+    for (var k = 0; k < keys.length && k < 300; k++) {
+      var key = keys[k];
+      var val = obj[key];
+      if (val && typeof val === 'object') walk(val, visitor, depth + 1);
+    }
+  }
+
+  function firstMeta(selectors) {
+    for (var i = 0; i < selectors.length; i++) {
+      var el = document.querySelector(selectors[i]);
+      if (!el) continue;
+      var v = el.getAttribute('content') || el.getAttribute('value') || el.textContent || '';
+      v = cleanText(v);
+      if (v) return v;
+    }
+    return '';
+  }
+
+  title = firstMeta([
+    'meta[property="og:title"]',
+    'meta[name="twitter:title"]',
+    '[data-widget*="webProductHeading"] h1',
+    'h1'
+  ]) || cleanText(document.title || '');
+
+  desc = firstMeta([
+    'meta[property="og:description"]',
+    'meta[name="description"]',
+    'meta[name="twitter:description"]'
+  ]);
+
+  shopName = firstMeta([
+    '[data-widget*="webCurrentSeller"] a',
+    '[data-widget*="webCurrentSeller"] span',
+    'a[href*="/seller/"] span',
+    'a[href*="/seller/"]'
+  ]);
+
+  for (var s0 = 0; s0 < stateObjects.length; s0++) {
+    walk(stateObjects[s0], function (obj) {
+      if (!title && (obj.name || obj.title)) title = cleanText(obj.name || obj.title);
+      if (!desc && (obj.description || obj.shortDescription)) desc = cleanText(obj.description || obj.shortDescription);
+      if (!shopName && (obj.sellerName || obj.seller || obj.shopName)) shopName = cleanText(obj.sellerName || obj.seller || obj.shopName);
+      if (!category && (obj.category || obj.categoryName)) category = cleanText(obj.category || obj.categoryName);
+    }, 0);
+  }
+
+  function parsePriceText(text) {
+    text = cleanText(text);
+    if (!text) return null;
+    var matches = text.match(/(?:₽|руб\.?|RUB)?\s*([0-9][0-9\s\u00a0.,]{1,14})\s*(?:₽|руб\.?|RUB)/i);
+    if (!matches) matches = text.match(/(?:price|цена|стоимость)[^\d]{0,20}([0-9][0-9\s\u00a0.,]{1,14})/i);
+    if (!matches) return null;
+    var raw = matches[1].replace(/[\s\u00a0]/g, '').replace(',', '.');
+    var n = parseFloat(raw);
+    if (!isFinite(n) || n <= 0 || n > 10000000) return null;
+    return Math.round(n * 100) / 100;
+  }
+
+  function normalizePriceNumber(v) {
+    if (v === null || v === undefined) return null;
+    if (typeof v === 'string') {
+      var parsedTextPrice = parsePriceText(v);
+      if (parsedTextPrice) return parsedTextPrice;
+      var rawTextPrice = v.replace(/[\s\u00a0]/g, '').replace(',', '.').replace(/[^\d.]/g, '');
+      if (!rawTextPrice) return null;
+      var parsedNumberTextPrice = parseFloat(rawTextPrice);
+      if (!isFinite(parsedNumberTextPrice) || parsedNumberTextPrice <= 0) return null;
+      if (parsedNumberTextPrice > 100000 && parsedNumberTextPrice < 100000000) parsedNumberTextPrice = parsedNumberTextPrice / 100;
+      if (parsedNumberTextPrice > 10000000) return null;
+      return Math.round(parsedNumberTextPrice * 100) / 100;
+    }
+    var n = Number(v);
+    if (!isFinite(n) || n <= 0) return null;
+    if (n > 100000 && n < 100000000) n = n / 100;
+    if (n > 10000000) return null;
+    return Math.round(n * 100) / 100;
+  }
+
+  function extractPrice() {
+    var metaPrice = firstMeta([
+      'meta[property="product:price:amount"]',
+      'meta[itemprop="price"]',
+      '[itemprop="price"]'
+    ]);
+    var metaParsed = parsePriceText(metaPrice) || normalizePriceNumber(metaPrice);
+    if (metaParsed) return { price: metaParsed, source: 'meta', confidence: 'medium' };
+
+    var priceSelectors = [
+      '[data-widget*="webPrice"]',
+      '[data-widget*="WebPrice"]',
+      '[data-widget*="webSaleBlock"]',
+      '[data-widget*="webAddToCart"]',
+      '[class*="price"]',
+      '[class*="Price"]'
+    ];
+    for (var i = 0; i < priceSelectors.length; i++) {
+      var nodes = document.querySelectorAll(priceSelectors[i]);
+      for (var n = 0; n < nodes.length && n < 20; n++) {
+        if (isBlockedNode(nodes[n])) continue;
+        var p = parsePriceText(textFrom(nodes[n], 180));
+        if (p) return { price: p, source: 'dom', confidence: 'medium' };
+      }
+    }
+
+    var found = null;
+    var priceKeys = /^(price|finalPrice|salePrice|cardPrice|discountPrice|currentPrice|originalPrice|webPrice|actualPrice)$/i;
+    for (var s = 0; s < stateObjects.length; s++) {
+      walk(stateObjects[s], function (obj) {
+        if (found) return false;
+        var keys = Object.keys(obj || {});
+        for (var k = 0; k < keys.length; k++) {
+          if (!priceKeys.test(keys[k])) continue;
+          var np = normalizePriceNumber(obj[keys[k]]);
+          if (np) {
+            found = { price: np, source: 'state_json', confidence: 'medium' };
+            return false;
+          }
+        }
+      }, 0);
+      if (found) return found;
+    }
+
+    return { price: null, source: null, confidence: null };
+  }
+
+  var priceInfo = extractPrice();
+
+  function domPath(el) {
+    if (!el || !el.tagName) return '';
+    var parts = [];
+    var cur = el;
+    while (cur && cur.nodeType === 1 && parts.length < 6) {
+      var part = cur.tagName.toLowerCase();
+      var dw = cur.getAttribute && cur.getAttribute('data-widget');
+      var tid = cur.getAttribute && cur.getAttribute('data-testid');
+      if (dw) part += '[data-widget="' + dw.substring(0, 50) + '"]';
+      else if (tid) part += '[data-testid="' + tid.substring(0, 50) + '"]';
+      parts.unshift(part);
+      cur = cur.parentElement;
+    }
+    return parts.join('>');
+  }
+
+  function nodeSignature(el) {
+    if (!el) return '';
+    var bits = [];
+    var cur = el;
+    for (var i = 0; cur && i < 8; i++, cur = cur.parentElement) {
+      bits.push(
+        (cur.getAttribute('data-widget') || '') + ' ' +
+        (cur.getAttribute('data-testid') || '') + ' ' +
+        (cur.className || '') + ' ' +
+        (cur.id || '')
+      );
+    }
+    return bits.join(' ').toLowerCase();
+  }
+
+  function isBlockedNode(el) {
+    var sig = nodeSignature(el);
+    var near = textFrom(el && (el.closest('section, article, div') || el.parentElement), 260).toLowerCase();
+    var hay = sig + ' ' + near;
+    return /(review|reviews|comment|comments|question|questions|answer|answers|feedback|rating|testimonial|buyer|customer|avatar|user|profile|recommend|recommended|similar|related|also|carousel-recommend|seller|shop|store|brand|header|footer|nav|menu|sidebar|popup|modal|tooltip|sticky|floating|banner|ad|ads|bank|finance|credit|installment|payment|pay|promo|coupon|subscribe|delivery|ozon-bank|ozon bank|отзыв|отзывы|вопрос|вопросы|ответ|ответы|покупател|рейтинг|похож|рекоменду|смотрите также|с этим товаром|продавец|магазин|банк|кредит|рассроч|доставка|акци|скидк|купил)/i.test(hay);
+  }
+
+  function getSourceArea(el) {
+    if (!el) return 'unknown';
+    if (isBlockedNode(el)) return 'rejected';
+    var sig = nodeSignature(el);
+    if (/(webgallery|gallery|pdpimage|imagegallery|viewer|preview|thumb)/i.test(sig)) return 'main_gallery';
+    if (/(webvariant|webaspects|variant|aspect|sku|option)/i.test(sig)) return 'sku_panel';
+    if (/(webdescription|description|rich|content|characteristic|attribute|specification|detail|rte)/i.test(sig)) return 'detail_content';
+    return 'unknown';
+  }
+
+  function normalizeUrl(src) {
+    if (!src) return '';
+    if (src.indexOf(',') >= 0 && src.indexOf(' ') >= 0) {
+      var parts = src.split(',').map(function (x) { return cleanText(x).split(/\s+/)[0]; }).filter(Boolean);
+      if (parts.length) src = parts[parts.length - 1];
+    }
+    if (src.indexOf('//') === 0) src = location.protocol + src;
+    if (src.indexOf('http') !== 0) return '';
+    return src
+      .replace(/&amp;/g, '&')
+      .replace(/\/wc\d{1,4}(\/|$)/, '/wc1000/')
+      .replace(/\/crop\/\d+x\d+(\/|$)/, '/')
+      .replace(/\/resize\/\d+x\d+(\/|$)/, '/')
+      .replace(/\/\d{2,4}x\d{2,4}(\/|$)/, '/')
+      .replace(/[?&](size|w|h|quality|q|ts)=\d+/gi, '')
+      .replace(/\?$/, '')
+      .replace(/\/$/, '');
+  }
+
+  function isBadUrl(src) {
+    var u = (src || '').toLowerCase();
+    if (!u || u.indexOf('data:') === 0 || u.length < 35) return true;
+    if (/\.(svg|ico)(\?|$)/i.test(u)) return true;
+    if (/(avatar|profile|userpic|icon|logo|sprite|badge|bank|payment|finance|seller|shop|brand|empty|placeholder|loader|preloader|static\/|favicon|qr|barcode)/i.test(u)) return true;
+    if (/(st\.ozon\.ru|static\.ozone|static\.ozon)/i.test(u)) return true;
+    return false;
+  }
+
+  function addImage(el, role, reason) {
+    if (!el) return;
+    var src = el.getAttribute('data-full-size') || el.getAttribute('data-large') ||
+              el.getAttribute('data-original') || el.getAttribute('data-src') ||
+              el.currentSrc || el.src || el.getAttribute('srcset') || el.getAttribute('src') || '';
+    src = normalizeUrl(src);
+    if (isBadUrl(src)) return;
+
+    var rect = {};
+    try { rect = el.getBoundingClientRect(); } catch (e) { rect = {}; }
+    var w = Math.round(rect.width || el.naturalWidth || el.width || 0);
+    var h = Math.round(rect.height || el.naturalHeight || el.height || 0);
+    if (w && h && (w < 80 || h < 80)) return;
+
+    var area = getSourceArea(el);
+    if (area === 'rejected') return;
+    if (area === 'unknown') return;
+
+    var normalizedRole = role;
+    if (!normalizedRole) {
+      normalizedRole = area === 'sku_panel' ? 'sku' : (area === 'detail_content' ? 'detail' : 'main');
+    }
+    if (normalizedRole === 'detail' && area !== 'detail_content') return;
+    if (normalizedRole === 'sku' && area !== 'sku_panel') return;
+    if (normalizedRole === 'main' && area !== 'main_gallery') return;
+
+    var key = src.replace(/\/wc\d+\//, '/wc/');
+    if (processed[key]) return;
+    processed[key] = true;
+
+    images.push({
+      role: normalizedRole,
+      src: src,
+      alt: cleanText(el.alt || el.getAttribute('aria-label') || ''),
+      source_area: area,
+      dom_path: domPath(el),
+      width: w,
+      height: h,
+      nearby_text: textFrom(el.closest('section, article, div') || el.parentElement, 220),
+      source_selector: reason || '',
+      reason: reason || area
+    });
+  }
+
+  function collectImagesFrom(selectors, role, limit, reason) {
+    for (var i = 0; i < selectors.length; i++) {
+      var roots = document.querySelectorAll(selectors[i]);
+      for (var r = 0; r < roots.length && images.filter(function (x) { return x.role === role; }).length < limit; r++) {
+        if (isBlockedNode(roots[r])) continue;
+        var imgs = roots[r].matches && roots[r].matches('img') ? [roots[r]] : roots[r].querySelectorAll('img, source');
+        for (var j = 0; j < imgs.length && images.filter(function (x) { return x.role === role; }).length < limit; j++) {
+          addImage(imgs[j], role, reason || selectors[i]);
+        }
+      }
+    }
+  }
+
+  collectImagesFrom([
+    '[data-widget*="webGallery"]',
+    '[data-widget*="WebGallery"]',
+    '[data-widget*="webPdpImages"]',
+    '[class*="gallery"]',
+    '[class*="Gallery"]'
+  ], 'main', 16, 'ozon-main-gallery');
+
+  collectImagesFrom([
+    '[data-widget*="webVariant"]',
+    '[data-widget*="webAspects"]',
+    '[data-widget*="WebAspects"]',
+    '[class*="variant"]',
+    '[class*="Variant"]',
+    '[class*="sku"]',
+    '[class*="Sku"]'
+  ], 'sku', 24, 'ozon-sku-panel');
+
+  collectImagesFrom([
+    '[data-widget*="webDescription"]',
+    '[data-widget*="WebDescription"]',
+    '[data-widget*="rich"]',
+    '[data-widget*="Rich"]',
+    '[data-widget*="description"]',
+    '[data-widget*="Description"]',
+    '[class*="description"]',
+    '[class*="Description"]',
+    '[class*="rich"]',
+    '[class*="Rich"]'
+  ], 'detail', 40, 'ozon-detail-content');
+
+  function addSku(name, price, color, style, source) {
+    name = cleanText(name);
+    if (!name || name.length < 2 || name.length > 120) return;
+    var lower = name.toLowerCase();
+    if (/(купить|корзин|сравнить|избран|отзыв|вопрос|доставка|продавец|магазин|ozon|каталог|поиск|назад|далее|показать|скрыть|руб|₽|rating|review|cart|favorite|compare)/i.test(lower)) return;
+    for (var i = 0; i < skus.length; i++) {
+      if (skus[i].source_sku_name.toLowerCase() === lower) return;
+    }
+    skus.push({
+      source_order: skus.length + 1,
+      source_sku_name: name,
+      style_cn: style || null,
+      color_cn: color || null,
+      bundle_quantity: 1,
+      purchase_price_cny: price || priceInfo.price || null,
+      source: source || 'ozon'
+    });
+  }
+
+  var skuRoots = document.querySelectorAll('[data-widget*="webAspects"], [data-widget*="webVariant"], [data-widget*="WebAspects"], [class*="variant"], [class*="Variant"], [class*="sku"], [class*="Sku"]');
+  for (var sr = 0; sr < skuRoots.length; sr++) {
+    if (isBlockedNode(skuRoots[sr])) continue;
+    var candidates = skuRoots[sr].querySelectorAll('button, a, span, div, label, option, [role="button"], [aria-label], [title]');
+    for (var c = 0; c < candidates.length && skus.length < 60; c++) {
+      var node = candidates[c];
+      if (isBlockedNode(node)) continue;
+      var txt = cleanText(node.getAttribute('aria-label') || node.getAttribute('title') || node.textContent || '');
+      if (!txt || txt.length > 120) continue;
+      if (txt.indexOf('\n') >= 0) txt = cleanText(txt.split('\n')[0]);
+      addSku(txt, priceInfo.price, null, txt, 'dom_variant');
+    }
+  }
+
+  for (var so = 0; so < stateObjects.length; so++) {
+    walk(stateObjects[so], function (obj) {
+      if (skus.length >= 60) return false;
+      var name = obj.skuName || obj.name || obj.title || obj.text || obj.value || obj.label;
+      var id = obj.skuId || obj.id || obj.offerId || obj.productId;
+      var p = normalizePriceNumber(obj.price || obj.finalPrice || obj.salePrice || obj.cardPrice || obj.discountPrice);
+      var looksLikeSelectedVariant = (
+        obj.selected === true || obj.isSelected === true || obj.active === true ||
+        obj.checked === true || obj.current === true || obj.disabled !== undefined ||
+        obj.available !== undefined || obj.isAvailable !== undefined
+      );
+      if (name && id && looksLikeSelectedVariant && cleanText(name).length < 120) {
+        addSku(name, p || priceInfo.price, null, null, 'state_json');
+      }
+    }, 0);
+  }
+
+  if (skus.length === 0 && title) {
+    var packMatch = title.match(/(\d+\s*RX\s*\+?\s*\d*\s*TX(?:\s*\+\s*\d*\s*(?:Charging\s*case|case|кейс))?|\d+\s*TX\s*\+?\s*\d*\s*RX)/i);
+    addSku(packMatch ? packMatch[1] : title.substring(0, 110), priceInfo.price, null, 'default', 'title_fallback');
+  }
+
+  var specSeen = {};
+  var specNodes = document.querySelectorAll('[data-widget*="webCharacteristics"] li, [data-widget*="webCharacteristics"] div, [class*="characteristic"] li, [class*="characteristic"] div, [class*="spec"] li, [class*="spec"] div');
+  for (var sp = 0; sp < specNodes.length && specs.length < 80; sp++) {
+    if (isBlockedNode(specNodes[sp])) continue;
+    var tx = textFrom(specNodes[sp], 280);
+    if (tx.length < 3 || tx.length > 280) continue;
+    var parts = tx.split(/:|：|—|–/);
+    if (parts.length >= 2) {
+      var n = cleanText(parts[0]);
+      var v = cleanText(parts.slice(1).join(':'));
+      if (n && v && n.length < 80 && v.length < 220 && !specSeen[n]) {
+        specSeen[n] = true;
+        specs.push({ name: n, value: v, source_text: tx });
+      }
+    }
+  }
+
+  var videoNodes = document.querySelectorAll('video, video source, [data-widget*="webVideo"] video, [data-widget*="webVideo"] iframe, iframe[src*="youtube"], iframe[src*="vk.com"], iframe[src*="rutube"], iframe[src*="vkvideo"]');
+  for (var v = 0; v < videoNodes.length; v++) {
+    if (isBlockedNode(videoNodes[v])) continue;
+    var vSrc = videoNodes[v].src || videoNodes[v].getAttribute('data-src') || videoNodes[v].getAttribute('poster') || '';
+    vSrc = normalizeUrl(vSrc);
+    if (vSrc && videos.indexOf(vSrc) < 0) videos.push(vSrc);
+  }
+
+  for (var st = 0; st < stateObjects.length; st++) {
+    try {
+      var json = JSON.stringify(stateObjects[st]);
+      var matches = json.match(/https?:\/\/[^"'\s\\]+?\.(?:mp4|webm|mov|m3u8)[^"'\s\\]*/gi);
+      if (matches) {
+        for (var mm = 0; mm < matches.length; mm++) {
+          if (videos.indexOf(matches[mm]) < 0) videos.push(matches[mm]);
+        }
+      }
+    } catch (e) {}
+  }
+
+  var detailRoots = document.querySelectorAll('[data-widget*="webDescription"], [data-widget*="description"], [class*="description"], [class*="rich"]');
+  for (var dr = 0; dr < detailRoots.length; dr++) {
+    if (!isBlockedNode(detailRoots[dr])) {
+      var rd = detailRoots[dr].innerText || detailRoots[dr].textContent || '';
+      if (rd && rd.length > desc.length) desc = rd.substring(0, 50000);
+    }
+  }
+
+  return {
+    title: title,
+    category: category,
+    shopName: shopName,
+    description: desc,
+    skus: skus,
+    images: images,
+    specs: specs,
+    videos: videos,
+    pricing: {
+      source_price_cny: priceInfo.price,
+      currency: 'RUB',
+      price_source: priceInfo.source,
+      price_confidence: priceInfo.confidence,
+      price_note_cn: priceInfo.price ? 'OZON页面参考售价，发布前需人工确认' : ''
+    },
+    price_candidates: priceInfo.price ? [{
+      price: priceInfo.price,
+      currency: 'RUB',
+      source: priceInfo.source || 'unknown',
+      confidence: priceInfo.confidence || 'low',
+      note: 'OZON页面参考售价，非采购价，发布前需人工确认'
+    }] : [],
+    detail_missing: images.filter(function (x) { return x.role === 'detail'; }).length === 0,
+    _qualityWarnings: []
+  };
+}
+
   function detectPlatform() {
     const host = location.hostname;
     if (host.includes('1688.com'))       return '1688';
@@ -293,6 +866,8 @@
       images: data.images || [],
       specs: data.specs || [],
       videos: data.videos || [],
+      pricing: data.pricing || {},
+      price_candidates: data.price_candidates || [],
       detail_missing: data.detail_missing || false,
       quality_warnings: data.quality_warnings || [],
       collect_source: 'browser_extension_pc'
@@ -2941,6 +3516,9 @@
         };
       }),
       specs: data.specs || [],
+      videos: data.videos || [],
+      pricing: data.pricing || {},
+      price_candidates: data.price_candidates || [],
       sku_count: data.skus.length,
       image_count: data.images.length,
       main_count: data.images.filter(function(i) { return i.role === 'main'; }).length,
@@ -3142,66 +3720,88 @@
       if (sellerEl) shop = sellerEl.textContent.trim();
     }
 
-    // ── 4. 图片提取（区分主图/SKU图/详情图） ──
+    // ── 4. 图片提取（三层策略：白名单 + 大图几何兜底 + performance resource）
+    var images = [], skus = [], specs = [], videos = [];
     var processedUrls = {};
-    var galleryImgContainer = document.querySelector('[data-widget="webGallery"]') || document.querySelector('[class*="gallery"]') || document.querySelector('[class*="elevation"]');
-    var mainImgs = galleryImgContainer ? galleryImgContainer.querySelectorAll('img') : document.querySelectorAll('img[src*="ozon.ru"]');
-    var skuImgs = document.querySelectorAll('[data-widget="webVariant"] img, [class*="sku"] img, [class*="variant"] img');
-    var descContainer = document.querySelector('[data-widget="webDescription"]') || document.querySelector('[class*="description"]') || document.querySelector('[class*="widget"]');
-    var detailImgs = descContainer ? descContainer.querySelectorAll('img') : document.querySelectorAll('img');
-    var allImgs = document.querySelectorAll('img');
 
-    function addImage(src, role, el) {
-      if (!src || !src.startsWith('http')) return;
-      if (src.indexOf('data:image') === 0) return;
-
-      // 优先从元素属性取原图URL
-      if (el) {
-        var fullSrc = el.getAttribute('data-full-size') || el.getAttribute('data-large') ||
-                      el.getAttribute('data-original') || el.getAttribute('data-full') || '';
-        if (fullSrc && fullSrc.startsWith('http') && fullSrc.length > src.length) src = fullSrc;
+    // Layer 1: 白名单区域 ── 主图库 + SKU区 + 详情区
+    var galleryEl = document.querySelector('[data-widget="webGallery"]') || document.querySelector('[class*="gallery"]') || document.querySelector('[class*="elevation"]');
+    if (galleryEl) {
+      var gImgs = galleryEl.querySelectorAll('img, source');
+      for (var gi = 0; gi < gImgs.length && images.length < 20; gi++) {
+        var src = gImgs[gi].currentSrc || gImgs[gi].src || gImgs[gi].getAttribute('data-src') || gImgs[gi].getAttribute('srcset') || '';
+        if (src && src.startsWith('http') && looksLikeProductImage(gImgs[gi], src)) {
+          src = src.replace(/\/wc\d{1,4}(\/|$)/, '/wc1000/').replace(/\/crop\/\d+x\d+(\/|$)/, '/').replace(/[?&](size|w|h|quality|q)=\d+/gi, '').replace(/[?&]ts=\d+/gi, '').replace(/\?$/, '');
+          var key = src.substring(0, 100);
+          if (!processedUrls[key]) { processedUrls[key] = true; images.push({ role: 'main', src: src }); }
+        }
       }
-
-      // 去水印/缩略图处理：OZON CDN URL规范化
-      src = src
-        .replace(/\/wc\d{1,4}(\/|$)/, '/wc1000/')     // wc50/200/500 → wc1000
-        .replace(/\/crop\/\d+x\d+(\/|$)/, '/')         // 裁剪缩略图
-        .replace(/\/resize\/\d+x\d+(\/|$)/, '/')       // 缩放缩略图
-        .replace(/\/\d{2,4}x\d{2,4}(\/|$)/, '/')      // 尺寸后缀(80x80, 200x200等)
-        .replace(/[?&](size|w|h|quality|q)=\d+/gi, '') // 查询参数
-        .replace(/[?&]ts=\d+/gi, '')                   // 时间戳
-        .replace(/\?$/, '')                            // 尾随问号
-        .replace(/\/$/, '');                           // 尾随斜杠
-
-      var key = src.substring(0, 100);
-      if (processedUrls[key]) return;
-      processedUrls[key] = true;
-      if (src.indexOf('/icon') >= 0 || src.indexOf('/logo') >= 0 || src.indexOf('/avatar') >= 0 || src.length < 40) return;
-      images.push({ role: role, src: src });
+      collectBackgroundImages(galleryEl, images, processedUrls, 'main', 20);
     }
 
-    // 主图
-    for (var mi = 0; mi < mainImgs.length; mi++) {
-      var el = mainImgs[mi];
-      addImage(el.src || el.getAttribute('data-src') || el.getAttribute('srcset'), 'main', el);
-    }
-    // SKU图
-    for (var si2 = 0; si2 < skuImgs.length; si2++) {
-      var el2 = skuImgs[si2];
-      addImage(el2.src || el2.getAttribute('data-src') || el2.getAttribute('srcset'), 'sku', el2);
-    }
-    // 详情图
-    for (var di = 0; di < detailImgs.length; di++) {
-      var el3 = detailImgs[di];
-      addImage(el3.src || el3.getAttribute('data-src') || el3.getAttribute('srcset'), 'detail', el3);
-    }
-    // 兜底：从所有图片中补充未分类的
-    for (var ai = 0; ai < allImgs.length && images.length < 50; ai++) {
-      var el4 = allImgs[ai];
-      addImage(el4.src || el4.getAttribute('data-src') || el4.getAttribute('srcset'), 'detail', el4);
+    // SKU区
+    var skuEl = document.querySelector('[data-widget="webVariant"]') || document.querySelector('[class*="sku"]') || document.querySelector('[class*="variant"]');
+    if (skuEl) {
+      var sImgs = skuEl.querySelectorAll('img, source');
+      for (var si = 0; si < sImgs.length && images.length < 30; si++) {
+        var src2 = sImgs[si].currentSrc || sImgs[si].src || sImgs[si].getAttribute('data-src') || '';
+        if (src2 && src2.startsWith('http') && looksLikeProductImage(sImgs[si], src2)) {
+          src2 = src2.replace(/\/wc\d{1,4}(\/|$)/, '/wc1000/').replace(/[?&](size|w|h|quality|q)=\d+/gi, '').replace(/[?&]ts=\d+/gi, '').replace(/\?$/, '');
+          var key2 = src2.substring(0, 100);
+          if (!processedUrls[key2]) { processedUrls[key2] = true; images.push({ role: 'sku', src: src2 }); }
+        }
+      }
     }
 
-    // ── 5. 视频提取 ──
+    // 详情区（只采集评论/推荐之前的）
+    var descEl = document.querySelector('[data-widget="webDescription"]') || document.querySelector('[class*="description"]') || document.querySelector('[class*="ra"]') || document.querySelector('[class*="widget"]');
+    if (descEl) {
+      var dImgs = descEl.querySelectorAll('img, source');
+      for (var di = 0; di < dImgs.length && images.length < 50; di++) {
+        if (isBlockedNode(dImgs[di])) continue;
+        if (isAfterReviewOrRecommendation(dImgs[di])) break;
+        var src3 = dImgs[di].currentSrc || dImgs[di].src || dImgs[di].getAttribute('data-src') || '';
+        if (src3 && src3.startsWith('http') && looksLikeProductImage(dImgs[di], src3)) {
+          src3 = src3.replace(/\/wc\d{1,4}(\/|$)/, '/wc1000/').replace(/[?&](size|w|h|quality|q)=\d+/gi, '').replace(/[?&]ts=\d+/gi, '').replace(/\?$/, '');
+          var key3 = src3.substring(0, 100);
+          if (!processedUrls[key3]) { processedUrls[key3] = true; images.push({ role: 'detail', src: src3 }); }
+        }
+      }
+      collectBackgroundImages(descEl, images, processedUrls, 'detail', 40);
+    }
+
+    // Layer 2: 可见大图几何兜底（只在图片少时启用）
+    var mainCount = images.filter(function(x){return x.role==='main';}).length;
+    var detailCount = images.filter(function(x){return x.role==='detail';}).length;
+    if (mainCount < 1 || detailCount < 5) {
+      collectVisibleProductImagesFallback(images, processedUrls);
+    }
+
+    // Layer 3: performance resource 兜底（CDN已加载图片）
+    if (images.length < 10 && window.performance && window.performance.getEntriesByType) {
+      var resources = window.performance.getEntriesByType('resource');
+      for (var ri = 0; ri < resources.length && images.length < 50; ri++) {
+        var rUrl = resources[ri].name || '';
+        if (!rUrl || rUrl.indexOf('ozon') < 0) continue;
+        if (/static|icon|logo|avatar|bank|payment|favicon/.test(rUrl.toLowerCase())) continue;
+        var key4 = rUrl.substring(0, 100);
+        if (processedUrls[key4]) continue;
+        processedUrls[key4] = true;
+        rUrl = rUrl.replace(/\/wc\d{1,4}(\/|$)/, '/wc1000/').replace(/[?&](size|w|h|quality|q)=\d+/gi, '').replace(/[?&]ts=\d+/gi, '').replace(/\?$/, '');
+        images.push({ role: 'detail_candidate', src: rUrl });
+      }
+    }
+
+    var debug = {
+      main_count: images.filter(function(x){return x.role==='main';}).length,
+      sku_img_count: images.filter(function(x){return x.role==='sku';}).length,
+      detail_count: images.filter(function(x){return x.role==='detail';}).length,
+      candidate_count: images.filter(function(x){return x.role==='detail_candidate';}).length,
+      total: images.length
+    };
+
+
+// ── 5. 视频提取 ──
     var videoEls = document.querySelectorAll('video, video source, [data-widget="webVideo"] video, [data-widget="webVideo"] iframe, [class*="video"] video, [class*="player"] video, iframe[src*="youtube"], iframe[src*="vk.com"], iframe[src*="rutube"], iframe[src*="yandex"], iframe[src*="ozon"], iframe[src*="vkvideo"]');
     for (var vi = 0; vi < videoEls.length; vi++) {
       var vSrc = videoEls[vi].src || videoEls[vi].getAttribute('data-src') || '';
@@ -3291,6 +3891,7 @@
     return {
       title: title, category: category || desc.substring(0, 100), description: desc,
       shop_name: shop, skus: skus, images: images, specs: specs, videos: videos,
-      detail_missing: (desc.length < 100)
+      detail_missing: (desc.length < 100),
+      debug: debug
     };
   }
