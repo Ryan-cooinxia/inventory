@@ -1,0 +1,1304 @@
+{% extends "base.html" %}
+{% block title %}商品适配工作台 — 仓库记账系统{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <div>
+    <h5 class="mb-0">🔄 商品适配工作台</h5>
+    <small class="text-muted">{{ source.title_cn[:60] }}{% if source.title_cn|length > 60 %}...{% endif %}</small>
+  </div>
+  <div class="d-flex gap-2 align-items-center">
+    <span class="text-muted" style="font-size:12px">适配关系：</span>
+    <div class="btn-group btn-group-sm" id="relationSelect">
+      <button class="btn btn-outline-primary {% if group.relation_type == 'one_to_one' %}active{% endif %}" data-relation="one_to_one">一对一</button>
+      <button class="btn btn-outline-secondary {% if group.relation_type == 'one_to_many' %}active{% endif %}" data-relation="one_to_many">一对多</button>
+      <button class="btn btn-outline-secondary {% if group.relation_type == 'many_to_one' %}active{% endif %}" data-relation="many_to_one">多对一</button>
+    </div>
+    <span class="badge {% if group.status == 'converted' %}bg-success{% elif group.status == 'adapting' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ group.status }}</span>
+  </div>
+</div>
+
+<div class="row g-2" style="min-height:calc(100vh - 160px)">
+  <!-- 左栏：源商品资料 -->
+  <div class="col-lg-3">
+    <div class="card h-100">
+      <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <strong style="font-size:13px">📥 源商品资料</strong>
+        <span class="badge bg-secondary">{{ source.platform }}</span>
+      </div>
+      <div class="card-body p-2 overflow-auto" style="font-size:12px">
+        <div class="mb-2"><span class="text-muted">标题：</span>{{ source.title_cn }}</div>
+        <div class="mb-2"><span class="text-muted">供应商：</span>{{ source.shop_name or '-' }}</div>
+        <div class="mb-2"><span class="text-muted">采购价：</span><span class="text-danger">¥{{ '{:,.2f}'.format(source_skus[0].purchase_price_cny) if source_skus and source_skus[0].purchase_price_cny else '-' }}</span></div>
+        <div class="mb-2"><span class="text-muted">采集时间：</span>{{ source.captured_at.strftime('%m-%d %H:%M') if source.captured_at else '' }}</div>
+
+        <hr class="my-2">
+        <strong style="font-size:11px">源 SKU ({{ source_skus|length }})</strong>
+        {% for s in source_skus %}
+        <div class="p-1 mb-1 bg-light rounded" style="font-size:11px;border-left:2px solid #6c757d">
+          <strong>{{ s.source_sku_name[:40] }}</strong><br>
+          <span class="text-muted">颜色:{{ s.color_cn or '-' }} | 款式:{{ s.style_cn or '-' }}</span>
+        </div>
+        {% endfor %}
+
+        <hr class="my-2">
+        <hr class="my-2">
+        <div class="d-flex justify-content-between align-items-center">
+          <strong style="font-size:11px">源图片 ({{ source_media|length }})</strong>
+          {% if has_vision_config %}
+          <button class="btn btn-sm btn-outline-info" style="font-size:10px;padding:2px 8px" id="btnAnalyze" onclick="analyzeImages()">
+            🔍 AI识别图片
+          </button>
+          {% endif %}
+        </div>
+        <div class="d-flex flex-wrap gap-1 mt-1" id="sourceImageGrid">
+        {% for m in source_media %}
+          {% if loop.index <= 8 %}
+          <img src="{{ m.source_url }}" alt="{{ m.role }}" referrerpolicy="no-referrer"
+               style="width:48px;height:48px;object-fit:cover;border-radius:4px;cursor:pointer;border:1px solid #dee2e6"
+               data-full-url="{{ m.source_url }}"
+               onclick="showSourceImage(this.dataset.fullUrl)" loading="lazy"
+               onerror="this.style.display='none'" title="{{ m.role }} — 点击查看大图">
+          {% endif %}
+        {% endfor %}
+        {% if source_media|length > 8 %}
+        <button class="btn btn-sm btn-outline-secondary" style="width:48px;height:48px;font-size:10px;padding:0;border-radius:4px;border-style:dashed"
+                onclick="openSourceGallery()" title="查看全部 {{ source_media|length }} 张源图片">
+          +{{ source_media|length - 8 }}
+        </button>
+        {% endif %}
+        </div>
+        {% if source.platform == '1688' and source.detail_missing %}
+        <div class="alert alert-warning py-1 px-2 mb-0 mt-1" style="font-size:11px">
+          ⚠️ 1688 详情图未采集到，建议重新采集或手动补图。
+        </div>
+        {% elif source.platform in ('taobao', 'tmall') %}
+        <div class="text-muted mt-1" style="font-size:10px">
+          ℹ️ 淘宝/天猫详情图请通过 1688 同款商品采集或手动上传
+        </div>
+        {% endif %}
+
+        <!-- 人工补图入口 -->
+        <div class="card mt-2 border-secondary">
+          <div class="card-header py-1 px-2 bg-transparent border-secondary" style="cursor:pointer" onclick="toggleManualUpload()">
+            <small class="text-secondary">➕ 手动补充图片</small>
+            <span class="float-end text-secondary" id="manualUploadToggle">▶</span>
+          </div>
+          <div class="card-body p-2" id="manualUploadPanel" style="display:none">
+            <select id="uploadRole" class="form-select form-select-sm mb-2">
+              <option value="detail">详情图</option>
+              <option value="main">主图</option>
+              <option value="sku">SKU 图</option>
+            </select>
+            <div class="mb-2">
+              <input type="file" id="uploadFiles" class="form-control form-control-sm" multiple accept="image/*">
+            </div>
+            <div class="mb-2">
+              <textarea id="uploadUrls" class="form-control form-control-sm" rows="2"
+                        placeholder="粘贴图片 URL，每行一个" style="font-size:11px"></textarea>
+            </div>
+            <button class="btn btn-sm btn-primary w-100" onclick="submitManualUpload()">上传补图</button>
+            <div id="uploadResult" class="mt-1" style="font-size:11px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 中栏：商品事实库 -->
+  <div class="col-lg-5">
+    <div class="card h-100">
+      <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <strong style="font-size:13px">📋 商品事实库</strong>
+        <div class="d-flex gap-1">
+          <button class="btn btn-sm btn-outline-info" style="font-size:11px" id="btnAiSuggest" onclick="aiSuggest()">🤖 AI智能填充</button>
+          <button class="btn btn-sm btn-outline-secondary" style="font-size:11px" onclick="saveFact()">💾 保存</button>
+          <button class="btn btn-sm btn-outline-success" style="font-size:11px" onclick="approveFact()">✅ 审核通过</button>
+        </div>
+      </div>
+      <div class="card-body p-2 overflow-auto" style="font-size:12px">
+        <div class="mb-2">
+          <label class="form-label mb-0" style="font-size:11px">标准商品名</label>
+          <input type="text" class="form-control form-control-sm" id="factNameCn" value="{{ fact.standard_name_cn or '' }}">
+        </div>
+        <div class="row g-1 mb-2">
+          <div class="col-6">
+            <label class="form-label mb-0" style="font-size:11px">商品类型</label>
+            <input type="text" class="form-control form-control-sm" id="factProductType" value="{{ fact.product_type or '' }}" placeholder="如：无线麦克风">
+          </div>
+          <div class="col-6">
+            <label class="form-label mb-0" style="font-size:11px">本地品类</label>
+            <input type="text" class="form-control form-control-sm" id="factCategoryHint" value="{{ fact.category_hint_cn or '' }}" placeholder="如：3C数码 > 音频">
+          </div>
+        </div>
+        <div class="row g-1 mb-2">
+          <div class="col-4">
+            <label class="form-label mb-0" style="font-size:11px">品牌</label>
+            <input type="text" class="form-control form-control-sm" id="factBrand" value="{{ fact.brand_name or '' }}">
+          </div>
+          <div class="col-4">
+            <label class="form-label mb-0" style="font-size:11px">型号</label>
+            <input type="text" class="form-control form-control-sm" id="factModel" value="{{ fact.model or '' }}">
+          </div>
+          <div class="col-4">
+            <label class="form-label mb-0" style="font-size:11px">材质</label>
+            <input type="text" class="form-control form-control-sm" id="factMaterial" value="{{ fact.material or '' }}">
+          </div>
+        </div>
+        <div class="row g-1 mb-2">
+          <div class="col-6">
+            <label class="form-label mb-0" style="font-size:11px">产地</label>
+            <input type="text" class="form-control form-control-sm" id="factOrigin" value="{{ fact.origin or '' }}">
+          </div>
+          <div class="col-6">
+            <label class="form-label mb-0" style="font-size:11px">保修</label>
+            <input type="text" class="form-control form-control-sm" id="factWarranty" value="{{ fact.warranty or '' }}">
+          </div>
+        </div>
+
+        <hr class="my-2">
+        <strong style="font-size:12px">SKU 事实确认</strong>
+        <div id="skuFacts">
+        {% for sku in fact_skus %}
+        <div class="card mb-1 {% if sku.manual_status == 'confirmed' %}border-success{% elif sku.confidence and sku.confidence < 0.7 %}border-warning{% endif %}">
+          <div class="card-body p-2" style="font-size:11px">
+            <div class="d-flex justify-content-between align-items-start">
+              <strong>SKU {{ sku.source_order }}: {{ sku.standard_sku_name_cn or sku.color_cn or '' }}</strong>
+              <div class="form-check form-switch" style="font-size:10px">
+                <input class="form-check-input sku-confirm" type="checkbox" data-sku-id="{{ sku.id }}" {% if sku.manual_status == 'confirmed' %}checked{% endif %} style="width:28px;height:14px">
+                <label class="form-check-label">已确认</label>
+              </div>
+            </div>
+            <div class="row g-1 mt-1">
+              <div class="col-4"><span class="text-muted">颜色:</span><input class="form-control form-control-sm sku-field" data-sku-id="{{ sku.id }}" data-field="color_cn" value="{{ sku.color_cn or '' }}" style="font-size:10px;height:24px"></div>
+              <div class="col-4"><span class="text-muted">尺寸:</span><input class="form-control form-control-sm sku-field" data-sku-id="{{ sku.id }}" data-field="size_cn" value="{{ sku.size_cn or '' }}" style="font-size:10px;height:24px"></div>
+              <div class="col-4"><span class="text-muted">款式:</span><input class="form-control form-control-sm sku-field" data-sku-id="{{ sku.id }}" data-field="style_cn" value="{{ sku.style_cn or '' }}" style="font-size:10px;height:24px"></div>
+            </div>
+            <div class="d-flex gap-2 mt-1">
+              <span class="text-muted">套装:<input class="form-control form-control-sm sku-field" data-sku-id="{{ sku.id }}" data-field="bundle_quantity" value="{{ sku.bundle_quantity }}" style="width:50px;font-size:10px;height:24px;display:inline"></span>
+              <span class="text-muted">采购价:<input class="form-control form-control-sm sku-field" data-sku-id="{{ sku.id }}" data-field="purchase_price_cny" value="{{ sku.purchase_price_cny or '' }}" style="width:80px;font-size:10px;height:24px;display:inline"> ¥</span>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+        </div>
+
+        <hr class="my-2">
+        {% if image_facts %}
+        <strong style="font-size:12px">🔍 视觉识别结果 ({{ image_facts|length }} 条)</strong>
+        <div id="imageFactsSection" style="max-height:200px;overflow-y:auto">
+        {% for imgf in image_facts %}
+        <div class="d-flex justify-content-between align-items-start bg-light rounded p-1 mb-1 fact-item-{{ imgf.id }}"
+             style="font-size:11px;border-left:3px solid {% if imgf.accepted %}#28a745{% else %}#0d6efd{% endif %}">
+          <div style="flex:1;min-width:0">
+            <div class="d-flex align-items-center gap-1">
+              <img src="{{ imgf.media.source_url }}" referrerpolicy="no-referrer" style="width:24px;height:24px;object-fit:cover;border-radius:2px" onerror="this.style.display='none'">
+              <code style="font-size:10px">{{ imgf.field_path }}</code>
+              <span class="badge {% if imgf.confidence >= 0.85 %}bg-success{% elif imgf.confidence >= 0.6 %}bg-warning text-dark{% else %}bg-danger{% endif %}" style="font-size:9px">{{ '{:.0%}'.format(imgf.confidence) }}</span>
+            </div>
+            <div class="text-truncate" style="max-width:300px"><strong>{{ imgf.value }}</strong></div>
+            <div class="text-muted" style="font-size:9px">{{ imgf.evidence_text or '' }}</div>
+          </div>
+          <div class="d-flex gap-1 ms-1 flex-shrink-0">
+            {% if imgf.accepted %}
+            <span class="badge bg-success" style="font-size:9px">✅ 已接受</span>
+            {% else %}
+            <button class="btn btn-sm btn-outline-success" style="font-size:9px;padding:1px 5px" onclick="acceptFact({{ imgf.id }}, this)" title="接受">✓</button>
+            <button class="btn btn-sm btn-outline-danger" style="font-size:9px;padding:1px 5px" onclick="rejectFact({{ imgf.id }}, this)" title="拒绝">✕</button>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+        </div>
+        <hr class="my-2">
+        {% endif %}
+        <div class="text-muted mb-1" style="font-size:11px">⚠️ 未知字段 / 待确认</div>
+        <textarea class="form-control form-control-sm" id="factUnknown" rows="2" style="font-size:11px" placeholder="JSON: [&quot;material&quot;, &quot;weight&quot;, &quot;battery_capacity&quot;]">{{ fact.unknown_fields_json or '' }}</textarea>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右栏：OZON Listing 草稿 -->
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <strong style="font-size:13px">🎯 OZON Listing 草稿</strong>
+        <button class="btn btn-sm btn-primary" style="font-size:11px" onclick="generateDraft()" {% if fact.review_status != 'approved' %}disabled{% endif %}>生成草稿</button>
+      </div>
+      <div class="card-body p-2 overflow-auto" style="font-size:12px">
+
+        <!-- ── 类目/Type 选择区 ── -->
+        <div class="mb-2"><strong style="font-size:12px">📂 OZON 类目与类型</strong></div>
+
+        <div class="d-flex gap-1 mb-2">
+          <button class="btn btn-outline-primary btn-sm flex-grow-1" id="btnSelectCategory" onclick="openCategoryForAdaptation()">
+            📂 选择 OZON 类目/类型
+          </button>
+          <button class="btn btn-outline-success btn-sm" style="font-size:10px" id="btnRecommendCat" onclick="recommendCategory()" title="根据商品事实自动推荐匹配的 OZON 类目和 Type">
+            🤖 推荐类目
+          </button>
+        </div>
+
+        <!-- 推荐结果 -->
+        <div id="recommendResults" class="mb-2 d-none" style="font-size:11px"></div>
+
+        <div id="selectedCategoryInfo" class="mb-2 {% if not (adaptation and adaptation.ozon_category_id) %}d-none{% endif %}" style="font-size:11px">
+          <div class="d-flex justify-content-between align-items-start">
+            <div>
+              <strong>已选类目:</strong> <span id="catPathDisplay">{{ adaptation.category_path if adaptation else (adaptation.ozon_category_name if adaptation else '') }}</span>
+              <code class="ms-1" id="catIdDisplay" style="font-size:9px">{{ adaptation.ozon_category_id if adaptation else '' }}</code>
+            </div>
+            <button class="btn btn-sm btn-outline-secondary" style="font-size:9px;padding:1px 4px" onclick="openCategoryForAdaptation()">更改</button>
+          </div>
+        </div>
+
+        <!-- Type 选择区 -->
+        <div id="typeSelectorSection" class="mb-2 {% if not (adaptation and adaptation.ozon_category_id) %}d-none{% endif %}">
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <strong style="font-size:11px">商品类型:</strong>
+            <button class="btn btn-sm btn-outline-warning" style="font-size:9px;padding:1px 6px" id="btnSyncTypes" onclick="syncTypesForCurrentCategory()">
+              📋 同步 type
+            </button>
+          </div>
+          <select class="form-select form-select-sm" id="typeSelect" onchange="onTypeSelectChange()" style="font-size:11px">
+            <option value="">-- 暂未选择 type --</option>
+            {% for t in adaptation_types %}
+            <option value="{{ t.type_id }}" {% if adaptation and adaptation.type_id == t.type_id %}selected{% endif %}>
+              {{ t.type_name_cn or t.type_name }} ({{ t.type_id }})
+            </option>
+            {% endfor %}
+          </select>
+          <div id="selectedTypeInfo" class="mt-1" style="font-size:10px;color:#6c757d">
+            {% if adaptation and adaptation.type_id %}
+            已选: {{ adaptation.type_name_cn or adaptation.type_name_ru or '' }} <code>{{ adaptation.type_id }}</code>
+            {% endif %}
+          </div>
+        </div>
+
+        <!-- 同步属性按钮 -->
+        <div id="syncAttrSection" class="mb-2 {% if not (adaptation and adaptation.type_id) %}d-none{% endif %}">
+          <button class="btn btn-sm btn-outline-info w-100" id="btnSyncAttrs" onclick="syncAttributesForType()">
+            📥 同步属性/字典
+          </button>
+        </div>
+
+        <!-- 属性填写表单 -->
+        <div id="attributeFormSection" class="mb-2 {% if not adaptation_attr_schema %}d-none{% endif %}">
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <strong style="font-size:11px">📝 类目属性</strong>
+            <span class="badge bg-danger" style="font-size:9px" id="attrRequiredCount"></span>
+          </div>
+          <div id="attributeForm" class="overflow-auto" style="max-height:35vh;font-size:11px">
+            {% if adaptation_attr_schema %}
+            {% set groups = {} %}
+            {% for a in adaptation_attr_schema %}
+              {% set g = a.group_name or '基本属性' %}
+              {% if g not in groups %}{% set _ = groups.update({g: []}) %}{% endif %}
+              {% set _ = groups[g].append(a) %}
+            {% endfor %}
+            {% for gname, attrs in groups.items() %}
+            <div class="mb-1"><strong style="font-size:10px;color:#0d6efd">{{ gname }}</strong></div>
+            {% for a in attrs %}
+            {% set saved_val = adaptation_saved_attrs.get(a.attribute_id|string, '') if adaptation_saved_attrs else '' %}
+            <div class="row g-1 mb-1 align-items-center attr-row">
+              <div class="col-5">
+                <div style="font-size:10px"><strong>{{ a.name_cn or a.name }}</strong>{% if a.is_required %} <span class="badge bg-danger" style="font-size:7px">必填</span>{% endif %}</div>
+                {% if a.name_cn and a.name_cn != a.name %}<div style="font-size:9px;color:#6c757d">{{ a.name }}</div>{% endif %}
+              </div>
+              <div class="col-6">
+                {% if a.is_dictionary and adaptation_attr_values.get(a.attribute_id) %}
+                <select class="form-select form-select-sm attr-input" style="font-size:10px" data-attr-id="{{ a.attribute_id }}" data-is-required="{{ '1' if a.is_required else '0' }}">
+                  <option value="">-- 选择 --</option>
+                  {% for v in adaptation_attr_values[a.attribute_id] %}
+                  <option value="{{ v.value_id }}" {% if saved_val and (saved_val.value_id if saved_val is mapping else '') == v.value_id or saved_val == v.value_id %}selected{% endif %}>
+                    {{ v.value_cn or v.value }}{% if v.info %} ({{ v.info }}){% endif %}{% if v.value_cn and v.value_cn != v.value %} <small class="text-muted">{{ v.value }}</small>{% endif %}
+                  </option>
+                  {% endfor %}
+                </select>
+                {% elif a.data_type == 'boolean' %}
+                <div class="form-check form-switch">
+                  <input class="form-check-input attr-input" type="checkbox" style="width:28px;height:16px" data-attr-id="{{ a.attribute_id }}" data-is-required="{{ '1' if a.is_required else '0' }}" {% if saved_val %}checked{% endif %}>
+                </div>
+                {% else %}
+                <input type="text" class="form-control form-control-sm attr-input" style="font-size:10px" placeholder="{{ a.description or '' }}" data-attr-id="{{ a.attribute_id }}" data-is-required="{{ '1' if a.is_required else '0' }}" value="{{ saved_val if saved_val is string else '' }}">
+                {% endif %}
+              </div>
+              <div class="col-1">
+                {% if a.is_required %}
+                <span class="attr-gap text-danger" data-attr-id="{{ a.attribute_id }}" style="font-size:8px;{% if saved_val and saved_val != '' %}display:none{% endif %}">❌</span>
+                {% endif %}
+              </div>
+            </div>
+            {% endfor %}
+            {% endfor %}
+            {% endif %}
+          </div>
+          <button class="btn btn-sm btn-outline-success mt-2 w-100" onclick="saveAttributes()">💾 保存属性</button>
+        </div>
+
+        <!-- 字段缺口列表 -->
+        <div id="gapsSection" class="mb-2 {% if not gaps %}d-none{% endif %}">
+          <strong style="font-size:11px">⚠️ 字段缺口</strong>
+          <div id="gapsList">
+          {% for g in gaps %}
+          <div class="p-1 mb-1 rounded {% if g.severity == 'error' %}bg-danger bg-opacity-10 text-danger{% else %}bg-warning bg-opacity-10 text-warning{% endif %}" style="font-size:10px">
+            {{ '❌' if g.severity == 'error' else '⚠️' }} {{ g.field_name }}
+            {% if g.resolved %}<span class="badge bg-success">已解决</span>{% endif %}
+          </div>
+          {% endfor %}
+          </div>
+        </div>
+
+        <hr class="my-2">
+
+        <!-- 俄语标题/描述（保留） -->
+        <div class="mb-2"><strong style="font-size:11px">俄语标题</strong></div>
+        <input type="text" class="form-control form-control-sm mb-2" id="adaptTitleRu" value="{{ adaptation.title_ru if adaptation else '' }}">
+
+        <div class="mb-2"><strong style="font-size:11px">俄语描述</strong></div>
+        <textarea class="form-control form-control-sm mb-2" id="adaptDescRu" rows="3">{{ adaptation.description_ru if adaptation else '' }}</textarea>
+
+        {% if fact.review_status != 'approved' %}
+        <div class="alert alert-warning py-1 mt-2" style="font-size:11px">
+          ⚠️ 商品事实尚未审核通过，请先在中栏确认所有 SKU 事实并点击"审核通过"后再生成草稿。
+        </div>
+        {% endif %}
+
+        <div class="mt-2" style="font-size:11px">
+          <span class="text-muted">置信度:</span>
+          <span class="badge {% if fact.confidence and fact.confidence >= 0.8 %}bg-success{% elif fact.confidence and fact.confidence >= 0.5 %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+            {{ '{:.0%}'.format(fact.confidence) if fact.confidence else '未评估' }}
+          </span>
+          <span class="ms-2 text-muted">审核:</span>
+          <span class="badge {% if fact.review_status == 'approved' %}bg-success{% elif fact.review_status == 'needs_changes' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+            {{ fact.review_status }}
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<!-- 源图片图库弹窗 -->
+<!-- ═══════════════════════════════════════════════════ -->
+<div id="sourceGalleryOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:10000;overflow-y:auto">
+  <div style="max-width:1100px;margin:0 auto;padding:16px">
+    <!-- 顶部栏 -->
+    <div class="d-flex justify-content-between align-items-center mb-3" style="position:sticky;top:0;z-index:1;background:rgba(0,0,0,.88);padding:12px 0;border-bottom:1px solid rgba(255,255,255,.15)">
+      <div>
+        <h5 class="text-white mb-0" style="font-size:15px">🖼 源图片图库</h5>
+        <small class="text-light" style="font-size:11px" id="galleryStats"></small>
+      </div>
+      <button class="btn btn-sm btn-outline-light" onclick="closeSourceGallery()" style="font-size:12px">✕ 关闭</button>
+    </div>
+
+    <!-- 图片网格 -->
+    <div id="galleryGrid" class="row g-2" style="padding-bottom:40px"></div>
+
+    <!-- 大图预览层 -->
+    <div id="galleryFullView" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.95);z-index:10001;cursor:pointer"
+         onclick="this.style.display='none'">
+      <img id="galleryFullImg" src="" referrerpolicy="no-referrer" style="max-width:92vw;max-height:92vh;object-fit:contain;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);border-radius:4px">
+    </div>
+  </div>
+</div>
+
+{% include 'ozon/_category_selector.html' %}
+
+<script>
+const groupId = {{ group.id }};
+const factId = {{ fact.id }};
+
+// 适配关系切换
+document.getElementById('relationSelect').querySelectorAll('button').forEach(btn => {
+  btn.addEventListener('click', function() {
+    const rel = this.dataset.relation;
+    fetch(`/ozon/api/adaptation/${groupId}/relation`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({relation_type: rel})
+    }).then(r => r.json()).then(d => {
+      if (d.ok) {
+        document.getElementById('relationSelect').querySelectorAll('button').forEach(b => b.classList.remove('active','btn-primary'));
+        document.getElementById('relationSelect').querySelectorAll('button').forEach(b => b.classList.add('btn-outline-secondary'));
+        this.classList.remove('btn-outline-secondary');
+        this.classList.add('active','btn-primary');
+      }
+    });
+  });
+});
+
+// 保存事实
+function saveFact() {
+  const data = {
+    standard_name_cn: document.getElementById('factNameCn').value,
+    product_type: document.getElementById('factProductType').value,
+    category_hint_cn: document.getElementById('factCategoryHint').value,
+    brand_name: document.getElementById('factBrand').value,
+    model: document.getElementById('factModel').value,
+    material: document.getElementById('factMaterial').value,
+    origin: document.getElementById('factOrigin').value,
+    warranty: document.getElementById('factWarranty').value,
+    unknown_fields_json: document.getElementById('factUnknown').value || null,
+    skus: []
+  };
+
+  document.querySelectorAll('.sku-confirm').forEach(cb => {
+    const sid = parseInt(cb.dataset.skuId);
+    const sku = {id: sid, manual_status: cb.checked ? 'confirmed' : 'pending'};
+    document.querySelectorAll(`.sku-field[data-sku-id="${sid}"]`).forEach(inp => {
+      sku[inp.dataset.field] = inp.value;
+    });
+    data.skus.push(sku);
+  });
+
+  fetch(`/ozon/api/adaptation/${groupId}/save-fact`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data)
+  }).then(r => r.json()).then(d => {
+    if (d.ok) alert('✅ 商品事实已保存');
+    else alert('❌ ' + d.error);
+  });
+}
+
+// 审核通过
+function approveFact() {
+  fetch(`/ozon/api/fact/${factId}/approve`, {method: 'POST'})
+    .then(r => r.json()).then(d => {
+      if (d.ok) { alert('✅ 事实已审核通过，现在可以生成草稿'); location.reload(); }
+      else alert('❌ ' + d.error);
+    });
+}
+
+// 生成草稿
+function generateDraft() {
+  if (!confirm('确认生成 OZON 刊登草稿？')) return;
+  fetch(`/ozon/api/adaptation/${groupId}/generate-draft`, {method: 'POST'})
+    .then(r => r.json()).then(d => {
+      if (d.ok && d.redirect) { window.location.href = d.redirect; }
+      else alert('❌ ' + (d.error || '生成失败'));
+    });
+}
+
+function analyzeImages() {
+  var btn = document.getElementById('btnAnalyze');
+  btn.disabled = true;
+  btn.innerHTML = '⏳ 识别中...';
+  fetch('/ozon/api/adaptation/{{ source.id }}/analyze-images', { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      btn.disabled = false;
+      btn.textContent = '🔍 AI识别图片';
+      if (d.ok) {
+        alert('✅ ' + d.message);
+        location.reload();
+      } else {
+        alert('❌ ' + (d.error || '识别失败'));
+      }
+    })
+    .catch(function(err) {
+      btn.disabled = false;
+      btn.textContent = '🔍 AI识别图片';
+      alert('❌ 请求失败: ' + err.message);
+    });
+}
+
+function acceptFact(id, btn) {
+  btn.disabled = true;
+  btn.textContent = '...';
+  fetch('/ozon/api/adaptation/accept-image-fact/' + id, { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        var div = document.querySelector('.fact-item-' + id);
+        if (div) {
+          div.style.borderLeftColor = '#28a745';
+          var btns = div.querySelectorAll('button');
+          for (var i = 0; i < btns.length; i++) btns[i].remove();
+          var badge = document.createElement('span');
+          badge.className = 'badge bg-success';
+          badge.style.fontSize = '9px';
+          badge.textContent = '✅ 已接受';
+          btns[0] && btns[0].parentNode.appendChild(badge);
+        }
+        // 刷新 SKU 事实区
+        setTimeout(function() { location.reload(); }, 500);
+      } else {
+        alert('❌ ' + (d.error || '失败'));
+        btn.disabled = false;
+        btn.textContent = '✓';
+      }
+    });
+}
+
+function rejectFact(id, btn) {
+  btn.disabled = true;
+  fetch('/ozon/api/adaptation/reject-image-fact/' + id, { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        var div = document.querySelector('.fact-item-' + id);
+        if (div) div.remove();
+      } else {
+        alert('❌ ' + d.error);
+        btn.disabled = false;
+      }
+    });
+}
+
+function showSourceImage(url) {
+  var overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:flex;align-items:center;justify-content:center;cursor:pointer';
+  overlay.onclick = function() { overlay.remove(); };
+  var img = document.createElement('img');
+  img.src = url;
+  img.style.cssText = 'max-width:90vw;max-height:90vh;object-fit:contain;border-radius:4px';
+  overlay.appendChild(img);
+  document.body.appendChild(overlay);
+}
+
+// ═══════════════════════════════════════════════
+// 源图片图库
+// ═══════════════════════════════════════════════
+
+// 从后端传入的所有源图片数据
+var allSourceMedia = {{ source_media_list_json | tojson | safe }};
+
+// 合规状态中文映射
+var STATUS_LABELS = {
+  'usable': '✅ 可用',
+  'needs_review': '⚠️ 待审核',
+  'rejected': '🚫 已过滤',
+  'pending': '⏳ 待处理',
+  'approved': '✅ 已批准'
+};
+var STATUS_COLORS = {
+  'usable': '#28a745',
+  'needs_review': '#ffc107',
+  'rejected': '#dc3545',
+  'pending': '#6c757d',
+  'approved': '#28a745'
+};
+
+// source_area 中文标签
+var AREA_LABELS = {
+  'main_gallery': '📷 主图区',
+  'sku_panel': '🎨 SKU区',
+  'detail_content': '📝 详情区',
+  'manual_upload': '📎 手动上传',
+  'shop_header': '🏪 店铺头部',
+  'floating': '🪟 浮动元素',
+  'sidebar': '📊 侧栏',
+  'footer': '📄 页脚',
+  'nav': '🧭 导航栏',
+  'ad': '📢 广告位',
+  'certification': '🏅 认证标识',
+  'unknown': '❓ 未知来源'
+};
+
+// 图片来源标签
+function getSourceLabel(m) {
+  if (m.role === 'main')   return '<span class="badge bg-primary" style="font-size:8px">主图</span>';
+  if (m.role === 'sku')    return '<span class="badge bg-secondary" style="font-size:8px">SKU图</span>';
+  if (m.role === 'detail') return '<span class="badge bg-success" style="font-size:8px">详情图</span>';
+  return '<span class="badge bg-dark" style="font-size:8px">' + (m.role || '未知') + '</span>';
+}
+
+function openSourceGallery() {
+  var overlay = document.getElementById('sourceGalleryOverlay');
+  var grid = document.getElementById('galleryGrid');
+  var stats = document.getElementById('galleryStats');
+
+  if (!allSourceMedia || !allSourceMedia.length) {
+    grid.innerHTML = '<div class="col-12 text-center text-white py-5">暂无图片数据</div>';
+    overlay.style.display = 'block';
+    return;
+  }
+
+  // 按角色统计（5 分组）
+  var notRejected = function(m) { return m.compliance_status !== 'rejected'; };
+  var mainCount    = allSourceMedia.filter(function(m) { return m.role === 'main' && notRejected(m) && m.compliance_status !== 'needs_review'; }).length;
+  var skuCount     = allSourceMedia.filter(function(m) { return m.role === 'sku' && notRejected(m) && m.compliance_status !== 'needs_review'; }).length;
+  var detailCount  = allSourceMedia.filter(function(m) { return m.role === 'detail' && notRejected(m) && m.compliance_status !== 'needs_review'; }).length;
+  var reviewCount  = allSourceMedia.filter(function(m) { return m.compliance_status === 'needs_review'; }).length;
+  var rejected     = allSourceMedia.filter(function(m) { return m.compliance_status === 'rejected'; }).length;
+
+  var statsText = '主图 ' + mainCount +
+    ' | SKU图 ' + skuCount +
+    ' | 详情图 ' + detailCount +
+    (reviewCount > 0 ? ' | 待审核 ' + reviewCount : '') +
+    ' | 已过滤 ' + rejected;
+  var warnings = [];
+  var sourcePlatform = '{{ source.platform }}';
+  if (sourcePlatform === 'taobao' || sourcePlatform === 'tmall') {
+    if (detailCount === 0) {
+      warnings.push('<span class="text-muted">ℹ️ 淘宝/天猫详情图请通过 1688 同款或手动补图</span>');
+    }
+  } else if (sourcePlatform === '1688') {
+    if (detailCount === 0) {
+      warnings.push('<span style="color:#ffc107">⚠️ 未采集到详情图，建议重新采集或手动补图</span>');
+    }
+    if (skuCount === 0 && allSourceMedia.filter(function(m) { return m.role === 'sku'; }).length === 0) {
+      var skuTotal = {{ source.sku_count or 0 }};
+      if (skuTotal > 0) {
+        warnings.push('<span style="color:#ffc107">⚠️ SKU 图未绑定到规格项，请检查 SKU 区域选择器</span>');
+      }
+    }
+  }
+  stats.innerHTML = statsText + (warnings.length ? '<br>' + warnings.join('<br>') : '');
+
+  // 按角色分组排序（5 分组）
+  function getGroupKey(m) {
+    if (m.compliance_status === 'rejected') return 'reject';
+    if (m.compliance_status === 'needs_review') return 'review';
+    if (m.role === 'main') return 'main';
+    if (m.role === 'sku') return 'sku';
+    if (m.role === 'detail') return 'detail';
+    return 'reject';
+  }
+  var groupOrder = {'main': 0, 'sku': 1, 'detail': 2, 'review': 3, 'reject': 4};
+  var groupLabels = {
+    'main': '📷 主图', 'sku': '🎨 SKU 图',
+    'detail': '📝 详情图', 'review': '⚠️ 待审核', 'reject': '🚫 已过滤'
+  };
+  var sorted = allSourceMedia.slice().sort(function(a, b) {
+    return (groupOrder[getGroupKey(a)] || 4) - (groupOrder[getGroupKey(b)] || 4);
+  });
+
+  // 渲染网格（按角色分组）
+  var html = '';
+  var lastGroup = '';
+  sorted.forEach(function(m, i) {
+    var compStatus = m.compliance_status || 'usable';
+    var groupKey = getGroupKey(m);
+    if (groupKey !== lastGroup) {
+      html += '<div class="col-12"><h6 class="text-white mt-2 mb-1" style="font-size:13px;border-bottom:1px solid #444;padding-bottom:4px">' + (groupLabels[groupKey] || groupKey) + '</h6></div>';
+      lastGroup = groupKey;
+    }
+    var statusLabel = STATUS_LABELS[compStatus] || compStatus;
+    var statusColor = STATUS_COLORS[compStatus] || '#6c757d';
+    var isRejected = compStatus === 'rejected';
+    var isReview = compStatus === 'needs_review';
+    var reason = m.reject_reason || '';
+    var sourceArea = m.source_area || 'unknown';
+    var areaLabel = AREA_LABELS[sourceArea] || sourceArea;
+    var dimensions = (m.width > 0 && m.height > 0) ? (m.width + '×' + m.height) : '';
+    var altText = m.alt || '';
+    var srcLabel = getSourceLabel(m);
+    // 找到在原始数组中的索引（用于大图查看）
+    var origIdx = allSourceMedia.indexOf(m);
+
+    html += '<div class="col-6 col-md-4 col-lg-3">' +
+      '<div class="card bg-dark text-white h-100" style="border-color:' + statusColor + ';border-width:' + (isRejected ? '1px' : '2px') + '">' +
+        // 缩略图
+        '<div style="height:160px;background:#1a1a2e;display:flex;align-items:center;justify-content:center;cursor:pointer" ' +
+             'onclick="galleryViewFullByIndex(' + origIdx + ')">' +
+          '<img src="' + m.source_url + '" loading="lazy" referrerpolicy="no-referrer" ' +
+               'style="max-width:100%;max-height:160px;object-fit:contain' + (isRejected ? ';opacity:.4' : '') + '" ' +
+               'onerror="this.parentElement.innerHTML=\'<div style=color:#999;font-size:12px>图片加载失败</div>\'">' +
+        '</div>' +
+        // 信息区
+        '<div class="card-body p-2" style="font-size:11px">' +
+          '<div class="d-flex justify-content-between align-items-start mb-1">' +
+            srcLabel +
+            '<span class="badge" style="font-size:9px;background:' + statusColor + '">' + statusLabel + '</span>' +
+          '</div>' +
+          '<div class="text-muted mb-1" style="font-size:9px">' + areaLabel +
+            (dimensions ? ' <span style="color:#6c757d">' + dimensions + '</span>' : '') +
+          '</div>' +
+          (m.linked_sku_name ? '<div class="mb-1"><span class="badge bg-info" style="font-size:8px">SKU: ' + m.linked_sku_name.replace(/&/g,'&amp;').replace(/</g,'&lt;').substring(0,25) + '</span></div>' : '') +
+          (m.collect_reason ? '<div class="text-muted mb-1" style="font-size:8px">' + m.collect_reason.replace(/&/g,'&amp;').replace(/</g,'&lt;').substring(0,40) + '</div>' : '') +
+          (altText ? '<div class="text-muted mb-1" style="font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + altText.replace(/"/g, '&quot;') + '">alt: ' + altText + '</div>' : '') +
+          (reason ? '<div class="mb-1" style="font-size:9px;color:' + statusColor + ';word-break:break-all">' + reason.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') + '</div>' : '') +
+          '<div class="d-flex gap-1 mt-1">' +
+            // 查看大图（使用索引避免 URL 特殊字符问题）
+            '<button class="btn btn-sm btn-outline-light flex-grow-1" style="font-size:9px;padding:2px 6px" onclick="galleryViewFullByIndex(' + origIdx + ')">🔍 大图</button>' +
+            // 恢复按钮（仅被过滤的显示）
+            (isRejected || isReview ?
+              '<button class="btn btn-sm btn-outline-success" style="font-size:9px;padding:2px 6px" onclick="restoreMedia(' + m.id + ', this)">↩ 恢复</button>' : '') +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  });
+
+  grid.innerHTML = html;
+  overlay.style.display = 'block';
+  document.body.style.overflow = 'hidden';
+}
+
+function closeSourceGallery() {
+  document.getElementById('sourceGalleryOverlay').style.display = 'none';
+  document.getElementById('galleryFullView').style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+function galleryViewFull(url) {
+  var view = document.getElementById('galleryFullView');
+  var img = document.getElementById('galleryFullImg');
+  img.src = url;
+  view.style.display = 'block';
+}
+
+function galleryViewFullByIndex(index) {
+  if (allSourceMedia && allSourceMedia[index]) {
+    galleryViewFull(allSourceMedia[index].source_url);
+  }
+}
+
+// ESC 关闭
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') {
+    var gallery = document.getElementById('sourceGalleryOverlay');
+    var fullView = document.getElementById('galleryFullView');
+    if (fullView.style.display === 'block') {
+      fullView.style.display = 'none';
+    } else if (gallery.style.display === 'block') {
+      closeSourceGallery();
+    }
+  }
+});
+
+// 恢复被过滤的图片
+function restoreMedia(mediaId, btn) {
+  if (!confirm('确认将此图片恢复为可用？')) return;
+  btn.disabled = true;
+  btn.textContent = '⏳';
+  fetch('/ozon/api/source-media/' + mediaId + '/restore', { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        // 更新本地数据
+        var found = allSourceMedia.find(function(m) { return m.id === mediaId; });
+        if (found) {
+          found.compliance_status = 'usable';
+          found.reject_reason = '人工恢复';
+          found.review_status = 'approved';
+        }
+        // 刷新图库
+        openSourceGallery();
+      } else {
+        alert('恢复失败: ' + (d.error || ''));
+        btn.disabled = false;
+        btn.textContent = '↩ 恢复';
+      }
+    })
+    .catch(function(e) {
+      alert('请求失败: ' + e.message);
+      btn.disabled = false;
+      btn.textContent = '↩ 恢复';
+    });
+}
+
+// ── 手动补图 ──────────────────────────────────────
+function toggleManualUpload() {
+  var panel = document.getElementById('manualUploadPanel');
+  var toggle = document.getElementById('manualUploadToggle');
+  if (panel.style.display === 'none') {
+    panel.style.display = 'block';
+    toggle.textContent = '▼';
+  } else {
+    panel.style.display = 'none';
+    toggle.textContent = '▶';
+  }
+}
+
+function submitManualUpload() {
+  var formData = new FormData();
+  formData.append('role', document.getElementById('uploadRole').value);
+
+  var files = document.getElementById('uploadFiles').files;
+  for (var i = 0; i < files.length; i++) {
+    formData.append('images', files[i]);
+  }
+
+  var urlText = (document.getElementById('uploadUrls').value || '').trim();
+  if (urlText) {
+    urlText.split('\n').forEach(function(line) {
+      line = line.trim();
+      if (line) formData.append('urls', line);
+    });
+  }
+
+  if (!files.length && !urlText) {
+    document.getElementById('uploadResult').innerHTML = '<span class="text-warning">请选择文件或输入 URL</span>';
+    return;
+  }
+
+  var resultEl = document.getElementById('uploadResult');
+  resultEl.innerHTML = '<span class="text-info">⏳ 上传中...</span>';
+
+  fetch('/ozon/api/source-media/{{ source.id }}/upload', {
+    method: 'POST',
+    body: formData
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.ok) {
+      resultEl.innerHTML = '<span class="text-success">✅ 已上传 ' + data.count + ' 张图片</span>';
+      setTimeout(function() { location.reload(); }, 1500);
+    } else {
+      resultEl.innerHTML = '<span class="text-danger">❌ ' + (data.error || '上传失败') + '</span>';
+    }
+  })
+  .catch(function(e) {
+    resultEl.innerHTML = '<span class="text-danger">❌ 请求失败: ' + e.message + '</span>';
+  });
+}
+
+// ═══════════════════════════════════════════════
+// 新增：类目/Type/属性选择与同步
+// ═══════════════════════════════════════════════
+
+// OZON 类目推荐
+function recommendCategory() {
+  var btn = document.getElementById('btnRecommendCat');
+  var results = document.getElementById('recommendResults');
+  btn.disabled = true;
+  btn.textContent = '⏳...';
+  results.classList.remove('d-none');
+  results.innerHTML = '<div class="text-center text-muted py-2"><div class="spinner-border spinner-border-sm"></div> 匹配中...</div>';
+
+  fetch('/ozon/api/adaptation/' + groupId + '/recommend-category')
+    .then(function(r){return r.json()})
+    .then(function(d){
+      btn.disabled = false;
+      btn.textContent = '🤖 推荐类目';
+      if (!d.ok) {
+        results.innerHTML = '<div class="text-danger">推荐失败: ' + (d.error || '') + '</div>';
+        return;
+      }
+      if (!d.recommendations || !d.recommendations.length) {
+        results.innerHTML = '<div class="text-muted">暂无匹配推荐，请手动选择类目。提示：先在中栏填写"商品类型"和"本地品类"字段以提升匹配率。</div>';
+        return;
+      }
+
+      var html = '<div class="mb-1"><strong>📋 推荐类目/Type (Top ' + d.recommendations.length + ')</strong></div>';
+      d.recommendations.forEach(function(r, i){
+        var badge = r.source === 'favorite' ? '⭐ 收藏' : '🔍 匹配';
+        html += '<div class="mb-1 p-1 bg-light rounded" style="cursor:pointer;border-left:3px solid ' +
+          (r.source === 'favorite' ? '#ffc107' : '#0d6efd') + '" onclick="useRecommendation(\'' +
+          r.description_category_id + '\', \'' + r.type_id + '\', \'' +
+          (r.type_name || '').replace(/'/g, "\\'") + '\', \'' +
+          (r.path || '').replace(/'/g, "\\'") + '\')">' +
+          '<div class="d-flex justify-content-between">' +
+            '<strong>' + (r.type_name || 'Type ' + r.type_id) + '</strong>' +
+            '<span class="badge" style="font-size:8px;background:' + (r.source === 'favorite' ? '#ffc107' : '#e9ecef') + '">' + badge + ' 分' + r.score + '</span>' +
+          '</div>' +
+          (r.type_name_ru && r.type_name_ru !== r.type_name ? '<div style="font-size:9px;color:#6c757d">🇷🇺 ' + r.type_name_ru + '</div>' : '') +
+          '<div class="text-muted" style="font-size:9px">📂 ' + (r.path || ('dcid=' + r.description_category_id)) + '</div>' +
+          '<div class="text-muted" style="font-size:9px">' + r.reason + '</div>' +
+        '</div>';
+      });
+      results.innerHTML = html;
+    })
+    .catch(function(e){
+      btn.disabled = false;
+      btn.textContent = '🤖 推荐类目';
+      results.innerHTML = '<div class="text-danger">请求失败</div>';
+    });
+}
+
+// 采纳推荐
+function useRecommendation(dcid, typeId, typeName, path) {
+  onCategoryTypeSelected({
+    description_category_id: dcid,
+    type_id: typeId,
+    type_name: typeName,
+    path: path
+  });
+  // 高亮推荐结果
+  document.getElementById('recommendResults').querySelectorAll('.bg-light').forEach(function(el){
+    el.style.background = '#d4edda';
+  });
+}
+
+// 打开类目选择器模态框
+function openCategoryForAdaptation() {
+  openCategorySelector(function(result) {
+    onCategoryTypeSelected(result);
+  });
+}
+
+// 处理模态框回调：保存类目/Type 到后端
+function onCategoryTypeSelected(result) {
+  fetch('/ozon/api/adaptation/' + groupId + '/save-category-type', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      description_category_id: result.description_category_id,
+      type_id: result.type_id || '',
+      type_name: result.type_name || '',
+      path: result.path || ''
+    })
+  }).then(function(r){return r.json()}).then(function(d){
+    if (d.ok) {
+      // 更新 UI
+      document.getElementById('selectedCategoryInfo').classList.remove('d-none');
+      document.getElementById('catPathDisplay').textContent = d.category_path || result.path;
+      document.getElementById('catIdDisplay').textContent = d.ozon_category_id;
+      document.getElementById('typeSelectorSection').classList.remove('d-none');
+
+      // 加载 Type 列表
+      loadTypesForCategory(d.ozon_category_id, d.type_id);
+
+      // 如果已有 type，加载属性表单
+      if (d.type_id) {
+        document.getElementById('syncAttrSection').classList.remove('d-none');
+        loadAttributeForm(d.ozon_category_id, d.type_id);
+      }
+    } else {
+      alert('保存类目失败: ' + (d.error || ''));
+    }
+  });
+}
+
+// 加载类目的 Type 列表
+function loadTypesForCategory(dcid, selectedTypeId) {
+  var select = document.getElementById('typeSelect');
+  select.innerHTML = '<option value="">⏳ 加载中...</option>';
+
+  fetch('/ozon/api/category/' + dcid + '/types')
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (d.ok && d.items && d.items.length > 0) {
+        select.innerHTML = '<option value="">-- 选择商品类型 --</option>' +
+          d.items.map(function(t){
+            var name = t.name_cn || t.name || ('type_' + t.id);
+            return '<option value="' + t.id + '"' +
+              (t.id === selectedTypeId ? ' selected' : '') + '>' +
+              name + ' (' + t.id + ')</option>';
+          }).join('');
+        updateTypeDisplay();
+      } else {
+        select.innerHTML = '<option value="">-- 暂无 type，请先点击「📋 同步 type」--</option>';
+        document.getElementById('syncAttrSection').classList.add('d-none');
+      }
+    })
+    .catch(function(e){
+      select.innerHTML = '<option value="">-- 加载失败 --</option>';
+    });
+}
+
+// Type 下拉框切换
+function onTypeSelectChange() {
+  var typeId = document.getElementById('typeSelect').value;
+  var dcid = document.getElementById('catIdDisplay').textContent.trim();
+
+  if (!typeId || !dcid) return;
+
+  var typeName = document.getElementById('typeSelect').selectedOptions[0].text;
+
+  fetch('/ozon/api/adaptation/' + groupId + '/save-category-type', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      description_category_id: dcid,
+      type_id: typeId,
+      type_name: typeName,
+      path: document.getElementById('catPathDisplay').textContent || ''
+    })
+  }).then(function(r){return r.json()}).then(function(d){
+    if (d.ok) {
+      updateTypeDisplay();
+      document.getElementById('syncAttrSection').classList.remove('d-none');
+      // 先尝试从本地数据库加载属性（已同步过的直接显示）
+      loadAttributeForm(dcid, typeId);
+    }
+  });
+}
+
+function updateTypeDisplay() {
+  var select = document.getElementById('typeSelect');
+  var info = document.getElementById('selectedTypeInfo');
+  if (select.value && select.selectedIndex > 0) {
+    info.innerHTML = '已选: ' + select.selectedOptions[0].text + ' <code>' + select.value + '</code>';
+  } else {
+    info.innerHTML = '';
+  }
+}
+
+// 同步当前类目的 Type 列表
+function syncTypesForCurrentCategory() {
+  var dcid = document.getElementById('catIdDisplay').textContent.trim();
+  if (!dcid) { alert('请先选择类目'); return; }
+  var btn = document.getElementById('btnSyncTypes');
+  btn.disabled = true; btn.textContent = '⏳...';
+
+  fetch('/ozon/api/category/' + dcid + '/sync-types', {method: 'POST'})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      btn.disabled = false; btn.textContent = '📋 同步 type';
+      if (d.ok && d.status === 'done') {
+        loadTypesForCategory(dcid, null);
+      } else if (d.ok && d.status === 'has_children') {
+        alert('当前类目还有子类目，请在类目选择器中继续展开到最细分类目。');
+      } else if (d.ok && d.status === 'too_broad') {
+        alert(d.message || '当前类目下 type 数量过多，请在类目选择器中展开到更细分的类目。');
+      } else {
+        alert(d.message || d.error || '同步失败');
+      }
+    })
+    .catch(function(e){
+      btn.disabled = false; btn.textContent = '📋 同步 type';
+      alert('请求失败: ' + e.message);
+    });
+}
+
+// 同步当前 Type 的属性+字典值
+function syncAttributesForType() {
+  var dcid = document.getElementById('catIdDisplay').textContent.trim();
+  var typeId = document.getElementById('typeSelect').value;
+  if (!dcid || !typeId) { alert('请先选择类目和类型'); return; }
+
+  var btn = document.getElementById('btnSyncAttrs');
+  btn.disabled = true; btn.textContent = '⏳ 同步中...';
+
+  fetch('/ozon/api/category/' + dcid + '/sync-current-type-full?type_id=' + typeId, {
+    method: 'POST'
+  }).then(function(r){return r.json()}).then(function(d){
+    if (d.ok) {
+      loadAttributeForm(dcid, typeId);
+    } else {
+      alert('同步失败: ' + (d.error || d.message || ''));
+    }
+    btn.disabled = false; btn.textContent = '📥 同步属性/字典';
+  }).catch(function(e){
+    btn.disabled = false; btn.textContent = '📥 同步属性/字典';
+    alert('请求失败: ' + e.message);
+  });
+}
+
+// 加载并渲染属性表单
+function loadAttributeForm(dcid, typeId) {
+  var section = document.getElementById('attributeFormSection');
+  var form = document.getElementById('attributeForm');
+  section.classList.remove('d-none');
+  form.innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm"></div></div>';
+
+  fetch('/ozon/api/category/' + dcid + '/get-attributes?type_id=' + typeId)
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (!d.ok || !d.attrs || !d.attrs.length) {
+        form.innerHTML = '<div class="text-muted text-center py-2">暂无属性数据，请点击「📥 同步属性/字典」从 OZON 拉取。</div>';
+        document.getElementById('syncAttrSection').classList.remove('d-none');
+        return;
+      }
+      // 已从本地加载成功，隐藏同步提示
+      document.getElementById('syncAttrSection').classList.add('d-none');
+      document.getElementById('attributeFormSection').classList.remove('d-none');
+
+      var attrs = d.attrs;
+      var requiredCount = attrs.filter(function(a){return a.is_required;}).length;
+      document.getElementById('attrRequiredCount').textContent = requiredCount + ' 必填';
+
+      // 按 group_name 分组
+      var groups = {};
+      attrs.forEach(function(a){
+        var g = a.group_name || '基本属性';
+        if (!groups[g]) groups[g] = [];
+        groups[g].push(a);
+      });
+
+      var html = '';
+      Object.keys(groups).forEach(function(gName){
+        html += '<div class="mb-1"><strong style="font-size:10px;color:#0d6efd">' + gName + '</strong></div>';
+        groups[gName].forEach(function(a){
+          html += renderAttributeRow(a);
+        });
+      });
+
+      form.innerHTML = html;
+
+      // 回填已保存的值
+      loadSavedAttributeValues();
+    })
+    .catch(function(e){
+      form.innerHTML = '<div class="text-danger text-center py-2">加载失败: ' + e.message + '</div>';
+    });
+}
+
+// 渲染单行属性
+function renderAttributeRow(a) {
+  var nameCn = a.name_cn || a.name;
+  var requiredBadge = a.is_required ? ' <span class="badge bg-danger" style="font-size:7px">必填</span>' : '';
+  var nameHtml = '<div style="font-size:10px"><strong>' + nameCn + '</strong>' + requiredBadge + '</div>';
+  if (a.name_cn && a.name_cn !== a.name) {
+    nameHtml += '<div style="font-size:9px;color:#6c757d">' + a.name + '</div>';
+  }
+
+  var inputHtml = '';
+  if (a.is_dictionary && a.values && a.values.length > 0) {
+    inputHtml = '<select class="form-select form-select-sm attr-input" style="font-size:10px" '
+      + 'data-attr-id="' + a.attribute_id + '" data-is-required="' + (a.is_required ? '1' : '0') + '">'
+      + '<option value="">-- 选择 --</option>';
+    a.values.forEach(function(v){
+      var display = v.value_cn || v.value;
+      inputHtml += '<option value="' + v.value_id + '">' + display
+        + (v.info ? ' (' + v.info + ')' : '') + (v.value_cn ? ' <small class=text-muted>' + v.value + '</small>' : '') + '</option>';
+    });
+    inputHtml += '</select>';
+  } else if (a.data_type === 'boolean') {
+    inputHtml = '<div class="form-check form-switch">'
+      + '<input class="form-check-input attr-input" type="checkbox" style="width:28px;height:16px" '
+      + 'data-attr-id="' + a.attribute_id + '" data-is-required="' + (a.is_required ? '1' : '0') + '">'
+      + '</div>';
+  } else {
+    inputHtml = '<input type="text" class="form-control form-control-sm attr-input" '
+      + 'style="font-size:10px" placeholder="' + (a.description || '') + '" '
+      + 'data-attr-id="' + a.attribute_id + '" data-is-required="' + (a.is_required ? '1' : '0') + '">';
+  }
+
+  var gapIndicator = '';
+  if (a.is_required) {
+    gapIndicator = ' <span class="attr-gap text-danger" data-attr-id="' + a.attribute_id
+      + '" style="font-size:8px;display:none">❌</span>';
+  }
+
+  return '<div class="row g-1 mb-1 align-items-center attr-row">'
+    + '<div class="col-5">' + nameHtml + '</div>'
+    + '<div class="col-6">' + inputHtml + '</div>'
+    + '<div class="col-1">' + gapIndicator + '</div>'
+    + '</div>';
+}
+
+// 保存属性值
+function saveAttributes() {
+  var attrs = {};
+  document.querySelectorAll('.attr-input').forEach(function(inp){
+    var id = inp.dataset.attrId;
+    var val;
+    if (inp.type === 'checkbox') {
+      val = inp.checked;
+    } else {
+      val = inp.value;
+    }
+    if (val !== '' && val !== false) {
+      attrs[id] = val;
+    }
+  });
+
+  var dcid = document.getElementById('catIdDisplay').textContent.trim();
+  var typeId = document.getElementById('typeSelect').value;
+
+  fetch('/ozon/api/adaptation/' + groupId + '/save-attributes', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      category_id: dcid,
+      type_id: typeId,
+      attributes: attrs
+    })
+  }).then(function(r){return r.json()}).then(function(d){
+    if (d.ok) {
+      updateGapIndicators(d.gaps || []);
+      // 更新缺口列表
+      renderGapsList(d.gaps || []);
+      if (d.blocking_count > 0) {
+        alert('已保存。还有 ' + d.blocking_count + ' 个必填字段未填写。');
+      } else {
+        alert('✅ 属性已保存');
+      }
+    } else {
+      alert('保存失败: ' + (d.error || ''));
+    }
+  }).catch(function(e){
+    alert('请求失败: ' + e.message);
+  });
+}
+
+// 更新缺口指示器（必填未填标红）
+function updateGapIndicators(gaps) {
+  document.querySelectorAll('.attr-gap').forEach(function(g){g.style.display='none'});
+  var gapAttrIds = new Set(gaps.map(function(g){return g.attribute_id;}));
+  gapAttrIds.forEach(function(aid){
+    var indicator = document.querySelector('.attr-gap[data-attr-id="' + aid + '"]');
+    if (indicator) indicator.style.display = '';
+  });
+}
+
+// 渲染缺口列表
+function renderGapsList(gaps) {
+  var section = document.getElementById('gapsSection');
+  var list = document.getElementById('gapsList');
+  if (!gaps || gaps.length === 0) {
+    section.classList.add('d-none');
+    return;
+  }
+  section.classList.remove('d-none');
+  list.innerHTML = gaps.map(function(g){
+    return '<div class="p-1 mb-1 rounded bg-danger bg-opacity-10 text-danger" style="font-size:10px">'
+      + '❌ ' + g.field_name + '</div>';
+  }).join('');
+}
+
+// 页面加载时回填已保存的属性值（用于服务器端渲染的静态属性表）
+function loadSavedAttributeValues() {
+  // 尝试从服务器端传递的 adaptation_saved_attrs 加载
+  {% if adaptation_saved_attrs %}
+  try {
+    var saved = {{ adaptation_saved_attrs | tojson | safe }};
+    Object.keys(saved).forEach(function(attrId){
+      var inp = document.querySelector('.attr-input[data-attr-id="' + attrId + '"]');
+      if (!inp) return;
+      var val = saved[attrId];
+      if (inp.type === 'checkbox') {
+        inp.checked = !!val;
+      } else if (inp.tagName === 'SELECT') {
+        // 尝试匹配 value_id
+        var vid = (typeof val === 'object' && val.value_id) ? val.value_id : val;
+        for (var i = 0; i < inp.options.length; i++) {
+          if (inp.options[i].value === String(vid)) {
+            inp.selectedIndex = i;
+            break;
+          }
+        }
+      } else {
+        inp.value = (typeof val === 'object' && val.value) ? val.value : (val || '');
+      }
+    });
+  } catch(e) {}
+  {% endif %}
+}
+
+// AI 智能填充（修复缺失的函数）
+function aiSuggest() {
+  var btn = document.getElementById('btnAiSuggest');
+  btn.disabled = true;
+  btn.textContent = '⏳ AI 分析中...';
+  fetch('/ozon/api/adaptation/' + groupId + '/ai-suggest', {method: 'POST'})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      btn.disabled = false;
+      btn.textContent = '🤖 AI智能填充';
+      if (d.ok) {
+        alert('✅ AI 分析完成，请检查填充结果');
+        location.reload();
+      } else {
+        alert('❌ ' + (d.error || 'AI 分析失败'));
+      }
+    })
+    .catch(function(e){
+      btn.disabled = false;
+      btn.textContent = '🤖 AI智能填充';
+      alert('❌ 请求失败: ' + e.message);
+    });
+}
+
+// 页面初始化：预加载状态
+(function initRightPanel() {
+  var dcid = '{{ adaptation.ozon_category_id if adaptation else "" }}';
+  var typeId = '{{ adaptation.type_id if adaptation else "" }}';
+
+  if (dcid && typeId) {
+    // 已绑定类目+Type：加载属性表单
+    loadAttributeForm(dcid, typeId);
+  } else if (dcid) {
+    // 只绑定类目：加载 Type 列表
+    loadTypesForCategory(dcid, null);
+  }
+  // else: 无类目，等待用户选择
+})();
+</script>
+{% endblock %}

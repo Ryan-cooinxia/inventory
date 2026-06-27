@@ -1,0 +1,262 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1900" height="1320" viewBox="0 0 1900 1320">
+  <defs>
+    <style>
+      .bg { fill: #f5f7fb; }
+      .title { font: 800 42px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #111827; }
+      .subtitle { font: 500 20px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #667085; }
+      .lane { fill: #ffffff; stroke: #dbe3ef; stroke-width: 1.5; }
+      .lane-title { font: 800 22px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #1f2937; }
+      .lane-note { font: 500 15px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #667085; }
+      .box { fill: #ffffff; stroke: #cfd8e6; stroke-width: 1.8; filter: url(#shadow); }
+      .box-blue { fill: #eff6ff; stroke: #93c5fd; }
+      .box-green { fill: #ecfdf3; stroke: #86efac; }
+      .box-yellow { fill: #fffbeb; stroke: #fcd34d; }
+      .box-purple { fill: #f5f3ff; stroke: #c4b5fd; }
+      .box-red { fill: #fef2f2; stroke: #fca5a5; }
+      .box-dark { fill: #111827; stroke: #111827; }
+      .box-title { font: 800 21px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #111827; }
+      .box-text { font: 500 15px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #374151; }
+      .dark-title { font: 800 21px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #ffffff; }
+      .dark-text { font: 500 15px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #d1d5db; }
+      .decision { fill: #fff7ed; stroke: #fb923c; stroke-width: 2; filter: url(#shadow); }
+      .decision-text { font: 800 18px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #9a3412; }
+      .small { font: 500 13px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #667085; }
+      .tag { font: 800 13px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #ffffff; }
+      .arrow { fill: none; stroke: #64748b; stroke-width: 3; marker-end: url(#arrow); }
+      .arrow-ok { fill: none; stroke: #16a34a; stroke-width: 3; marker-end: url(#arrow-ok); }
+      .arrow-bad { fill: none; stroke: #ef4444; stroke-width: 3; marker-end: url(#arrow-bad); stroke-dasharray: 8 7; }
+      .arrow-dash { fill: none; stroke: #94a3b8; stroke-width: 2.4; marker-end: url(#arrow); stroke-dasharray: 7 7; }
+    </style>
+    <filter id="shadow" x="-12%" y="-12%" width="124%" height="124%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#0f172a" flood-opacity="0.10"/>
+    </filter>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#64748b"/>
+    </marker>
+    <marker id="arrow-ok" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#16a34a"/>
+    </marker>
+    <marker id="arrow-bad" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#ef4444"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1900" height="1320"/>
+
+  <text class="title" x="70" y="76">OZON 自动上架功能 - 开发逻辑流程图</text>
+  <text class="subtitle" x="72" y="114">开发原则：先拿准数据，再确认事实，再做分析，再生成素材和 Listing，最后审核发布。</text>
+
+  <!-- swim lanes -->
+  <rect class="lane" x="55" y="150" width="250" height="980" rx="28"/>
+  <rect class="lane" x="325" y="150" width="250" height="980" rx="28"/>
+  <rect class="lane" x="595" y="150" width="250" height="980" rx="28"/>
+  <rect class="lane" x="865" y="150" width="250" height="980" rx="28"/>
+  <rect class="lane" x="1135" y="150" width="250" height="980" rx="28"/>
+  <rect class="lane" x="1405" y="150" width="250" height="980" rx="28"/>
+  <rect class="lane" x="1675" y="150" width="170" height="980" rx="28"/>
+
+  <text class="lane-title" x="84" y="193">A. 采集层</text>
+  <text class="lane-note" x="84" y="220">解决“拿什么”</text>
+  <text class="lane-title" x="354" y="193">B. 确认层</text>
+  <text class="lane-note" x="354" y="220">解决“准不准”</text>
+  <text class="lane-title" x="624" y="193">C. 事实层</text>
+  <text class="lane-note" x="624" y="220">解决“是什么”</text>
+  <text class="lane-title" x="894" y="193">D. 分析层</text>
+  <text class="lane-note" x="894" y="220">解决“怎么卖”</text>
+  <text class="lane-title" x="1164" y="193">E. 生成层</text>
+  <text class="lane-note" x="1164" y="220">图片 / 文案 / Listing</text>
+  <text class="lane-title" x="1434" y="193">F. 审核发布层</text>
+  <text class="lane-note" x="1434" y="220">校验 / 发布 / 回写</text>
+  <text class="lane-title" x="1698" y="193">结果</text>
+  <text class="lane-note" x="1698" y="220">复盘迭代</text>
+
+  <!-- A collection -->
+  <rect class="box box-blue" x="82" y="270" width="196" height="130" rx="18"/>
+  <text class="box-title" x="106" y="310">定义采集清单</text>
+  <text class="box-text" x="106" y="340">主图 / SKU 图 / 详情图</text>
+  <text class="box-text" x="106" y="364">标题 / 类目 / SKU 价格</text>
+  <text class="box-text" x="106" y="388">属性 / 富文本 JSON</text>
+
+  <rect class="box box-blue" x="82" y="475" width="196" height="130" rx="18"/>
+  <text class="box-title" x="106" y="515">执行商品采集</text>
+  <text class="box-text" x="106" y="545">页面固化采集优先</text>
+  <text class="box-text" x="106" y="569">API 可用则走 API</text>
+  <text class="box-text" x="106" y="593">失败记录原因</text>
+
+  <rect class="box" x="82" y="680" width="196" height="130" rx="18"/>
+  <text class="box-title" x="106" y="720">保存源数据</text>
+  <text class="box-text" x="106" y="750">OzonSource</text>
+  <text class="box-text" x="106" y="774">SourceSku</text>
+  <text class="box-text" x="106" y="798">SourceMedia</text>
+
+  <!-- B confirm -->
+  <rect class="box box-yellow" x="352" y="270" width="196" height="130" rx="18"/>
+  <text class="box-title" x="376" y="310">采集成果确认</text>
+  <text class="box-text" x="376" y="340">数量完整度</text>
+  <text class="box-text" x="376" y="364">字段完整度</text>
+  <text class="box-text" x="376" y="388">图片角色识别</text>
+
+  <polygon class="decision" points="450,475 548,540 450,605 352,540"/>
+  <text class="decision-text" x="396" y="535">采集是否</text>
+  <text class="decision-text" x="414" y="560">足够？</text>
+
+  <rect class="box box-red" x="352" y="680" width="196" height="130" rx="18"/>
+  <text class="box-title" x="376" y="720">补采 / 人工补充</text>
+  <text class="box-text" x="376" y="750">补详情图</text>
+  <text class="box-text" x="376" y="774">补 SKU / 属性</text>
+  <text class="box-text" x="376" y="798">标记缺失原因</text>
+
+  <!-- C facts -->
+  <rect class="box box-purple" x="622" y="270" width="196" height="130" rx="18"/>
+  <text class="box-title" x="646" y="310">AI 识别与抽取</text>
+  <text class="box-text" x="646" y="340">图片识别主体 / 配件</text>
+  <text class="box-text" x="646" y="364">文本抽取参数 / 卖点</text>
+  <text class="box-text" x="646" y="388">SKU 差异归纳</text>
+
+  <rect class="box box-green" x="622" y="475" width="196" height="130" rx="18"/>
+  <text class="box-title" x="646" y="515">商品事实档案</text>
+  <text class="box-text" x="646" y="545">身份 / SKU / 结构</text>
+  <text class="box-text" x="646" y="569">参数 / 功能 / 包装</text>
+  <text class="box-text" x="646" y="593">证据来源与置信度</text>
+
+  <polygon class="decision" points="720,680 818,745 720,810 622,745"/>
+  <text class="decision-text" x="666" y="740">事实是否</text>
+  <text class="decision-text" x="684" y="765">可信？</text>
+
+  <!-- D analysis -->
+  <rect class="box box-green" x="892" y="270" width="196" height="156" rx="18"/>
+  <text class="box-title" x="916" y="310">商品经营分析</text>
+  <text class="box-text" x="916" y="340">结构及用料</text>
+  <text class="box-text" x="916" y="364">核心功能 / 痛点</text>
+  <text class="box-text" x="916" y="388">目标人群 / 市场</text>
+  <text class="box-text" x="916" y="412">竞品 / 定价 / 风险</text>
+
+  <rect class="box box-blue" x="892" y="500" width="196" height="130" rx="18"/>
+  <text class="box-title" x="916" y="540">OZON 平台适配</text>
+  <text class="box-text" x="916" y="570">类目推荐 / type</text>
+  <text class="box-text" x="916" y="594">必填属性匹配</text>
+  <text class="box-text" x="916" y="618">字段缺口检查</text>
+
+  <polygon class="decision" points="990,705 1088,770 990,835 892,770"/>
+  <text class="decision-text" x="936" y="765">是否值得</text>
+  <text class="decision-text" x="954" y="790">上架？</text>
+
+  <!-- E generation -->
+  <rect class="box box-purple" x="1162" y="270" width="196" height="156" rx="18"/>
+  <text class="box-title" x="1186" y="310">图片策略生成</text>
+  <text class="box-text" x="1186" y="340">主图：吸引点击</text>
+  <text class="box-text" x="1186" y="364">SKU 图：区分变体</text>
+  <text class="box-text" x="1186" y="388">详情图：促成下单</text>
+  <text class="box-text" x="1186" y="412">输出 prompt 与模板</text>
+
+  <rect class="box box-purple" x="1162" y="500" width="196" height="130" rx="18"/>
+  <text class="box-title" x="1186" y="540">AI 生图执行</text>
+  <text class="box-text" x="1186" y="570">产品母图 / 参考图</text>
+  <text class="box-text" x="1186" y="594">事实档案约束</text>
+  <text class="box-text" x="1186" y="618">多版本候选</text>
+
+  <rect class="box box-yellow" x="1162" y="705" width="196" height="130" rx="18"/>
+  <text class="box-title" x="1186" y="745">Listing 草稿生成</text>
+  <text class="box-text" x="1186" y="775">俄语标题 / 卖点</text>
+  <text class="box-text" x="1186" y="799">描述 / SKU 标题</text>
+  <text class="box-text" x="1186" y="823">属性 / 价格建议</text>
+
+  <!-- F review publish -->
+  <rect class="box box-yellow" x="1432" y="270" width="196" height="156" rx="18"/>
+  <text class="box-title" x="1456" y="310">草稿审核</text>
+  <text class="box-text" x="1456" y="340">文案审核</text>
+  <text class="box-text" x="1456" y="364">SKU / 价格确认</text>
+  <text class="box-text" x="1456" y="388">图片审核状态</text>
+  <text class="box-text" x="1456" y="412">发布前校验</text>
+
+  <polygon class="decision" points="1530,500 1628,565 1530,630 1432,565"/>
+  <text class="decision-text" x="1476" y="560">校验是否</text>
+  <text class="decision-text" x="1494" y="585">通过？</text>
+
+  <rect class="box box-dark" x="1432" y="705" width="196" height="130" rx="18"/>
+  <text class="dark-title" x="1456" y="745">提交 OZON</text>
+  <text class="dark-text" x="1456" y="775">构建请求体</text>
+  <text class="dark-text" x="1456" y="799">调用发布 API</text>
+  <text class="dark-text" x="1456" y="823">记录任务状态</text>
+
+  <!-- Result -->
+  <rect class="box box-green" x="1698" y="270" width="124" height="130" rx="18"/>
+  <text class="box-title" x="1720" y="310">成功</text>
+  <text class="box-text" x="1720" y="340">商品 ID</text>
+  <text class="box-text" x="1720" y="364">任务 ID</text>
+  <text class="box-text" x="1720" y="388">回写状态</text>
+
+  <rect class="box box-red" x="1698" y="500" width="124" height="130" rx="18"/>
+  <text class="box-title" x="1720" y="540">失败</text>
+  <text class="box-text" x="1720" y="570">错误原因</text>
+  <text class="box-text" x="1720" y="594">修正入口</text>
+  <text class="box-text" x="1720" y="618">可重试</text>
+
+  <rect class="box box-blue" x="1698" y="705" width="124" height="130" rx="18"/>
+  <text class="box-title" x="1720" y="745">复盘</text>
+  <text class="box-text" x="1720" y="775">点击率</text>
+  <text class="box-text" x="1720" y="799">转化率</text>
+  <text class="box-text" x="1720" y="823">模板优化</text>
+
+  <!-- main arrows -->
+  <path class="arrow" d="M180 400 L180 475"/>
+  <path class="arrow" d="M180 605 L180 680"/>
+  <path class="arrow" d="M278 745 C315 745 315 335 352 335"/>
+  <path class="arrow" d="M450 400 L450 475"/>
+  <path class="arrow-ok" d="M548 540 C584 540 586 335 622 335"/>
+  <text class="small" x="560" y="518">是</text>
+  <path class="arrow-bad" d="M450 605 L450 680"/>
+  <text class="small" x="462" y="652">否</text>
+  <path class="arrow-bad" d="M352 745 C300 745 300 540 278 540"/>
+
+  <path class="arrow" d="M720 400 L720 475"/>
+  <path class="arrow" d="M720 605 L720 680"/>
+  <path class="arrow-ok" d="M818 745 C854 745 856 348 892 348"/>
+  <text class="small" x="830" y="724">是</text>
+  <path class="arrow-bad" d="M622 745 C586 745 584 540 548 540"/>
+  <text class="small" x="576" y="724">否</text>
+
+  <path class="arrow" d="M990 426 L990 500"/>
+  <path class="arrow" d="M990 630 L990 705"/>
+  <path class="arrow-ok" d="M1088 770 C1124 770 1126 348 1162 348"/>
+  <text class="small" x="1100" y="748">是</text>
+  <path class="arrow-bad" d="M990 835 C930 920 750 950 720 810"/>
+  <text class="small" x="918" y="908">否：放弃 / 暂缓 / 重新定位</text>
+
+  <path class="arrow" d="M1260 426 L1260 500"/>
+  <path class="arrow" d="M1260 630 L1260 705"/>
+  <path class="arrow" d="M1358 770 C1394 770 1396 348 1432 348"/>
+
+  <path class="arrow" d="M1530 426 L1530 500"/>
+  <path class="arrow-ok" d="M1628 565 C1660 565 1666 335 1698 335"/>
+  <text class="small" x="1642" y="543">通过</text>
+  <path class="arrow-bad" d="M1530 630 L1530 705"/>
+  <text class="small" x="1542" y="674">修正后发布</text>
+  <path class="arrow-ok" d="M1628 770 C1660 770 1666 335 1698 335"/>
+  <path class="arrow-bad" d="M1628 770 C1660 770 1666 565 1698 565"/>
+  <path class="arrow-dash" d="M1760 400 L1760 500"/>
+  <path class="arrow-dash" d="M1760 630 L1760 705"/>
+
+  <!-- feedback loops -->
+  <path class="arrow-bad" d="M1698 565 C1540 920 1260 1030 990 900 C900 856 820 820 818 745"/>
+  <text class="small" x="1180" y="1008">发布失败或审核不通过：回到事实 / 属性 / 图片 / 文案对应环节修正</text>
+  <path class="arrow-dash" d="M1760 835 C1600 1190 760 1190 180 810"/>
+  <text class="small" x="610" y="1215">运营数据复盘：优化采集规则、商品分析模板、生图模板、Listing 模板和选品策略</text>
+
+  <!-- bottom module legend -->
+  <rect x="70" y="1150" width="1760" height="92" rx="24" fill="#ffffff" stroke="#dbe3ef" stroke-width="1.5"/>
+  <text class="box-title" x="100" y="1188">开发落地顺序建议：</text>
+  <rect x="310" y="1166" width="145" height="34" rx="17" fill="#2563eb"/>
+  <text class="tag" x="333" y="1188">P0 采集确认</text>
+  <rect x="475" y="1166" width="160" height="34" rx="17" fill="#16a34a"/>
+  <text class="tag" x="498" y="1188">P1 商品事实档案</text>
+  <rect x="655" y="1166" width="160" height="34" rx="17" fill="#0f766e"/>
+  <text class="tag" x="678" y="1188">P2 商品分析报告</text>
+  <rect x="835" y="1166" width="160" height="34" rx="17" fill="#7c3aed"/>
+  <text class="tag" x="858" y="1188">P3 AI 生图工作流</text>
+  <rect x="1015" y="1166" width="170" height="34" rx="17" fill="#d97706"/>
+  <text class="tag" x="1038" y="1188">P4 Listing 草稿</text>
+  <rect x="1205" y="1166" width="145" height="34" rx="17" fill="#111827"/>
+  <text class="tag" x="1228" y="1188">P5 发布闭环</text>
+  <text class="small" x="100" y="1220">注意：不要跳过 P0-P2 直接做自动发布；否则后续图片、文案、属性、类目都会因为源数据不准而返工。</text>
+</svg>

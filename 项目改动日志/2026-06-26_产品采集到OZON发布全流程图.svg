@@ -1,0 +1,205 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1180" viewBox="0 0 1800 1180">
+  <defs>
+    <style>
+      .bg { fill: #f6f8fb; }
+      .title { font: 800 42px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #14213d; }
+      .subtitle { font: 500 20px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #5b6578; }
+      .lane-title { font: 800 22px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #1f2937; }
+      .lane-note { font: 500 15px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #667085; }
+      .box-title { font: 800 21px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #111827; }
+      .box-text { font: 500 15px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #374151; }
+      .small { font: 500 13px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #667085; }
+      .badge { font: 800 13px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #ffffff; }
+      .lane { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1.4; }
+      .card { fill: #ffffff; stroke: #d7dce5; stroke-width: 1.8; filter: url(#shadow); }
+      .card-blue { fill: #eff6ff; stroke: #93c5fd; }
+      .card-green { fill: #ecfdf3; stroke: #86efac; }
+      .card-amber { fill: #fffbeb; stroke: #fcd34d; }
+      .card-purple { fill: #f5f3ff; stroke: #c4b5fd; }
+      .card-red { fill: #fef2f2; stroke: #fca5a5; }
+      .card-dark { fill: #111827; stroke: #111827; }
+      .dark-title { font: 800 21px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #ffffff; }
+      .dark-text { font: 500 15px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif; fill: #d1d5db; }
+      .arrow { fill: none; stroke: #64748b; stroke-width: 3; marker-end: url(#arrow); }
+      .arrow-green { fill: none; stroke: #16a34a; stroke-width: 3; marker-end: url(#arrow-green); }
+      .arrow-red { fill: none; stroke: #ef4444; stroke-width: 3; marker-end: url(#arrow-red); stroke-dasharray: 8 7; }
+      .dash { fill: none; stroke: #94a3b8; stroke-width: 2; stroke-dasharray: 6 6; marker-end: url(#arrow); }
+      .pill { rx: 14; ry: 14; }
+    </style>
+    <filter id="shadow" x="-12%" y="-12%" width="124%" height="124%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#0f172a" flood-opacity="0.10"/>
+    </filter>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#64748b"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#16a34a"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#ef4444"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1800" height="1180"/>
+
+  <text class="title" x="70" y="75">产品从采集到发布 OZON 的完整运行逻辑</text>
+  <text class="subtitle" x="72" y="112">目标：把采集来的原始商品资料，转化为可审核、可生图、可发布、可追踪的 OZON Listing。</text>
+
+  <rect class="lane" x="54" y="150" width="244" height="880" rx="28"/>
+  <rect class="lane" x="324" y="150" width="244" height="880" rx="28"/>
+  <rect class="lane" x="594" y="150" width="244" height="880" rx="28"/>
+  <rect class="lane" x="864" y="150" width="244" height="880" rx="28"/>
+  <rect class="lane" x="1134" y="150" width="244" height="880" rx="28"/>
+  <rect class="lane" x="1404" y="150" width="342" height="880" rx="28"/>
+
+  <text class="lane-title" x="84" y="193">① 商品采集</text>
+  <text class="lane-note" x="84" y="220">拿到原材料</text>
+  <text class="lane-title" x="354" y="193">② 适配工作台</text>
+  <text class="lane-note" x="354" y="220">理解商品</text>
+  <text class="lane-title" x="624" y="193">③ 商品事实档案</text>
+  <text class="lane-note" x="624" y="220">沉淀可信依据</text>
+  <text class="lane-title" x="894" y="193">④ OZON 适配</text>
+  <text class="lane-note" x="894" y="220">匹配平台规则</text>
+  <text class="lane-title" x="1164" y="193">⑤ AI 生图</text>
+  <text class="lane-note" x="1164" y="220">制作销售素材</text>
+  <text class="lane-title" x="1434" y="193">⑥ 草稿审核 / 发布</text>
+  <text class="lane-note" x="1434" y="220">最后确认并提交</text>
+
+  <!-- Lane 1 -->
+  <rect class="card card-blue" x="82" y="260" width="188" height="128" rx="18"/>
+  <text class="box-title" x="106" y="300">采集商品</text>
+  <text class="box-text" x="106" y="330">标题 / 价格 / 供应商</text>
+  <text class="box-text" x="106" y="354">SKU / 图片 / 详情文本</text>
+
+  <rect class="card" x="82" y="455" width="188" height="128" rx="18"/>
+  <text class="box-title" x="106" y="495">生成源数据</text>
+  <text class="box-text" x="106" y="525">OzonSource</text>
+  <text class="box-text" x="106" y="549">SourceSku / Media</text>
+
+  <!-- Lane 2 -->
+  <rect class="card card-amber" x="352" y="260" width="188" height="128" rx="18"/>
+  <text class="box-title" x="376" y="300">源资料检查</text>
+  <text class="box-text" x="376" y="330">采集是否完整</text>
+  <text class="box-text" x="376" y="354">是否需要补图</text>
+
+  <rect class="card card-purple" x="352" y="455" width="188" height="150" rx="18"/>
+  <text class="box-title" x="376" y="495">AI 识别资料</text>
+  <text class="box-text" x="376" y="525">图片识别产品/配件</text>
+  <text class="box-text" x="376" y="549">文本提取参数/卖点</text>
+  <text class="box-text" x="376" y="573">SKU 差异归纳</text>
+
+  <rect class="card card-red" x="352" y="690" width="188" height="128" rx="18"/>
+  <text class="box-title" x="376" y="730">人工补充</text>
+  <text class="box-text" x="376" y="760">补图 / 修改识别结果</text>
+  <text class="box-text" x="376" y="784">确认遗漏字段</text>
+
+  <!-- Lane 3 -->
+  <rect class="card card-green" x="622" y="260" width="188" height="150" rx="18"/>
+  <text class="box-title" x="646" y="300">证据池</text>
+  <text class="box-text" x="646" y="330">图片证据</text>
+  <text class="box-text" x="646" y="354">文本证据</text>
+  <text class="box-text" x="646" y="378">置信度 / 来源</text>
+
+  <rect class="card card-green" x="622" y="485" width="188" height="150" rx="18"/>
+  <text class="box-title" x="646" y="525">事实确认</text>
+  <text class="box-text" x="646" y="555">接受 / 拒绝 / 修正</text>
+  <text class="box-text" x="646" y="579">处理冲突</text>
+  <text class="box-text" x="646" y="603">形成可信事实</text>
+
+  <rect class="card card-dark" x="622" y="710" width="188" height="150" rx="18"/>
+  <text class="dark-title" x="646" y="750">商品事实档案</text>
+  <text class="dark-text" x="646" y="780">ProductFact</text>
+  <text class="dark-text" x="646" y="804">ProductFactSku</text>
+  <text class="dark-text" x="646" y="828">Evidence</text>
+
+  <!-- Lane 4 -->
+  <rect class="card card-blue" x="892" y="260" width="188" height="128" rx="18"/>
+  <text class="box-title" x="916" y="300">选择类目</text>
+  <text class="box-text" x="916" y="330">推荐 / 手动选择</text>
+  <text class="box-text" x="916" y="354">绑定 type_id</text>
+
+  <rect class="card card-blue" x="892" y="455" width="188" height="150" rx="18"/>
+  <text class="box-title" x="916" y="495">填写属性</text>
+  <text class="box-text" x="916" y="525">加载必填属性</text>
+  <text class="box-text" x="916" y="549">匹配字典值</text>
+  <text class="box-text" x="916" y="573">检查字段缺口</text>
+
+  <rect class="card card-green" x="892" y="690" width="188" height="128" rx="18"/>
+  <text class="box-title" x="916" y="730">生成草稿</text>
+  <text class="box-text" x="916" y="760">标题 / 卖点 / 描述</text>
+  <text class="box-text" x="916" y="784">SKU / 属性 / 价格建议</text>
+
+  <!-- Lane 5 -->
+  <rect class="card card-purple" x="1162" y="260" width="188" height="150" rx="18"/>
+  <text class="box-title" x="1186" y="300">图片方案</text>
+  <text class="box-text" x="1186" y="330">主图：吸引点击</text>
+  <text class="box-text" x="1186" y="354">SKU 图：区分变体</text>
+  <text class="box-text" x="1186" y="378">详情图：促成下单</text>
+
+  <rect class="card card-purple" x="1162" y="485" width="188" height="128" rx="18"/>
+  <text class="box-title" x="1186" y="525">调用生图模型</text>
+  <text class="box-text" x="1186" y="555">结合产品母图</text>
+  <text class="box-text" x="1186" y="579">结合商品事实档案</text>
+
+  <rect class="card card-amber" x="1162" y="690" width="188" height="128" rx="18"/>
+  <text class="box-title" x="1186" y="730">图片人工审核</text>
+  <text class="box-text" x="1186" y="760">通过 / 重做 / 替换</text>
+  <text class="box-text" x="1186" y="784">确认可发布图片</text>
+
+  <!-- Lane 6 -->
+  <rect class="card card-amber" x="1432" y="260" width="270" height="150" rx="18"/>
+  <text class="box-title" x="1456" y="300">刊登草稿审核</text>
+  <text class="box-text" x="1456" y="330">审核俄语标题 / 描述</text>
+  <text class="box-text" x="1456" y="354">审核 SKU / 价格 / 图片</text>
+  <text class="box-text" x="1456" y="378">发布前校验</text>
+
+  <rect class="card card-green" x="1432" y="485" width="270" height="128" rx="18"/>
+  <text class="box-title" x="1456" y="525">审核通过</text>
+  <text class="box-text" x="1456" y="555">所有阻断项通过</text>
+  <text class="box-text" x="1456" y="579">草稿状态 approved</text>
+
+  <rect class="card card-dark" x="1432" y="690" width="270" height="150" rx="18"/>
+  <text class="dark-title" x="1456" y="730">提交 OZON 发布</text>
+  <text class="dark-text" x="1456" y="760">构建 import_product</text>
+  <text class="dark-text" x="1456" y="784">调用 OZON API</text>
+  <text class="dark-text" x="1456" y="808">记录成功 / 失败</text>
+
+  <!-- Main arrows -->
+  <path class="arrow" d="M176 388 L176 455"/>
+  <path class="arrow" d="M270 519 C310 519 312 324 352 324"/>
+  <path class="arrow" d="M446 388 L446 455"/>
+  <path class="arrow" d="M540 530 C580 530 582 335 622 335"/>
+  <path class="arrow" d="M716 410 L716 485"/>
+  <path class="arrow" d="M716 635 L716 710"/>
+  <path class="arrow" d="M810 785 C850 785 852 324 892 324"/>
+  <path class="arrow" d="M986 388 L986 455"/>
+  <path class="arrow" d="M986 605 L986 690"/>
+  <path class="arrow" d="M1080 754 C1120 754 1122 335 1162 335"/>
+  <path class="arrow" d="M1256 410 L1256 485"/>
+  <path class="arrow" d="M1256 613 L1256 690"/>
+  <path class="arrow" d="M1350 754 C1390 754 1392 335 1432 335"/>
+  <path class="arrow-green" d="M1567 410 L1567 485"/>
+  <path class="arrow-green" d="M1567 613 L1567 690"/>
+
+  <!-- Return loops -->
+  <path class="arrow-red" d="M1432 380 C1320 440 1320 870 1256 870 C1130 870 1080 870 986 870 C860 870 806 870 716 870 C590 870 560 755 540 755"/>
+  <text class="small" x="780" y="912">校验失败：返回事实、属性、图片或文案环节修正</text>
+
+  <path class="arrow-red" d="M892 755 C830 755 850 930 716 930 C590 930 560 755 540 755"/>
+  <text class="small" x="600" y="968">事实不完整：补图 / 重新识别 / 人工补充</text>
+
+  <!-- Bottom responsibility strip -->
+  <rect x="70" y="1060" width="1660" height="76" rx="22" fill="#ffffff" stroke="#dbe1ea" stroke-width="1.5"/>
+  <rect x="94" y="1084" width="220" height="28" rx="14" fill="#dbeafe"/>
+  <text class="small" x="116" y="1104">采集页：拿原材料</text>
+  <rect x="354" y="1084" width="290" height="28" rx="14" fill="#fef3c7"/>
+  <text class="small" x="376" y="1104">适配工作台：整理事实与平台适配</text>
+  <rect x="684" y="1084" width="250" height="28" rx="14" fill="#dcfce7"/>
+  <text class="small" x="706" y="1104">事实档案：可验证依据</text>
+  <rect x="974" y="1084" width="240" height="28" rx="14" fill="#ede9fe"/>
+  <text class="small" x="996" y="1104">AI 生图：制作销售素材</text>
+  <rect x="1254" y="1084" width="250" height="28" rx="14" fill="#ffedd5"/>
+  <text class="small" x="1276" y="1104">草稿审核：发布前确认</text>
+  <rect x="1544" y="1084" width="160" height="28" rx="14" fill="#111827"/>
+  <text class="badge" x="1570" y="1104">发布：提交 OZON</text>
+</svg>

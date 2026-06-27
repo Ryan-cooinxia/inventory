@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>产品采集到 OZON 发布全流程图</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #eef2f7;
+      --panel: #ffffff;
+      --text: #14213d;
+      --muted: #667085;
+      --border: #dbe1ea;
+      --accent: #2563eb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, "SF Pro Text", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+      line-height: 1.65;
+    }
+    .page {
+      min-height: 100vh;
+      padding: 28px;
+    }
+    .toolbar {
+      max-width: 1800px;
+      margin: 0 auto 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: -0.02em;
+    }
+    .hint {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .btn {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      padding: 9px 13px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 700;
+      text-decoration: none;
+      cursor: pointer;
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+    }
+    .btn.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #ffffff;
+    }
+    .canvas {
+      max-width: 1800px;
+      margin: 0 auto;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      overflow: auto;
+      box-shadow: 0 18px 55px rgba(15, 23, 42, 0.13);
+    }
+    .canvas img {
+      display: block;
+      width: 1800px;
+      max-width: none;
+      height: auto;
+    }
+    .notes {
+      max-width: 1800px;
+      margin: 16px auto 0;
+      color: var(--muted);
+      font-size: 13px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .note {
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 12px 14px;
+    }
+    .note strong {
+      color: var(--text);
+    }
+    @media (max-width: 900px) {
+      .page { padding: 16px; }
+      .toolbar { align-items: flex-start; flex-direction: column; }
+      .actions { justify-content: flex-start; }
+      .notes { grid-template-columns: 1fr; }
+    }
+    @media print {
+      body { background: #ffffff; }
+      .toolbar, .notes { display: none; }
+      .page { padding: 0; }
+      .canvas {
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+        overflow: visible;
+      }
+      .canvas img {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="toolbar">
+      <div>
+        <h1>产品采集到 OZON 发布全流程图</h1>
+        <div class="hint">可横向滚动查看；也可以直接打开 SVG 放大、截图或打印。</div>
+      </div>
+      <div class="actions">
+        <button class="btn" type="button" onclick="window.print()">打印 / 另存 PDF</button>
+        <a class="btn primary" href="./2026-06-26_产品采集到OZON发布全流程图.svg" target="_blank">打开 SVG 原图</a>
+      </div>
+    </div>
+
+    <section class="canvas" aria-label="产品采集到 OZON 发布全流程图">
+      <img src="./2026-06-26_产品采集到OZON发布全流程图.svg" alt="产品采集到 OZON 发布全流程图">
+    </section>
+
+    <section class="notes">
+      <div class="note"><strong>适配工作台</strong>负责理解商品、整理事实、匹配 OZON 类目属性。</div>
+      <div class="note"><strong>AI 生图</strong>使用商品事实档案与产品母图，生成主图、SKU 图和详情图。</div>
+      <div class="note"><strong>刊登草稿审核</strong>负责发布前最后确认，不应再承担商品理解主职责。</div>
+    </section>
+  </main>
+</body>
+</html>

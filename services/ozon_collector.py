@@ -192,6 +192,9 @@ SOURCE_AREA_RULES = {
     'nav':                 ('rejected',      '导航栏区域'),
     'ad':                  ('rejected',      '广告位'),
     'certification':       ('rejected',      '认证标识/可信网站标识'),
+    'review':              ('rejected',      '评论/买家秀区域'),
+    'recommendation':      ('rejected',      '推荐/相似商品区域'),
+    'rejected':            ('rejected',      '插件已判定为非商品图片'),
     'unknown':             ('needs_review',  '无法判断来源区域'),
 }
 

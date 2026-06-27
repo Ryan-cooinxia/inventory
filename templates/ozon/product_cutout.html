@@ -2,8 +2,9 @@
 {% block title %}产品母图 — 仓库记账系统{% endblock %}
 {% block head %}
 <style>
-  .cutout-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(420px, 1fr)); gap:16px; }
+  .cutout-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:16px; }
   .cutout-card { border:1px solid #dee2e6; border-radius:8px; overflow:hidden; background:#fff; }
+  .cutout-card.batch-selected { border-color:#0d6efd; box-shadow:0 0 0 2px rgba(13,110,253,.15); }
   .cutout-card.approved { border-color:#198754; }
   .cutout-card.rejected { border-color:#dc3545; opacity:.6; }
   .cutout-img-wrap { position:relative; display:inline-block; cursor:crosshair; max-width:100%; }
@@ -12,10 +13,10 @@
   .target-box.keep { border-color:#198754; background:rgba(25,135,84,.1); }
   .target-box.remove { border-color:#dc3545; background:rgba(220,53,69,.1); }
   .target-box-label { position:absolute; font-size:10px; padding:1px 4px; border-radius:2px; color:#fff; white-space:nowrap; }
-  .cutout-preview { position:relative; aspect-ratio:3/4; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  .cutout-preview { position:relative; height:clamp(260px, 42vh, 420px); display:flex; align-items:center; justify-content:center; cursor:pointer; overflow:hidden; padding:12px; }
   .cutout-preview.checker { background:repeating-conic-gradient(#e0e0e0 0% 25%, #fff 0% 50%) 50% / 20px 20px; }
   .cutout-preview.white { background:#fff; } .cutout-preview.gray { background:#666; } .cutout-preview.black { background:#000; }
-  .cutout-preview img { max-width:100%; max-height:100%; object-fit:contain; }
+  .cutout-preview img { width:100%; height:100%; object-fit:contain; }
   .cutout-body { padding:12px; }
   .cutout-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
   .score-bar { height:6px; border-radius:3px; background:#e9ecef; margin:4px 0; }
@@ -24,6 +25,9 @@
   .bg-switch button { width:24px; height:24px; border-radius:4px; border:1px solid #ccc; cursor:pointer; }
   .target-toolbar { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:8px 0; padding:8px; background:#f8f9fa; border-radius:6px; font-size:12px; }
   .target-list { font-size:11px; max-height:120px; overflow-y:auto; }
+  .batch-toolbar { position:sticky; top:8px; z-index:20; display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding:10px; margin-bottom:12px; border:1px solid #cfe2ff; border-radius:8px; background:rgba(239,246,255,.96); box-shadow:0 2px 8px rgba(0,0,0,.06); }
+  .batch-progress { flex:1 1 220px; min-width:180px; }
+  .batch-select { position:absolute; top:8px; left:8px; z-index:5; padding:5px 8px; border-radius:6px; background:rgba(255,255,255,.92); box-shadow:0 1px 5px rgba(0,0,0,.15); }
 </style>
 {% endblock %}
 {% block content %}
@@ -39,10 +43,30 @@
   绿色框=保留，红色框=排除。复杂广告图必须框选商品，否则整图抠会保留文字和Logo。
 </p>
 
+<div class="batch-toolbar">
+  <label class="form-check mb-0">
+    <input class="form-check-input" type="checkbox" id="selectAllMedia" onchange="toggleSelectAll(this.checked)">
+    <span class="form-check-label">全选</span>
+  </label>
+  <span class="badge bg-primary" id="selectedMediaCount">已选 0 张</span>
+  <button type="button" class="btn btn-sm btn-info batch-action-btn" onclick="batchDetectSelected()">🔍 批量目标识别</button>
+  <button type="button" class="btn btn-sm btn-primary batch-action-btn" onclick="batchDetectAndCutoutSelected()">✂️ 批量识别并抠图</button>
+  <div class="batch-progress">
+    <div class="progress" style="height:7px;">
+      <div class="progress-bar" id="batchProgressBar" style="width:0%"></div>
+    </div>
+    <small class="text-muted" id="batchProgressText">请选择需要处理的图片</small>
+  </div>
+</div>
+
 <div class="cutout-grid">
   {% for rec in recommendations %}
   {% set m = media_map.get(rec.media_id) %}
-  <div class="cutout-card" id="rec{{ rec.media_id }}">
+  <div class="cutout-card position-relative" id="rec{{ rec.media_id }}">
+    <label class="form-check batch-select">
+      <input class="form-check-input media-select" type="checkbox" value="{{ rec.media_id }}" onchange="updateBatchSelection()">
+      <span class="form-check-label small">选择</span>
+    </label>
     <div style="padding:8px;">
       <div class="cutout-img-wrap" id="imgWrap{{ rec.media_id }}">
         <img id="img{{ rec.media_id }}" src="{{ m.source_url if m and m.source_url else ('/' + m.local_path) if m and m.local_path else '#' }}" alt="product image" crossorigin="anonymous" referrerpolicy="no-referrer">
@@ -80,7 +104,11 @@
     {% for c in cutouts %}
     <div class="cutout-card {{ c.status }}" id="cutout{{ c.id }}">
       <div class="cutout-preview checker" id="cutoutPreview{{ c.id }}">
-        {% if c.preview_path %}<img src="{{ url_for('ozon.serve_cutout', filename=c.preview_path) }}" alt="抠图预览" loading="lazy">{% endif %}
+        {% if c.transparent_path %}
+        <img src="{{ url_for('ozon.serve_cutout', filename=c.transparent_path) }}" alt="抠图预览" loading="lazy">
+        {% elif c.preview_path %}
+        <img src="{{ url_for('ozon.serve_cutout', filename=c.preview_path) }}" alt="抠图预览" loading="lazy">
+        {% endif %}
       </div>
       <div class="cutout-body">
         <div>
@@ -122,6 +150,10 @@
 <script>
 // 每个 media_id 的目标框存储
 var allTargets = {};
+var activeCutoutRequests = 0;
+var cutoutReloadTimer = null;
+var shouldRefreshCutouts = false;
+var batchOperationActive = false;
 
 function getTargets(mediaId) {
   if (!allTargets[mediaId]) allTargets[mediaId] = [];
@@ -240,27 +272,50 @@ function updateTargetUI(mediaId) {
 
 function doCutoutV2(mediaId) {
   var targets = getTargets(mediaId);
-  if (!targets.length) { alert('请先在图片上拖拽框选商品区域！'); return; }
-  if (!targets.some(function(t) { return t.keep; })) { alert('至少需要一个保留目标（主商品或配件）！'); return; }
-  doCutout(mediaId, 'rembg_crop', targets);
+  if (!targets.length) { alert('请先在图片上拖拽框选商品区域！'); return Promise.resolve({ok:false}); }
+  if (!targets.some(function(t) { return t.keep; })) { alert('至少需要一个保留目标（主商品或配件）！'); return Promise.resolve({ok:false}); }
+  return doCutout(mediaId, 'rembg_crop', targets);
 }
 
 function doCutoutSimple(mediaId) {
-  doCutout(mediaId, 'rembg_full', null);
+  return doCutout(mediaId, 'rembg_full', null);
 }
 
 function doCutout(mediaId, provider, targets) {
   var el = document.getElementById('cutoutResult' + mediaId);
   el.innerHTML = '<span class="text-info">抠图中...</span>';
+  activeCutoutRequests += 1;
+  if (cutoutReloadTimer) {
+    clearTimeout(cutoutReloadTimer);
+    cutoutReloadTimer = null;
+  }
   var fd = new FormData();
   fd.append('provider', provider);
   if (targets) fd.append('targets', JSON.stringify(targets));
-  fetch('/ozon/product-cutout/' + mediaId + '/create', { method: 'POST', body: fd })
+  return fetch('/ozon/product-cutout/' + mediaId + '/create', { method: 'POST', body: fd })
     .then(function(r) { return r.json(); })
     .then(function(d) {
-      if (d.ok) { el.innerHTML = '<span class="text-success">抠图完成，质量 ' + (d.quality_score||'?') + '分。刷新查看结果。</span>'; setTimeout(function() { location.reload(); }, 1500); }
+      if (d.ok) {
+        shouldRefreshCutouts = true;
+        el.innerHTML = '<span class="text-success">抠图完成，质量 ' + (d.quality_score||'?') + '分。</span>';
+      }
       else { el.innerHTML = '<span class="text-danger">' + (d.error || '失败') + '</span>'; }
-    }).catch(function(e) { el.innerHTML = '<span class="text-danger">请求失败: ' + e.message + '</span>'; });
+      return d;
+    })
+    .catch(function(e) {
+      el.innerHTML = '<span class="text-danger">请求失败: ' + e.message + '</span>';
+      return {ok:false, error:e.message};
+    })
+    .finally(function() {
+      activeCutoutRequests = Math.max(0, activeCutoutRequests - 1);
+      if (activeCutoutRequests > 0) {
+        el.innerHTML += ' <span class="text-muted">其余 ' + activeCutoutRequests + ' 张仍在处理中</span>';
+        return;
+      }
+      if (shouldRefreshCutouts && !batchOperationActive) {
+        cutoutReloadTimer = setTimeout(function() { location.reload(); }, 800);
+      }
+    });
 }
 
 // 预初始化
@@ -269,15 +324,19 @@ document.addEventListener('DOMContentLoaded', function() {
     var mediaId = parseInt(wrap.id.replace('imgWrap', ''));
     if (mediaId) initDrawing(mediaId);
   });
+  updateBatchSelection();
 });
 
 function doDetectSubject(mediaId) {
   var el = document.getElementById('cutoutResult' + mediaId);
   el.innerHTML = '<span class="text-info">识别中...</span>';
-  fetch('/ozon/product-cutout/' + mediaId + '/detect-subject', { method: 'POST' })
+  return fetch('/ozon/product-cutout/' + mediaId + '/detect-subject', { method: 'POST' })
     .then(function(r) { return r.json(); })
     .then(function(d) {
-      if (!d.ok) { el.innerHTML = '<span class="text-danger">' + (d.error || '识别失败') + '</span>'; return; }
+      if (!d.ok) {
+        el.innerHTML = '<span class="text-danger">' + (d.error || '识别失败') + '</span>';
+        return d;
+      }
       el.innerHTML = '<span class="text-success">识别完成: ' + (d.main_product ? d.main_product.label : '') + '</span>';
 
       // Clear old targets
@@ -315,8 +374,130 @@ function doDetectSubject(mediaId) {
       if (d.warnings && d.warnings.length) {
         el.innerHTML += ' <span class="text-warning">' + d.warnings.join('; ') + '</span>';
       }
+      return d;
     })
-    .catch(function(e) { el.innerHTML = '<span class="text-danger">请求失败: ' + e.message + '</span>'; });
+    .catch(function(e) {
+      el.innerHTML = '<span class="text-danger">请求失败: ' + e.message + '</span>';
+      return {ok:false, error:e.message};
+    });
+}
+
+function getSelectedMediaIds() {
+  return Array.from(document.querySelectorAll('.media-select:checked')).map(function(cb) {
+    return parseInt(cb.value);
+  }).filter(Boolean);
+}
+
+function updateBatchSelection() {
+  var boxes = Array.from(document.querySelectorAll('.media-select'));
+  var selected = boxes.filter(function(cb) { return cb.checked; });
+  document.getElementById('selectedMediaCount').textContent = '已选 ' + selected.length + ' 张';
+  var selectAll = document.getElementById('selectAllMedia');
+  selectAll.checked = boxes.length > 0 && selected.length === boxes.length;
+  selectAll.indeterminate = selected.length > 0 && selected.length < boxes.length;
+  boxes.forEach(function(cb) {
+    var card = document.getElementById('rec' + cb.value);
+    if (card) card.classList.toggle('batch-selected', cb.checked);
+  });
+}
+
+function toggleSelectAll(checked) {
+  document.querySelectorAll('.media-select').forEach(function(cb) { cb.checked = checked; });
+  updateBatchSelection();
+}
+
+function setBatchControls(running) {
+  document.querySelectorAll(
+    '.batch-action-btn, .media-select, #selectAllMedia, .cutout-card[id^="rec"] button, .cutout-card[id^="rec"] select'
+  ).forEach(function(el) {
+    el.disabled = running;
+  });
+}
+
+function updateBatchProgress(completed, total, message) {
+  var percent = total ? Math.round(completed / total * 100) : 0;
+  document.getElementById('batchProgressBar').style.width = percent + '%';
+  document.getElementById('batchProgressText').textContent = message || (completed + ' / ' + total);
+}
+
+function runBatchWorkers(mediaIds, worker, concurrency) {
+  var nextIndex = 0;
+  var completed = 0;
+  var succeeded = 0;
+  var failed = 0;
+  concurrency = Math.max(1, Math.min(concurrency || 2, mediaIds.length));
+
+  function runNext() {
+    if (nextIndex >= mediaIds.length) return Promise.resolve();
+    var mediaId = mediaIds[nextIndex++];
+    return Promise.resolve(worker(mediaId))
+      .then(function(result) {
+        if (result && result.ok) succeeded += 1;
+        else failed += 1;
+      })
+      .catch(function() { failed += 1; })
+      .finally(function() {
+        completed += 1;
+        updateBatchProgress(completed, mediaIds.length, '处理中：' + completed + ' / ' + mediaIds.length + '，成功 ' + succeeded + '，失败 ' + failed);
+      })
+      .then(runNext);
+  }
+
+  var workers = [];
+  for (var i = 0; i < concurrency; i++) workers.push(runNext());
+  return Promise.all(workers).then(function() {
+    return {ok: failed === 0, succeeded:succeeded, failed:failed, total:mediaIds.length};
+  });
+}
+
+function startBatchOperation(label, worker, refreshAfter) {
+  var mediaIds = getSelectedMediaIds();
+  if (!mediaIds.length) {
+    alert('请先选择需要处理的图片。');
+    return Promise.resolve();
+  }
+
+  batchOperationActive = true;
+  shouldRefreshCutouts = false;
+  if (cutoutReloadTimer) {
+    clearTimeout(cutoutReloadTimer);
+    cutoutReloadTimer = null;
+  }
+  setBatchControls(true);
+  updateBatchProgress(0, mediaIds.length, label + '：0 / ' + mediaIds.length);
+
+  return runBatchWorkers(mediaIds, worker, 2).then(function(summary) {
+    updateBatchProgress(summary.total, summary.total,
+      label + '完成：成功 ' + summary.succeeded + '，失败 ' + summary.failed);
+    if (refreshAfter && summary.succeeded > 0) {
+      setTimeout(function() { location.reload(); }, 1200);
+    }
+  }).finally(function() {
+    batchOperationActive = false;
+    setBatchControls(false);
+    updateBatchSelection();
+  });
+}
+
+function batchDetectSelected() {
+  return startBatchOperation('批量目标识别', function(mediaId) {
+    return doDetectSubject(mediaId);
+  }, false);
+}
+
+function batchDetectAndCutoutSelected() {
+  return startBatchOperation('批量识别并抠图', function(mediaId) {
+    return doDetectSubject(mediaId).then(function(detectResult) {
+      if (!detectResult || !detectResult.ok) return detectResult || {ok:false};
+      var targets = getTargets(mediaId);
+      if (!targets.some(function(t) { return t.keep; })) {
+        var el = document.getElementById('cutoutResult' + mediaId);
+        el.innerHTML = '<span class="text-danger">未识别到可保留的商品目标，已跳过抠图</span>';
+        return {ok:false, error:'未识别到商品目标'};
+      }
+      return doCutout(mediaId, 'rembg_crop', targets);
+    });
+  }, true);
 }
 
 function drawTargetBox(mediaId, target, cssClass) {

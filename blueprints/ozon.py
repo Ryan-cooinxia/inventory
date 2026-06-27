@@ -492,6 +492,22 @@ def api_source_add():
     skus = data.get('skus', [])
     images = data.get('images', [])
     specs = data.get('specs', [])  # v2.1 新增
+    pricing = data.get('pricing') or {}
+    price_candidates = data.get('price_candidates') or []
+
+    # OZON 参考商品经常没有显式 SKU 按钮；如果插件已经识别到标题/参考售价，
+    # 这里兜底创建 1 个默认规格，避免适配工作台出现“源 SKU(0)”断流。
+    if platform == 'ozon_product' and not skus:
+        fallback_price = pricing.get('source_price_cny') or pricing.get('candidate_price_cny')
+        if not fallback_price and price_candidates:
+            fallback_price = price_candidates[0].get('price')
+        skus = [{
+            'source_order': 1,
+            'source_sku_name': title[:120] or '默认规格',
+            'style_cn': '默认规格',
+            'bundle_quantity': 1,
+            'purchase_price_cny': fallback_price,
+        }]
 
     # ── 构建 raw_json（含 specs）────────────────────
     raw_data = {
@@ -505,6 +521,8 @@ def api_source_add():
         "media": [{"source_url": img.get("src", ""), "role": img.get("role", "sku")} for img in images],
         "specs_json": specs,
         "videos": data.get('videos', []),
+        "pricing": pricing,
+        "price_candidates": price_candidates,
         "platform": platform,
         "source_url": source_url,
         "capture_url": capture_url,
@@ -588,7 +606,7 @@ def api_source_add():
         raw_json=json.dumps(raw_data, ensure_ascii=False),
         quality_json=json.dumps(quality, ensure_ascii=False),
         detail_missing=(platform == '1688' and detail_missing_from_payload),
-        price_manual_confirmed=has_confirmed_price,
+        price_manual_confirmed=(has_confirmed_price and not is_ozon_product),
         status='collected',
         capture_method='browser_extension',
         captured_at=datetime.datetime.now(),
@@ -596,6 +614,8 @@ def api_source_add():
 
     # ── 再建 media（关联 source）───────────────────
     for mrec in media_records:
+        if is_ozon_product and mrec.get("comp_status") == "rejected":
+            continue
         meta_json = {
             'source_area': mrec.get('source_area', 'unknown'),
             'dom_path': mrec.get('dom_path', ''),

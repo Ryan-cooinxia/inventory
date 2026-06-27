@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OZON 自动上架开发逻辑流程图</title>
+  <style>
+    :root {
+      --bg: #eef2f7;
+      --panel: #ffffff;
+      --text: #111827;
+      --muted: #667085;
+      --border: #dbe3ef;
+      --accent: #2563eb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, "SF Pro Text", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+    }
+    .page { min-height: 100vh; padding: 28px; }
+    .toolbar {
+      max-width: 1900px;
+      margin: 0 auto 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+    h1 { margin: 0; font-size: 24px; letter-spacing: -0.02em; }
+    .hint { color: var(--muted); font-size: 13px; margin-top: 4px; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      padding: 9px 13px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 700;
+      text-decoration: none;
+      cursor: pointer;
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+    }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #ffffff; }
+    .canvas {
+      max-width: 1900px;
+      margin: 0 auto;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      overflow: auto;
+      box-shadow: 0 18px 55px rgba(15, 23, 42, 0.13);
+    }
+    .canvas img { display: block; width: 1900px; max-width: none; height: auto; }
+    .summary {
+      max-width: 1900px;
+      margin: 16px auto 0;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .card {
+      background: rgba(255,255,255,.78);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 12px 14px;
+      font-size: 13px;
+      line-height: 1.65;
+      color: var(--muted);
+    }
+    .card strong { display: block; color: var(--text); margin-bottom: 4px; }
+    @media (max-width: 1100px) {
+      .page { padding: 16px; }
+      .toolbar { flex-direction: column; align-items: flex-start; }
+      .actions { justify-content: flex-start; }
+      .summary { grid-template-columns: 1fr; }
+    }
+    @media print {
+      body { background: #ffffff; }
+      .toolbar, .summary { display: none; }
+      .page { padding: 0; }
+      .canvas { border: 0; border-radius: 0; box-shadow: none; overflow: visible; }
+      .canvas img { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="toolbar">
+      <div>
+        <h1>OZON 自动上架开发逻辑流程图</h1>
+        <div class="hint">按开发顺序拆分：采集确认 → 商品事实 → 商品分析 → AI 生图 → Listing 草稿 → 审核发布。</div>
+      </div>
+      <div class="actions">
+        <button class="btn" type="button" onclick="window.print()">打印 / 另存 PDF</button>
+        <a class="btn primary" href="./2026-06-27_OZON自动上架开发逻辑流程图.svg" target="_blank">打开 SVG 原图</a>
+      </div>
+    </div>
+
+    <section class="canvas">
+      <img src="./2026-06-27_OZON自动上架开发逻辑流程图.svg" alt="OZON 自动上架开发逻辑流程图">
+    </section>
+
+    <section class="summary">
+      <div class="card"><strong>P0 采集确认</strong>先确认采集到了什么、缺什么、哪些需要人工补充。</div>
+      <div class="card"><strong>P1 商品事实档案</strong>把图片、文本、SKU 和人工确认合并成可信商品事实。</div>
+      <div class="card"><strong>P2 商品分析报告</strong>分析卖点、人群、市场、竞品、定价和上架价值。</div>
+      <div class="card"><strong>P3-P4 生成内容</strong>基于事实和分析生成图片方案、AI 图片、标题、详情和 Listing。</div>
+      <div class="card"><strong>P5 发布闭环</strong>草稿审核、发布前校验、提交 OZON，并把失败原因回流修正。</div>
+    </section>
+  </main>
+</body>
+</html>

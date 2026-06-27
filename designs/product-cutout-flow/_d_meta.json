@@ -1,0 +1,18 @@
+{
+  "type": "design",
+  "designSystems": [],
+  "primaryDesignSystem": null,
+  "assets": {
+    "产品母图自动识别实施流程": {
+      "versions": [
+        {
+          "path": "产品母图自动识别实施流程.html",
+          "createdAt": "2026-06-25T05:46:42.107Z",
+          "status": "needs-review"
+        }
+      ]
+    }
+  },
+  "createdAt": "2026-06-25T05:46:42.110Z",
+  "updatedAt": "2026-06-25T05:46:42.110Z"
+}

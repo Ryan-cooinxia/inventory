@@ -1,0 +1,697 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>产品母图自动识别实施流程</title>
+  <style>
+    :root {
+      --ink: #17231d;
+      --muted: #68756e;
+      --paper: #f4f1e9;
+      --panel: #fffdf8;
+      --line: #d7d5cb;
+      --green: #1f7a54;
+      --green-soft: #e4f2eb;
+      --red: #bc3f36;
+      --red-soft: #f7e6e3;
+      --amber: #b9781c;
+      --amber-soft: #faefd9;
+      --blue: #315d84;
+      --blue-soft: #e5edf4;
+      --shadow: 0 18px 50px rgba(35, 43, 38, .10);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 8% 5%, rgba(31, 122, 84, .08), transparent 25%),
+        linear-gradient(180deg, #f9f7f1, var(--paper));
+      font-family: -apple-system, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.65;
+    }
+
+    button { font: inherit; }
+
+    .page {
+      width: min(1440px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 42px 0 72px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) minmax(300px, .75fr);
+      gap: 36px;
+      align-items: end;
+      padding-bottom: 30px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      gap: 9px;
+      align-items: center;
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 750;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before {
+      width: 34px;
+      height: 2px;
+      content: "";
+      background: var(--green);
+    }
+
+    h1 {
+      max-width: 900px;
+      margin: 13px 0 15px;
+      font-size: clamp(38px, 5.4vw, 78px);
+      line-height: 1.06;
+      letter-spacing: -.055em;
+    }
+
+    .hero p {
+      max-width: 820px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    .principle {
+      padding: 22px 24px;
+      border: 1px solid #bdd4c6;
+      background: var(--green-soft);
+      box-shadow: var(--shadow);
+    }
+
+    .principle strong {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--green);
+      font-size: 14px;
+    }
+
+    .principle span {
+      font-size: 20px;
+      font-weight: 750;
+      line-height: 1.4;
+    }
+
+    .switcher {
+      display: flex;
+      gap: 8px;
+      margin: 28px 0 20px;
+      padding: 6px;
+      width: fit-content;
+      border: 1px solid var(--line);
+      background: rgba(255, 253, 248, .72);
+    }
+
+    .switcher button {
+      min-width: 160px;
+      padding: 10px 18px;
+      border: 0;
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .switcher button.active {
+      color: #fff;
+      background: var(--ink);
+    }
+
+    .view { display: none; }
+    .view.active { display: block; }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      align-items: end;
+      margin: 32px 0 18px;
+    }
+
+    .section-head h2 {
+      margin: 0;
+      font-size: clamp(25px, 3vw, 39px);
+      letter-spacing: -.035em;
+    }
+
+    .section-head p {
+      max-width: 620px;
+      margin: 0;
+      color: var(--muted);
+      text-align: right;
+    }
+
+    .current-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+
+    .shot {
+      margin: 0;
+      padding: 12px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .shot img {
+      display: block;
+      width: 100%;
+      height: 470px;
+      object-fit: contain;
+      background: #f7f7f5;
+    }
+
+    .shot figcaption {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 13px 4px 2px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .diagnosis {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .diagnosis article {
+      min-height: 150px;
+      padding: 20px;
+      border: 1px solid #e5bdb8;
+      background: var(--red-soft);
+    }
+
+    .diagnosis b {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--red);
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(150px, 1fr));
+      gap: 12px;
+      align-items: stretch;
+      overflow-x: auto;
+      padding: 6px 2px 18px;
+    }
+
+    .step {
+      position: relative;
+      min-width: 160px;
+      padding: 18px 17px 20px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      cursor: pointer;
+      transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+    }
+
+    .step:hover,
+    .step.active {
+      transform: translateY(-4px);
+      border-color: var(--green);
+      box-shadow: var(--shadow);
+    }
+
+    .step:not(:last-child)::after {
+      position: absolute;
+      top: 50%;
+      right: -13px;
+      z-index: 2;
+      width: 13px;
+      height: 2px;
+      content: "";
+      background: var(--green);
+    }
+
+    .step-no {
+      display: grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      margin-bottom: 28px;
+      border: 1px solid var(--green);
+      color: var(--green);
+      font-weight: 800;
+      font-size: 12px;
+    }
+
+    .step h3 {
+      margin: 0 0 8px;
+      font-size: 17px;
+      line-height: 1.35;
+    }
+
+    .step p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .detail-panel {
+      display: grid;
+      grid-template-columns: 1.1fr .9fr;
+      min-height: 300px;
+      margin-top: 4px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .detail-copy {
+      padding: 30px;
+    }
+
+    .detail-copy .tag {
+      display: inline-block;
+      padding: 4px 8px;
+      color: var(--green);
+      background: var(--green-soft);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .detail-copy h3 {
+      margin: 13px 0 9px;
+      font-size: 29px;
+      letter-spacing: -.03em;
+    }
+
+    .detail-copy ul {
+      margin: 18px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .detail-copy li {
+      position: relative;
+      margin: 9px 0;
+      padding-left: 22px;
+      color: #425049;
+    }
+
+    .detail-copy li::before {
+      position: absolute;
+      left: 0;
+      color: var(--green);
+      content: "✓";
+      font-weight: 850;
+    }
+
+    .detail-visual {
+      display: grid;
+      place-items: center;
+      padding: 22px;
+      border-left: 1px solid var(--line);
+      background:
+        linear-gradient(45deg, #ddd 25%, transparent 25%),
+        linear-gradient(-45deg, #ddd 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #ddd 75%),
+        linear-gradient(-45deg, transparent 75%, #ddd 75%);
+      background-color: #fff;
+      background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+      background-size: 20px 20px;
+    }
+
+    .detail-visual img {
+      max-width: 92%;
+      max-height: 290px;
+      object-fit: contain;
+      filter: drop-shadow(0 18px 19px rgba(0, 0, 0, .18));
+    }
+
+    .gates {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .gate {
+      padding: 17px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .gate strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+
+    .gate.pass { border-top: 4px solid var(--green); }
+    .gate.warn { border-top: 4px solid var(--amber); }
+    .gate.stop { border-top: 4px solid var(--red); }
+    .gate.info { border-top: 4px solid var(--blue); }
+
+    .implementation {
+      display: grid;
+      grid-template-columns: .8fr 1.2fr;
+      gap: 18px;
+      margin-top: 18px;
+    }
+
+    .phase-list,
+    .acceptance {
+      padding: 25px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .phase {
+      display: grid;
+      grid-template-columns: 54px 1fr;
+      gap: 16px;
+      padding: 17px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .phase:last-child { border-bottom: 0; }
+
+    .phase span {
+      color: var(--green);
+      font-weight: 850;
+    }
+
+    .phase strong {
+      display: block;
+      margin-bottom: 3px;
+    }
+
+    .acceptance h3,
+    .phase-list h3 {
+      margin: 0 0 12px;
+      font-size: 20px;
+    }
+
+    .acceptance-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .check {
+      padding: 12px 14px;
+      border: 1px solid #cbded2;
+      background: #f1f8f4;
+      font-size: 13px;
+    }
+
+    .footer-note {
+      margin-top: 26px;
+      padding: 20px 22px;
+      color: #fff;
+      background: var(--ink);
+      font-size: 15px;
+    }
+
+    @media (max-width: 900px) {
+      .hero,
+      .current-grid,
+      .detail-panel,
+      .implementation { grid-template-columns: 1fr; }
+      .diagnosis,
+      .gates { grid-template-columns: 1fr 1fr; }
+      .section-head { align-items: start; flex-direction: column; }
+      .section-head p { text-align: left; }
+      .detail-visual { border-top: 1px solid var(--line); border-left: 0; }
+    }
+
+    @media (max-width: 560px) {
+      .page { width: min(100% - 22px, 1440px); padding-top: 22px; }
+      .diagnosis,
+      .gates,
+      .acceptance-grid { grid-template-columns: 1fr; }
+      .switcher { width: 100%; }
+      .switcher button { flex: 1; min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div>
+        <span class="eyebrow">Product Cutout V4</span>
+        <h1>从“整图抠背景”升级为“自动识别商品主体”</h1>
+        <p>这份流程展示当前失败原因，以及改造后系统如何自动找到真正出售的商品、让用户快速确认，并在不重绘产品的前提下生成透明产品母图。</p>
+      </div>
+      <aside class="principle">
+        <strong>不可妥协的原则</strong>
+        <span>AI 可以判断商品在哪里，但最终产品像素必须来自原图。</span>
+      </aside>
+    </header>
+
+    <nav class="switcher" aria-label="流程视图切换">
+      <button class="active" data-view="current">当前问题</button>
+      <button data-view="future">改造后流程</button>
+    </nav>
+
+    <section id="current" class="view active" data-screen-label="当前问题">
+      <div class="section-head">
+        <h2>现在为什么没有得到正确结果</h2>
+        <p>截图里已经给出了完整证据：没有目标框，却执行了整图 rembg，并被错误地评为高质量。</p>
+      </div>
+
+      <div class="current-grid">
+        <figure class="shot">
+          <img src="current-ui.png" alt="当前框选界面显示零个目标">
+          <figcaption><span>操作界面</span><strong>0 个目标</strong></figcaption>
+        </figure>
+        <figure class="shot">
+          <img src="current-result.png" alt="当前整图抠图结果保留广告文字">
+          <figcaption><span>错误结果</span><strong>rembg_full · 90分</strong></figcaption>
+        </figure>
+      </div>
+
+      <div class="diagnosis">
+        <article>
+          <b>01 · 路径走错</b>
+          用户实际执行了快速整图抠图，系统并不知道右侧设备才是出售商品。
+        </article>
+        <article>
+          <b>02 · 语义缺失</b>
+          rembg 只能区分前景与背景，无法区分商品、广告文字、Logo 和装饰色块。
+        </article>
+        <article>
+          <b>03 · 门禁失真</b>
+          没有目标框时，框外残留与完整性仍被默认成优秀值，导致错误结果得到 90 分。
+        </article>
+      </div>
+    </section>
+
+    <section id="future" class="view" data-screen-label="改造后流程">
+      <div class="section-head">
+        <h2>改造后的完整实施流程</h2>
+        <p>点击任意步骤查看输入、系统动作、用户确认点和输出。默认不会直接自动批准。</p>
+      </div>
+
+      <div class="flow" id="flow">
+        <article class="step active" data-step="0">
+          <span class="step-no">01</span>
+          <h3>载入原图与商品事实</h3>
+          <p>原图、标题、类目、SKU 信息进入识别服务。</p>
+        </article>
+        <article class="step" data-step="1">
+          <span class="step-no">02</span>
+          <h3>视觉模型识别主体</h3>
+          <p>识别主商品、配件、广告文字、Logo 与背景装饰。</p>
+        </article>
+        <article class="step" data-step="2">
+          <span class="step-no">03</span>
+          <h3>自动绘制目标框</h3>
+          <p>绿色保留商品，蓝色保留配件，红色排除广告。</p>
+        </article>
+        <article class="step" data-step="3">
+          <span class="step-no">04</span>
+          <h3>用户确认或微调</h3>
+          <p>拖动、缩放或删除错误框，一次确认即可继续。</p>
+        </article>
+        <article class="step" data-step="4">
+          <span class="step-no">05</span>
+          <h3>实例级分割</h3>
+          <p>SAM 2 优先；未安装时采用 rembg_crop 回退。</p>
+        </article>
+        <article class="step" data-step="5">
+          <span class="step-no">06</span>
+          <h3>原图像素合成</h3>
+          <p>只生成蒙版，用原图 RGB + Alpha 得到透明 PNG。</p>
+        </article>
+        <article class="step" data-step="6">
+          <span class="step-no">07</span>
+          <h3>质量门禁与批准</h3>
+          <p>检查广告残留、完整性和像素真实性后才能批准。</p>
+        </article>
+      </div>
+
+      <section class="detail-panel" id="detailPanel" aria-live="polite">
+        <div class="detail-copy">
+          <span class="tag" id="detailTag">步骤 01</span>
+          <h3 id="detailTitle">载入原图与商品事实</h3>
+          <p id="detailText">系统读取商品原图，同时带入标题、类目与 SKU 信息，帮助视觉模型判断真正出售的对象。</p>
+          <ul id="detailList">
+            <li>输入原始 800×800 商品图片</li>
+            <li>带入“Godox XPro-C 无线引闪器”等商品信息</li>
+            <li>保留原图文件哈希，建立像素真实性基准</li>
+          </ul>
+        </div>
+        <div class="detail-visual">
+          <img id="detailImage" src="source-product.jpeg" alt="流程步骤示意">
+        </div>
+      </section>
+
+      <div class="section-head">
+        <h2>必须设置的四道门禁</h2>
+        <p>自动识别的价值不是取消人工，而是把人工操作压缩成一次快速确认，并阻止系统产生“看起来成功”的错误结果。</p>
+      </div>
+
+      <div class="gates">
+        <article class="gate info">
+          <strong>识别置信度</strong>
+          主商品低于 70% 时不自动抠图，要求手工框选。
+        </article>
+        <article class="gate warn">
+          <strong>用户确认</strong>
+          自动框选后默认停留在确认页，不立即执行正式母图。
+        </article>
+        <article class="gate stop">
+          <strong>禁止静默降级</strong>
+          没有目标框时禁止转为 rembg_full，必须明确报错。
+        </article>
+        <article class="gate pass">
+          <strong>批准条件</strong>
+          框外残留小于 1%、像素未重绘、商品完整才允许批准。
+        </article>
+      </div>
+
+      <div class="section-head">
+        <h2>Claude Code 实施顺序</h2>
+        <p>先完成自动识别闭环，再接入更精确的分割模型，避免一次性改造过大。</p>
+      </div>
+
+      <div class="implementation">
+        <section class="phase-list">
+          <h3>分阶段开发</h3>
+          <div class="phase">
+            <span>P0</span>
+            <div><strong>自动识别闭环</strong>视觉模型输出商品及排除框；修复坐标；用户确认后 rembg_crop。</div>
+          </div>
+          <div class="phase">
+            <span>P1</span>
+            <div><strong>精确分割</strong>接入 SAM 2 box prompt、正负点提示和蒙版微调。</div>
+          </div>
+          <div class="phase">
+            <span>P2</span>
+            <div><strong>规模化</strong>SKU 母图、多配件识别、批量处理和生图工作流联动。</div>
+          </div>
+        </section>
+
+        <section class="acceptance">
+          <h3>XPro-C 当前案例验收</h3>
+          <div class="acceptance-grid">
+            <div class="check">自动识别右侧引闪器为唯一主商品</div>
+            <div class="check">左侧广告文字与底部 Logo 被标红排除</div>
+            <div class="check">结果 provider 为 sam2_box 或 rembg_crop</div>
+            <div class="check">结果记录至少 1 个保留目标</div>
+            <div class="check">产品屏幕、按钮、旋钮保持原图像素</div>
+            <div class="check">框外前景残留低于 1%</div>
+            <div class="check">失败结果不能显示“确认母图”</div>
+            <div class="check">不存在自动回退 rembg_full</div>
+          </div>
+        </section>
+      </div>
+
+      <div class="footer-note">
+        最终结果：用户点击“自动识别商品”，系统自动画框；用户看一眼确认；系统只用蒙版提取原图产品，广告内容消失，产品本身不被 AI 重绘。
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const detailData = [
+      {
+        title: "载入原图与商品事实",
+        text: "系统读取商品原图，同时带入标题、类目与 SKU 信息，帮助视觉模型判断真正出售的对象。",
+        items: ["输入原始 800×800 商品图片", "带入商品标题、类目和 SKU 名称", "保存原图哈希，建立像素真实性基准"]
+      },
+      {
+        title: "视觉模型识别主体",
+        text: "视觉模型只做语义判断，不修改图片。它返回主商品、真实配件和排除区域的原图坐标。",
+        items: ["主商品：右侧 XPro-C 引闪器", "配件：当前案例为 0", "排除：外部文字、宣传 Logo、色块与装饰"]
+      },
+      {
+        title: "自动绘制目标框",
+        text: "系统将识别结果映射到页面：保留框和排除框颜色明确，用户无需从零开始框选。",
+        items: ["绿色：主商品", "蓝色：确认配件", "红色：广告文字、外部 Logo 与无关对象"]
+      },
+      {
+        title: "用户确认或微调",
+        text: "自动识别后必须停在确认步骤。用户可以修正识别偏差，再启动正式抠图。",
+        items: ["移动或缩放目标框", "删除错误配件", "置信度低于 70% 时要求手工选择"]
+      },
+      {
+        title: "实例级分割",
+        text: "分割模型依据商品框提取精确蒙版。SAM 2 负责复杂轮廓，rembg_crop 作为轻量回退。",
+        items: ["bbox 外强制透明", "排除框从最终蒙版中扣除", "禁止复杂广告图使用 rembg_full"]
+      },
+      {
+        title: "原图像素合成",
+        text: "正式母图不是 AI 重新画出的产品。系统只把分割蒙版写入原图 Alpha 通道。",
+        items: ["result = original RGBA + cleaned mask", "屏幕、按钮和纹理不发生重绘", "输出透明 PNG 与原始/清理后蒙版"]
+      },
+      {
+        title: "质量门禁与批准",
+        text: "系统检查框外残留、商品完整性和像素真实性。未通过的结果不能批准为母图。",
+        items: ["框外前景残留 < 1%", "不透明产品像素平均差异 = 0", "失败结果隐藏确认按钮并显示具体原因"]
+      }
+    ];
+
+    const viewButtons = document.querySelectorAll(".switcher button");
+    const views = document.querySelectorAll(".view");
+    viewButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        viewButtons.forEach((item) => item.classList.remove("active"));
+        views.forEach((item) => item.classList.remove("active"));
+        button.classList.add("active");
+        document.getElementById(button.dataset.view).classList.add("active");
+      });
+    });
+
+    const steps = document.querySelectorAll(".step");
+    const detailTag = document.getElementById("detailTag");
+    const detailTitle = document.getElementById("detailTitle");
+    const detailText = document.getElementById("detailText");
+    const detailList = document.getElementById("detailList");
+
+    steps.forEach((step) => {
+      step.addEventListener("click", () => {
+        const index = Number(step.dataset.step);
+        const data = detailData[index];
+        steps.forEach((item) => item.classList.remove("active"));
+        step.classList.add("active");
+        detailTag.textContent = `步骤 ${String(index + 1).padStart(2, "0")}`;
+        detailTitle.textContent = data.title;
+        detailText.textContent = data.text;
+        detailList.innerHTML = data.items.map((item) => `<li>${item}</li>`).join("");
+      });
+    });
+  </script>
+</body>
+</html>

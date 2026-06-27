@@ -1,0 +1,6 @@
+[mcp_servers.vision-tools]
+command = 'C:\Users\Lenovo\.claude-mcp\vision-tools\.venv\Scripts\python.exe'
+args = ['C:\Users\Lenovo\.claude-mcp\vision-tools\server.py']
+
+[mcp_servers.vision-tools.tools.analyze_image]
+approval_mode = "approve"
