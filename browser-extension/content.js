@@ -3521,7 +3521,14 @@ function extractOzonRichText() {
 
     
     // V5: 当前页面变体快照 (不采全部SKU)
-    var currentVariantSnapshot = {
+    var productInfo = {title:title, category:category||desc.substring(0,100), shop_name:shop, description:desc};
+    var v4RichText = extractOzonRichText();
+    var v4Pricing = extractOzonPricing(stateObjects);
+    var v4Attrs = extractOzonAttributes(stateObjects);
+    var v4Videos = extractOzonVideos(stateObjects);
+    var v4Skus = extractOzonSkus(stateObjects, productInfo, v4Pricing);
+
+var currentVariantSnapshot = {
       title: title,
       brand: '', shop_name: shop,
       current_price: v4Pricing.reference_price_rub ? {currency:'RUB',value:v4Pricing.reference_price_rub,text:v4Pricing.reference_price_rub+' RUB',source:v4Pricing.source||'page',confidence:0.9,confirmed:false} : null,
@@ -3539,13 +3546,7 @@ function extractOzonRichText() {
 
     var packageList = [];
 
-    var productInfo = {title:title, category:category||desc.substring(0,100), shop_name:shop, description:desc};
-    var v4RichText = extractOzonRichText();
-    var v4Pricing = extractOzonPricing(stateObjects);
-    var v4Attrs = extractOzonAttributes(stateObjects);
-    var v4Videos = extractOzonVideos(stateObjects);
-    var v4Skus = extractOzonSkus(stateObjects, productInfo, v4Pricing);
-    return {
+        return {
       title: title, category: category || desc.substring(0, 100), description: v4RichText.plain_text || desc,
       shop_name: shop, skus: v4Skus.length ? v4Skus : skus, images: images,
       specs: v4Attrs, attribute_candidates: v4Attrs,
