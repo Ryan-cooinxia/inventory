@@ -699,7 +699,6 @@
 
   function extractImages() {
     var platform = detectPlatform();
-    if (platform === 'ozon_product') { await fetchOzonSplitState(); }
     var selectors = AREA_SELECTORS[platform] || AREA_SELECTORS['taobao'] || AREA_SELECTORS['1688'];
     _extractDebug = { whitelistHits: 0, fallbackHits: 0, rawCandidates: 0, keywordFiltered: 0, sizeFiltered: 0, cdnFiltered: 0, thumbHits: 0, skuBgHits: 0 };
 
