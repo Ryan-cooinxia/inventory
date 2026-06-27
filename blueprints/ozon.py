@@ -996,10 +996,36 @@ def source_collect_ozon_url():
 
     from services.ozon_collector import collect_ozon_product_url
 
-    result = collect_ozon_product_url(url, user=current_user)
+    # 如果有粘贴内容，优先用粘贴内容解析
+    content = request.form.get('content', '').strip()
+    if content:
+        from services.ozon_collector import extract_product
+        key_record = UserApiKey.get_or_none(UserApiKey.user == current_user)
+        if key_record:
+            from crypto_utils import decrypt_api_key
+            api_key = decrypt_api_key(key_record.api_key)
+            provider = key_record.api_provider or 'deepseek'
+            parsed = extract_product(content, api_key=api_key, provider=provider, source_url=url)
+            result = {
+                'platform': 'ozon_product', 'source_url': url,
+                'title_cn': parsed.get('product', {}).get('title_cn', '') or parsed.get('product', {}).get('title', ''),
+                'title_ru': parsed.get('product', {}).get('title_cn', ''),
+                'category_path': parsed.get('product', {}).get('category_cn', ''),
+                'description_ru': parsed.get('product', {}).get('description_cn', ''),
+                'skus': parsed.get('skus', []),
+                'media': parsed.get('media', []),
+                'specs_json': parsed.get('product', {}).get('attributes', []),
+                'missing_fields': [],
+                'raw_text': content[:50000],
+                'raw_json': parsed,
+            }
+        else:
+            result = collect_ozon_product_url(url, user=current_user)
+    else:
+        result = collect_ozon_product_url(url, user=current_user)
 
     if not result.get('title_ru') and not result.get('title_cn'):
-        flash('采集失败：无法获取 OZON 商品信息，请检查链接是否有效', 'danger')
+        flash('采集失败：无法获取 OZON 商品信息。建议在浏览器打开商品页，Ctrl+A 全选复制后粘贴到页面内容框。', 'danger')
         return redirect(url_for('ozon.sources'))
 
     # 保存到 OzonSource
