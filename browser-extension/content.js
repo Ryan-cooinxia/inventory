@@ -259,7 +259,7 @@
         skuListHtml +
         ((data.platform === 'taobao' || data.platform === 'tmall') ? '<div style="background:#f0f0f0;color:#6c757d;padding:6px 10px;border-radius:4px;margin-bottom:8px;font-size:11px">ℹ️ 淘宝/天猫详情图请通过 1688 同款商品采集或手动上传</div>' : '') +
         ((data.quality_warnings && data.quality_warnings.length > 0) ? data.quality_warnings.map(function(w) { return '<div style="background:#fff3cd;color:#856404;padding:6px 10px;border-radius:4px;margin-bottom:6px;font-size:11px;border:1px solid #ffc107;">⚠️ ' + escHtml(w) + '</div>'; }).join('') : '') +
-        '<div style="display:flex;gap:6px;margin-top:8px"><button class="btn-collect" id="ozon-btn-submit" style="flex:1">📥 一键采集入库</button></div><button class="btn-collect" id="ozon-btn-selection" style="background:#6c757d;margin-top:4px;font-size:11px;padding:6px">📋 采集选中富文本</button>' +
+        '<div style="display:flex;gap:6px;margin-top:8px"><button class="btn-collect" id="ozon-btn-submit" style="flex:1">📥 一键采集入库</button></div><button class="btn-collect" id="ozon-btn-selection" style="background:#6c757d;margin-top:4px;font-size:11px;padding:6px">📋 采集选中富文本</button>📥 一键采集入库</button>' +
         '<div id="ozon-submit-status" style="text-align:center;margin-top:8px;font-size:13px;"></div>' +
       '</div>';
 
@@ -270,6 +270,18 @@
       if (resultPanel) resultPanel.remove();
     });
     document.getElementById('ozon-btn-submit').addEventListener('click', submitCollect);
+    var selBtn = document.getElementById('ozon-btn-selection');
+    if (selBtn) selBtn.addEventListener('click', function() {
+      var rich = scrapeRichTextBySelection();
+      window.__ozonManualRichText = rich;
+      if (window.__ozonExtractedData) { window.__ozonExtractedData.rich_text = rich; }
+      var st = document.getElementById('ozon-submit-status');
+      if (rich && rich.plain_text && rich.plain_text.length > 10) {
+        if (st) st.innerHTML = '<span style="color:#198754;">已采集: ' + rich.plain_text.length + ' 字</span>';
+      } else {
+        if (st) st.innerHTML = '<span style="color:#dc3545;">请先用鼠标选中OZON描述区域再点击此按钮</span>';
+      }
+    });
     var selBtn = document.getElementById('ozon-btn-selection');
     if (selBtn) {
       selBtn.addEventListener('click', function() {
@@ -3185,8 +3197,26 @@
   }
 
 function extractOzonRichText() {
+    if (window.__ozonManualRichText && window.__ozonManualRichText.plain_text && window.__ozonManualRichText.plain_text.length > 10) { return window.__ozonManualRichText; }
 function extractOzonRichText() {
     if (window.__ozonManualRichText && window.__ozonManualRichText.plain_text && window.__ozonManualRichText.plain_text.length > 10) {
       return window.__ozonManualRichText;
     }
-    
+   
+  function scrapeRichTextBySelection() {
+    var sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.toString().trim().length < 5) {
+      return { plain_text: '', html: '', image_urls: [], image_count: 0, source: 'user_selection_empty', captured_at: new Date().toISOString() };
+    }
+    var div = document.createElement('div');
+    for (var i = 0; i < sel.rangeCount; i++) { div.appendChild(sel.getRangeAt(i).cloneContents()); }
+    div.querySelectorAll('script,style,button,nav,header,footer,svg').forEach(function(x) { x.remove(); });
+    var text = (div.innerText || div.textContent || '').replace(/
+{3,}/g, '
+
+').trim();
+    var urls = Array.from(div.querySelectorAll('img')).map(function(img) { return img.src || img.getAttribute('data-src') || ''; }).filter(Boolean);
+    return { plain_text: text.slice(0, 50000), html: div.innerHTML.slice(0, 200000), image_urls: urls, image_count: urls.length, source: 'user_selection', captured_at: new Date().toISOString() };
+  }
+
+ 
