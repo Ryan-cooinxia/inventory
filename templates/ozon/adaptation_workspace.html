@@ -273,7 +273,62 @@
     </div>
   </div>
 
-  <!-- 右栏：OZON Listing 草稿 -->
+  
+
+
+        <!-- V4: 源产品属性字典 -->
+        {% if source_attributes %}
+        <div class="card mt-2">
+          <div class="card-header py-1 d-flex justify-content-between">
+            <strong style="font-size:12px">源产品属性字典</strong>
+            <span class="badge bg-secondary" style="font-size:10px">{{ source_attributes|length }} 条</span>
+          </div>
+          <div class="card-body p-1" style="max-height:200px;overflow-y:auto;font-size:11px">
+            <table class="table table-sm mb-0" style="font-size:10px">
+              <thead><tr><th>属性</th><th>值</th><th>来源</th></tr></thead>
+              <tbody>
+              {% for a in source_attributes[:50] %}
+                <tr><td>{{ a.get('name','') }}</td><td>{{ a.get('value','') }}</td><td class="text-muted">{{ a.get('source','') }}</td></tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {% endif %}
+
+        <!-- V4: 源商品富文本详情 -->
+        {% if rich_text and (rich_text.plain_text or rich_text.html) %}
+        <div class="card mt-2">
+          <div class="card-header py-1 d-flex justify-content-between">
+            <strong style="font-size:12px">源商品富文本详情</strong>
+            <span class="badge bg-info" style="font-size:10px">{{ rich_text.image_count or 0 }} 图</span>
+          </div>
+          <div class="card-body p-0">
+            <ul class="nav nav-tabs px-1 pt-1" style="font-size:10px">
+              <li class="nav-item"><button class="nav-link active py-0 px-2" data-bs-toggle="tab" data-bs-target="#rich-plain">纯文本</button></li>
+              <li class="nav-item"><button class="nav-link py-0 px-2" data-bs-toggle="tab" data-bs-target="#rich-html">HTML</button></li>
+            </ul>
+            <div class="tab-content p-1">
+              <div class="tab-pane fade show active" id="rich-plain">
+                <textarea class="form-control form-control-sm" rows="6" readonly style="font-size:10px">{{ rich_text.plain_text[:5000] }}</textarea>
+              </div>
+              <div class="tab-pane fade" id="rich-html" style="max-height:200px;overflow:auto">
+                <pre class="small p-1" style="font-size:10px">{{ rich_text.html[:10000] }}</pre>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        <!-- V4: OZON价格信息 -->
+        {% if pricing and pricing.reference_price_rub %}
+        <div class="alert alert-info py-1 px-2 mt-1" style="font-size:11px">
+          <strong>OZON参考售价: {{ pricing.reference_price_rub }} RUB</strong>
+          <span class="text-muted">| 来源: {{ pricing.source or '页面' }} | 待确认</span>
+        </div>
+        {% endif %}
+
+<!-- 右栏：OZON Listing 草稿 -->
   <div class="col-lg-4">
     <div class="card h-100">
       <div class="card-header py-2 d-flex justify-content-between align-items-center">

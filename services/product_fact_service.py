@@ -489,6 +489,14 @@ def _normalize_value(v: Any) -> str:
 
 def build_collection_summary(source):
     if not source: return {'status': 'empty', 'score': 0, 'checks': [], 'missing_fields': ['source']}
+    import json
+    raw = {}
+    try: raw = json.loads(source.raw_json or '{}')
+    except: pass
+    pricing = raw.get('pricing') or {}
+    rich_text = raw.get('rich_text') or {}
+    source_attrs = raw.get('source_attributes') or []
+
     checks = []
     missing = []
 
@@ -500,12 +508,15 @@ def build_collection_summary(source):
     _check('title', '标题', source.title_cn)
     _check('category', '类目', source.category_cn)
     _check('sku', 'SKU', source.sku_count > 0)
-    _check('price', '价格', getattr(source, 'price_manual_confirmed', False))
+    _check('price', '价格', bool(pricing.get('current_price') or pricing.get('reference_price_rub')))
     _check('images', '图片', source.image_count > 0)
-    _check('description', '描述', source.description_cn)
-    _check('shop', '供应商', source.shop_name)
+    _check('rich_text', '富文本', bool(rich_text.get('plain_text') or rich_text.get('html')))
+    _check('attributes', '属性', len(source_attrs) > 0)
+    if getattr(source, 'platform', '') == 'ozon_product':
+        _check('shop', '店铺', source.shop_name)
+    else:
+        _check('shop', '供应商', source.shop_name)
 
-    # OZON 来源特殊检查
     if getattr(source, 'platform', '') == 'ozon_product':
         checks.append({'key': 'ozon_ref', 'label': 'OZON参考图(需替换)', 'ok': True, 'warning': True})
 

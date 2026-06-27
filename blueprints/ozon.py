@@ -3473,6 +3473,16 @@ def adaptation_workspace(source_id):
     from services.product_fact_service import build_collection_summary
     collection_summary = build_collection_summary(source)
 
+    # 解析 raw_json 中的新字段
+    raw = {}
+    try: raw = json.loads(source.raw_json or '{}')
+    except: pass
+    pricing = raw.get('pricing') or {}
+    rich_text = raw.get('rich_text') or {}
+    source_attributes = raw.get('source_attributes') or raw.get('specs_json') or []
+    variant_matrix = raw.get('variant_matrix') or {}
+    video_media = [m for m in source_media if getattr(m, 'role', '') == 'video']
+
     # 检查是否有已启用的视觉模型配置
     has_vision_config = (VisionModelConfig
                          .select()
@@ -3521,6 +3531,9 @@ def adaptation_workspace(source_id):
                            evidences=evidences,
                            product_details=product_details,
                            collection_summary=collection_summary,
+                           pricing=pricing, rich_text=rich_text,
+                           source_attributes=source_attributes,
+                           video_media=video_media,
                            has_vision_config=has_vision_config,
                            # 新增：类目/Type/属性/字典
                            adaptation_types=adaptation_types,
