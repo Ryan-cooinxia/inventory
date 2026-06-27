@@ -699,6 +699,7 @@
 
   function extractImages() {
     var platform = detectPlatform();
+    if (platform === 'ozon_product') { await fetchOzonSplitState(); }
     var selectors = AREA_SELECTORS[platform] || AREA_SELECTORS['taobao'] || AREA_SELECTORS['1688'];
     _extractDebug = { whitelistHits: 0, fallbackHits: 0, rawCandidates: 0, keywordFiltered: 0, sizeFiltered: 0, cdnFiltered: 0, thumbHits: 0, skuBgHits: 0 };
 
@@ -3007,6 +3008,7 @@
     floatingBtn.textContent = '...';
 
     var platform = detectPlatform();
+    if (platform === 'ozon_product') { await fetchOzonSplitState(); }
 
     // 自动滚动到底部，触发懒加载图片
     await scrollToBottom();
@@ -3353,6 +3355,21 @@ function sleep(ms) { return new Promise(function(r){setTimeout(r,ms);}); }
     return '';
   }
 
+
+  async function fetchOzonSplitState() {
+    if (window.__ozonSplitStateData) return window.__ozonSplitStateData;
+    return new Promise(function(resolve) {
+      chrome.runtime.sendMessage({action:'readSplitState'}, function(resp) {
+        if (resp && resp.ok) {
+          window.__ozonSplitStateData = resp.data;
+          resolve(resp.data);
+        } else {
+          resolve(null);
+        }
+      });
+    });
+  }
+
   function extractOzonProduct() {
     // ── 1. 尝试从页面JSON状态提取 ──
     var stateData = null;
@@ -3652,9 +3669,21 @@ function sleep(ms) { return new Promise(function(r){setTimeout(r,ms);}); }
     // V5: 当前页面变体快照 (不采全部SKU)
     var productInfo = {title:title, category:category||desc.substring(0,100), shop_name:shop, description:desc};
     var v4RichText = extractOzonRichText();
+    // Supplement from SPLIT_STATE (MAIN world data)
+    if (window.__ozonSplitStateData && window.__ozonSplitStateData.rich_text_html && !v4RichText.plain_text) {
+      v4RichText.html = window.__ozonSplitStateData.rich_text_html;
+      v4RichText.plain_text = window.__ozonSplitStateData.rich_text_plain || '';
+      v4RichText.source = 'split_state';
+    }
     var v4Pricing = extractOzonPricing(stateObjects);
     var v4Attrs = extractOzonAttributes(stateObjects);
-    var mainVideos = extractOzonMainProductVideo(); var stateVideos = extractOzonVideos(stateObjects); var v4Videos = mainVideos.length ? mainVideos : stateVideos;
+    if (window.__ozonSplitStateData && window.__ozonSplitStateData.attributes && window.__ozonSplitStateData.attributes.length && v4Attrs.length < 3) {
+      v4Attrs = v4Attrs.concat(window.__ozonSplitStateData.attributes.map(function(a){return {name:a.name||a.key||'',value:a.value||a.text||'',source:'split_state'};}));
+    }
+    var mainVideos = extractOzonMainProductVideo();
+    if (window.__ozonSplitStateData && (window.__ozonSplitStateData.video_url || window.__ozonSplitStateData.poster) && (!mainVideos.length || !mainVideos[0].poster)) {
+      mainVideos = [{role:'main_video',url:window.__ozonSplitStateData.video_url||'',poster:window.__ozonSplitStateData.poster||'',source_area:'main_gallery',source:'split_state',need_manual_check:!window.__ozonSplitStateData.video_url}];
+    } var stateVideos = extractOzonVideos(stateObjects); var v4Videos = mainVideos.length ? mainVideos : stateVideos;
     var v4Skus = extractOzonSkus(stateObjects, productInfo, v4Pricing);
 
 var currentVariantSnapshot = {
