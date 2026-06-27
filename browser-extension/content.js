@@ -3126,6 +3126,7 @@ function scrapeRichTextBySelection() {
     var urls = Array.from(d.querySelectorAll('img')).map(function(x){return x.src||x.getAttribute('data-src')||'';}).filter(Boolean);
     return {plain_text:t.slice(0,50000),html:d.innerHTML.slice(0,200000),image_urls:urls,image_count:urls.length,source:'user_selection',captured_at:new Date().toISOString()};
   }
+
 })();
 
 
