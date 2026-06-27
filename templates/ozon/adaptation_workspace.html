@@ -541,6 +541,15 @@ function generateDraft() {
 
 var allSourceMedia = {{ source_media_list_json | tojson | safe }};
 var STATUS_LABELS = {'usable': '可用', 'needs_review': '待审核', 'rejected': '已过滤'};
+var STATUS_COLORS = {'usable': '#28a745', 'needs_review': '#ffc107', 'rejected': '#dc3545', 'pending': '#6c757d', 'approved': '#28a745'};
+var AREA_LABELS = {'main_gallery': '主图区', 'sku_panel': 'SKU区', 'detail_content': '详情区', 'manual_upload': '手动上传', 'shop_header': '店铺头部', 'floating': '浮动元素', 'sidebar': '侧栏', 'footer': '页脚', 'nav': '导航栏', 'ad': '广告位', 'certification': '认证标识', 'unknown': '未知来源'};
+function getSourceLabel(m) {
+  if (m.role === 'main')   return '<span class="badge bg-primary" style="font-size:8px">主图</span>';
+  if (m.role === 'sku')    return '<span class="badge bg-secondary" style="font-size:8px">SKU图</span>';
+  if (m.role === 'detail') return '<span class="badge bg-success" style="font-size:8px">详情图</span>';
+  return '<span class="badge bg-dark" style="font-size:8px">' + (m.role || '未知') + '</span>';
+}
+
 
 function analyzeImages() {
   return analyzeProductFacts(document.getElementById('btnAnalyze'));
