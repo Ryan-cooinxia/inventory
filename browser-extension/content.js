@@ -3,6 +3,17 @@
  * 支持: 1688 / 淘宝 / 天猫 / 拼多多 商品详情页
  */
 (function () {
+  var OZON_TEXT = {
+    description: 'Описание',
+    characteristics: 'Характеристики',
+    about: 'О товаре',
+    reviews: 'Отзывы',
+    buyerMedia: 'Фото и видео покупателей',
+    questions: 'Вопросы',
+    similar: 'Похожие',
+    recommend: 'Рекоменд'
+  };
+
   'use strict';
 
   const API_URL = 'http://127.0.0.1:5000/ozon/api/sources/add';
@@ -292,7 +303,16 @@
       skus: data.skus || [],
       images: data.images || [],
       specs: data.specs || [],
+      pricing: data.pricing || {},
+      price_candidates: data.price_candidates || [],
+      rich_text: data.rich_text || {},
+      source_attributes: data.attribute_candidates || data.source_attributes || data.specs || [],
+      attribute_candidates: data.attribute_candidates || data.source_attributes || [],
       videos: data.videos || [],
+      video_candidates: data.video_candidates || data.product_videos || data.videos || [],
+      product_videos: data.product_videos || data.video_candidates || data.videos || [],
+      current_variant_snapshot: data.current_variant_snapshot || {},
+      rejected_images: data.rejected_images || [],
       detail_missing: data.detail_missing || false,
       quality_warnings: data.quality_warnings || [],
       collect_source: 'browser_extension_pc'
@@ -3713,23 +3733,6 @@ var currentVariantSnapshot = {
       current_variant_snapshot: currentVariantSnapshot,
       package_list: packageList
     };
-  }  function extractOzonRichText() {
-    var result = {plain_text:'',html:'',sections:[],image_urls:[],image_count:0,source:'',captured_at:new Date().toISOString(),debug:{}};
-    var root = findDescriptionRootByAnchor();
-    if (!root) { result.debug={reason:'description_root_not_found'}; return result; }
-    var clone=root.cloneNode(true);
-    clone.querySelectorAll('script,style,button,nav,header,footer,svg').forEach(function(x){x.remove();});
-    Array.from(clone.querySelectorAll('*')).forEach(function(el){
-      var t=(el.innerText||el.textContent||'').slice(0,200);
-      if (/Отзывы|Вопросы|Фото и видео покупателей|Похожие товары|Рекомендуем|Магазин/i.test(t)) el.remove();
-    });
-    var text=(clone.innerText||clone.textContent||'').replace(/\n{3,}/g,'\n\n').trim();
-    result.html=clone.innerHTML.slice(0,200000);
-    result.plain_text=text.slice(0,50000);
-    result.image_urls=Array.from(clone.querySelectorAll('img')).map(function(img){return img.src||img.getAttribute('data-src')||'';}).filter(Boolean);
-    result.image_count=result.image_urls.length;
-    result.source='description_anchor';
-    return result;
   }
 
 

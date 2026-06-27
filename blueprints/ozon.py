@@ -666,7 +666,13 @@ def api_source_add():
             v_src = v
         else:
             v_src = v.get('src') or v.get('url') or ''
-        if v_src and v_src.startswith('http'):
+        if isinstance(v, str):
+            v_src = v; poster = ''
+        else:
+            v_src = (v.get('src') or v.get('url') or '')
+            poster = v.get('poster') or ''
+        media_url = v_src or poster
+        if media_url and media_url.startswith('http'):
             OzonSourceMedia.create(
                 user=user, source=source,
                 media_id=f'video-{vi+1:03d}',
