@@ -3174,7 +3174,7 @@
     return false;
   }
 
-  function addImage(src, role) {function addImage(src, role, el) {
+  function addImage(src, role, el) {
       if (!src || !src.startsWith('http')) return;
       if (el && isInBadArea(el)) return;
       // 去水印/缩略图处理：取最大尺寸
