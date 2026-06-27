@@ -36,6 +36,7 @@
     if (host.includes('tmall.com'))      return 'tmall';
     if (host.includes('yangkeduo.com'))  return 'pinduoduo';
     if (host.includes('pinduoduo.com'))  return 'pinduoduo';
+    if (host.includes('ozon.ru') || host.includes('ozon.by') || host.includes('ozon.kz')) return 'ozon_product';
     return 'unknown';
   }
 
@@ -196,8 +197,8 @@
   function showResultPanel(data) {
     if (resultPanel) resultPanel.remove();
 
-    const platformNames = { '1688': '1688', 'taobao': '淘宝', 'tmall': '天猫', 'pinduoduo': '拼多多' };
-    const platformColors = { '1688': '#e6002b', 'taobao': '#ff4400', 'tmall': '#e6002b', 'pinduoduo': '#e6004c' };
+    const platformNames = { '1688': '1688', 'taobao': '淘宝', 'tmall': '天猫', 'pinduoduo': '拼多多', 'ozon_product': 'OZON' };
+    const platformColors = { '1688': '#e6002b', 'taobao': '#ff4400', 'tmall': '#e6002b', 'pinduoduo': '#e6004c', 'ozon_product': '#005bff' };
 
     resultPanel = document.createElement('div');
     resultPanel.id = 'ozon-result-panel';

@@ -35,7 +35,13 @@
         "https://h5.m.taobao.com/*",
         "https://m.taobao.com/*",
         "https://mobile.yangkeduo.com/*",
-        "https://yangkeduo.com/*"
+        "https://yangkeduo.com/*",
+        "https://www.ozon.ru/product/*",
+        "https://ozon.ru/product/*",
+        "https://www.ozon.by/product/*",
+        "https://ozon.by/product/*",
+        "https://www.ozon.kz/product/*",
+        "https://ozon.kz/product/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle"
