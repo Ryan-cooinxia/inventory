@@ -48,7 +48,6 @@ function extractSplitStateData() {
   try {
     var state = window.__SPLIT_STATE__;
     if (!state) {
-      // try script tag fallback
       var scripts = document.querySelectorAll('script');
       for (var i = 0; i < scripts.length; i++) {
         var t = scripts[i].textContent || '';
@@ -62,65 +61,87 @@ function extractSplitStateData() {
     }
     if (!state) return { error: '__SPLIT_STATE__ not found' };
 
-    var result = { rich_text_html: '', rich_text_plain: '', attributes: [], video_url: '', poster: '' };
-    var stateStr = JSON.stringify(state);
+    var result = { rich_text_html: '', rich_text_plain: '', attributes: [], video_url: '', poster: '', video_data: null };
 
-    // Extract rich content from state JSON
-    var m1 = stateStr.match(/"richContent"\s*:\s*"([^"]{100,})"/);
-    if (!m1) m1 = stateStr.match(/"richContentHtml"\s*:\s*"([^"]{100,})"/);
-    if (!m1) m1 = stateStr.match(/"description"\s*:\s*"([^"]{100,})"/);
-    if (m1) {
-      result.rich_text_html = m1[1]
-        .replace(/\\"/g, '"')
-        .replace(/\\u003C/g, '<')
-        .replace(/\\u003E/g, '>')
-        .replace(/\\n/g, '\n')
-        .replace(/\\\\/g, '\\');
-      // plain text version
-      var div = document.createElement('div');
-      div.innerHTML = result.rich_text_html;
-      result.rich_text_plain = (div.textContent || div.innerText || '').trim();
-    }
-
-    // Try deeper search for webDescription/widget data
-    function deepSearch(obj, depth) {
-      if (!obj || depth > 10) return;
-      if (typeof obj === 'string' && obj.length > 500 && obj.indexOf('<') >= 0) {
-        if (!result.rich_text_html) {
-          result.rich_text_html = obj;
-          var d = document.createElement('div'); d.innerHTML = obj;
-          result.rich_text_plain = (d.textContent || d.innerText || '').trim();
+    // Deep recursive search for any key matching target patterns
+    function findKeyInObject(obj, targetKey) {
+      if (!obj || typeof obj !== 'object') return null;
+      if (obj[targetKey] !== undefined) return obj[targetKey];
+      if (Array.isArray(obj)) {
+        for (var i=0;i<obj.length&&i<200;i++) {
+          var r = findKeyInObject(obj[i], targetKey);
+          if (r) return r;
         }
-        return;
+        return null;
       }
-      if (Array.isArray(obj)) { for (var j=0;j<obj.length&&j<100;j++) deepSearch(obj[j],depth+1); return; }
-      if (typeof obj !== 'object') return;
       for (var k in obj) {
-        if (!result.rich_text_html && (k.indexOf('richContent')>=0||k.indexOf('description')>=0||k.indexOf('Description')>=0))
-          deepSearch(obj[k], depth+1);
-        if (k.indexOf('characteristic')>=0||k.indexOf('widget')>=0||k.indexOf('layout')>=0)
-          deepSearch(obj[k], depth+1);
+        if (k === targetKey) return obj[k];
+        var r = findKeyInObject(obj[k], targetKey);
+        if (r) return r;
       }
-      // Scan top-level keys
-      if (depth === 0) {
-        for (var k2 in obj) { deepSearch(obj[k2], 1); }
+      return null;
+    }
+
+    // Find rich content - try multiple key names
+    var richKeys = ['richContent','richContentHtml','description','Description','htmlContent','content'];
+    for (var rk=0;rk<richKeys.length;rk++) {
+      var found = findKeyInObject(state, richKeys[rk]);
+      if (found && typeof found === 'string' && found.length > 100) {
+        result.rich_text_html = found
+          .replace(/\\"/g, '"').replace(/\\u003C/g, '<')
+          .replace(/\\u003E/g, '>').replace(/\\n/g, '\n').replace(/\\\\/g, '\\');
+        var div = document.createElement('div');
+        div.innerHTML = result.rich_text_html;
+        result.rich_text_plain = (div.textContent || div.innerText || '').trim();
+        break;
       }
     }
-    if (!result.rich_text_html) deepSearch(state, 0);
 
-    // Extract attribute characteristics
+    // Find video data
+    var videoKeys = ['video','videoUrl','mediaList','media','videos'];
+    for (var vk=0;vk<videoKeys.length;vk++) {
+      var v = findKeyInObject(state, videoKeys[vk]);
+      if (v) {
+        if (typeof v === 'string' && v.length > 10) {
+          result.video_url = v;
+        } else if (typeof v === 'object') {
+          result.video_data = JSON.stringify(v);
+          result.video_url = v.url || v.src || v.videoUrl || '';
+          result.poster = v.poster || v.cover || v.preview || v.image || '';
+        }
+        if (result.video_url || result.poster) break;
+      }
+    }
+
+    // Find characteristics/attributes
     try {
-      var chars = stateStr.match(/"characteristics"\s*:\s*(\[.*?\])/);
-      if (chars) result.attributes = JSON.parse(chars[1]);
+      var chars = findKeyInObject(state, 'characteristics');
+      if (chars && Array.isArray(chars)) result.attributes = chars;
+      if (!result.attributes.length) {
+        var specs = findKeyInObject(state, 'specifications');
+        if (specs && Array.isArray(specs)) result.attributes = specs;
+      }
     } catch(e) {}
 
-    // Extract main video poster
-    try {
-      var vid = stateStr.match(/"video"\s*:\s*\{[^}]*"url"\s*:\s*"([^"]+)"/);
-      if (vid) result.video_url = vid[1];
-      var poster = stateStr.match(/"poster"\s*:\s*"([^"]+)"/);
-      if (poster) result.poster = poster[1];
-    } catch(e) {}
+    // Fallback: if still no rich text, stringify entire state and extract long HTML strings
+    if (!result.rich_text_html) {
+      var stateStr = JSON.stringify(state);
+      var m = stateStr.match(/"[^"]{500,20000}"/g);
+      if (m) {
+        for (var si=0;si<m.length;si++) {
+          var candidate = m[si].slice(1,-1);
+          if (candidate.indexOf('<div')>=0 || candidate.indexOf('<p')>=0 || candidate.indexOf('<span')>=0) {
+            result.rich_text_html = candidate
+              .replace(/\\"/g,'"').replace(/\\u003C/g,'<')
+              .replace(/\\u003E/g,'>').replace(/\\n/g,'\n').replace(/\\\\/g,'\\');
+            var d2 = document.createElement('div');
+            d2.innerHTML = result.rich_text_html;
+            result.rich_text_plain = (d2.textContent||d2.innerText||'').trim();
+            break;
+          }
+        }
+      }
+    }
 
     return result;
   } catch(e) { return { error: e.message }; }
