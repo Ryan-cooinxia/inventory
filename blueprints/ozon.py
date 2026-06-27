@@ -496,7 +496,7 @@ def api_source_add():
     price_candidates = data.get('price_candidates') or []
     rich_text = data.get('rich_text') or {}
     attribute_candidates = data.get('attribute_candidates') or []
-    video_candidates = data.get('video_candidates') or data.get('videos') or []
+    product_videos = data.get('product_videos') or []; video_candidates = product_videos or data.get('video_candidates') or data.get('videos') or []
     rejected_images = data.get('rejected_images') or []
     debug_data = data.get('debug') or {}
 
