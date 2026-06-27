@@ -568,6 +568,9 @@ def api_source_add():
     has_confirmed_price = any(sku.get('purchase_price_cny') for sku in skus)
     price_unconfirmed = not has_confirmed_price
 
+    # ── OZON 来源特殊标记 ──
+    is_ozon_product = (platform == 'ozon_product')
+
     # ── 先建 source（media 需要 FK）─────────────────
     source = OzonSource.create(
         user=user,
@@ -603,18 +606,25 @@ def api_source_add():
             'collect_reason': mrec.get('collect_reason', ''),
             'linked_sku_name': mrec.get('linked_sku_name'),
         }
+        # OZON 来源图片标记为参考图
+        media_source_val = 'ozon_reference' if is_ozon_product else 'browser_extension'
+        compliance_val = 'needs_review' if is_ozon_product else mrec["comp_status"]
+        review_val = 'pending' if is_ozon_product else ('rejected' if mrec["comp_status"] == 'rejected' else ('pending' if mrec["comp_status"] == 'needs_review' else 'approved'))
+        reject_val = 'OZON参考图，发布前需替换为自有图片' if is_ozon_product else mrec["reason"]
+
         OzonSourceMedia.create(
             user=user,
             source=source,
             media_id=f'ext-{mrec["src"][:50]}',
-            media_source='browser_extension',
+            media_source=media_source_val,
             role=mrec["role"],
             source_url=mrec["src"],
             width=mrec.get('width') or None,
             height=mrec.get('height') or None,
-            compliance_status=mrec["comp_status"],
-            reject_reason=mrec["reason"],
-            review_status='rejected' if mrec["comp_status"] == 'rejected' else ('pending' if mrec["comp_status"] == 'needs_review' else 'approved'),
+            for_ozon=(not is_ozon_product),
+            compliance_status=compliance_val,
+            reject_reason=reject_val,
+            review_status=review_val,
             raw_json=json.dumps(meta_json, ensure_ascii=False),
         )
 
