@@ -3103,6 +3103,31 @@
     // ── 2. 从JSON状态提取 ──
     if (stateData) {
       var pd = stateData.product || stateData.state || stateData;
+
+      // 从JSON提取图集
+      try {
+        var js = JSON.stringify(stateData);
+        // 提取所有OZON CDN图片URL
+        var imgUrls = js.match(/https?:\/\/[^"'\s,]*ozon[^"'\s,]*\.(jpg|jpeg|png|webp|avif)[^"'\s,]*/gi);
+        if (imgUrls) {
+          for (var u2 = 0; u2 < imgUrls.length && images.length < 30; u2++) {
+            var cleanUrl = imgUrls[u2].replace(/\/wc\d{1,4}(\/|$)/, '/wc1000/').replace(/[?&](size|w|h|q)=\d+/gi, '').replace(/\?$/, '');
+            var k2 = cleanUrl.substring(0, 100);
+            if (!processedUrls[k2] && cleanUrl.indexOf('/icon') < 0 && cleanUrl.indexOf('/logo') < 0) {
+              processedUrls[k2] = true;
+              images.push({ role: images.length === 0 ? 'main' : 'detail', src: cleanUrl });
+            }
+          }
+        }
+        // 提取视频URL
+        var vidUrls = js.match(/https?:\/\/[^"'\s,]*(?:video|player|vkvideo|vk\.com)[^"'\s,]*/gi);
+        if (vidUrls) {
+          for (var v2 = 0; v2 < vidUrls.length; v2++) {
+            if (videos.indexOf(vidUrls[v2]) < 0) videos.push(vidUrls[v2]);
+          }
+        }
+      } catch(e) {}
+
       // 递归查找product
       function findProduct(obj, depth) {
         if (!obj || depth > 5) return null;
