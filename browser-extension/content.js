@@ -2900,15 +2900,18 @@
   }
 
   // ── 主提取 ──────────────────────────────────────────
-  function extract() {
+  async function extract() {
     const platform = detectPlatform();
 
     let data;
-    if (platform === '1688')           data = extract1688Product();
+    if (platform === 'ozon_product') {
+      await preloadOzonDetailSections();
+      data = extractOzonProduct();
+    }
+    else if (platform === '1688')           data = extract1688Product();
     else if (platform === 'taobao')    data = extractTaobaoTmall();
     else if (platform === 'tmall')     data = extractTaobaoTmall();
     else if (platform === 'pinduoduo') data = extractPinduoduo();
-    else if (platform === 'ozon_product') data = extractOzonProduct();
     else return { error: 'unsupported_platform', message: '当前页面不支持' };
 
     if (!data.title || data.title.length < 2) {
@@ -2954,7 +2957,7 @@
   chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
     if (request.action === 'extract') {
       try {
-        sendResponse(extract());
+        extract().then(function(r) { sendResponse(r); });
       } catch (e) {
         sendResponse({ error: 'extract_failed', message: e.message });
       }
@@ -3008,8 +3011,8 @@
     // 自动滚动到底部，触发懒加载图片
     await scrollToBottom();
 
-    // 尝试提取，如果结果不理想则等待后重试
-    let data = extractOnce();
+    // 尝试提取（OZON会先preload详情区）
+    let data = await extractOnce();
     if (!data.title || data.title.length < 3 || (data.sku_count === 0 && data.image_count === 0)) {
       // 等待 1.5 秒让动态内容加载
       await sleep(1500);
@@ -3040,9 +3043,9 @@
     showResultPanel(data);
   }
 
-  function extractOnce() {
+  async function extractOnce() {
     try {
-      return extract();
+      return await extract();
     } catch (e) {
       return { error: 'extract_failed', message: e.message };
     }
