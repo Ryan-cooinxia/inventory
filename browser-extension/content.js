@@ -2907,6 +2907,7 @@
     else if (platform === 'taobao')    data = extractTaobaoTmall();
     else if (platform === 'tmall')     data = extractTaobaoTmall();
     else if (platform === 'pinduoduo') data = extractPinduoduo();
+    else if (platform === 'ozon_product') data = extractOzonProduct();
     else return { error: 'unsupported_platform', message: '当前页面不支持' };
 
     if (!data.title || data.title.length < 2) {
@@ -3071,3 +3072,60 @@
   setTimeout(init, 800);
 
 })();
+
+  function extractOzonProduct() {
+    var title = '';
+    var ogTitle = document.querySelector('meta[property="og:title"]');
+    if (ogTitle) title = ogTitle.getAttribute('content') || '';
+    if (!title) title = (document.querySelector('h1') || {}).textContent || '';
+    if (!title) title = document.title || '';
+
+    var desc = '';
+    var ogDesc = document.querySelector('meta[property="og:description"]');
+    if (ogDesc) desc = ogDesc.getAttribute('content') || '';
+    var metaDesc = document.querySelector('meta[name="description"]');
+    if (!desc && metaDesc) desc = metaDesc.getAttribute('content') || '';
+
+    var shop = '';
+    var sellerEl = document.querySelector('[data-widget="webCurrentSeller"], [class*="seller"], a[href*="seller"] span');
+    if (sellerEl) shop = sellerEl.textContent.trim();
+
+    var skus = [];
+    var variants = document.querySelectorAll('[class*="variant"], [class*="sku"], select option');
+    for (var i = 0; i < variants.length && i < 30; i++) {
+      var name = (variants[i].textContent || variants[i].getAttribute('title') || '').trim();
+      if (name && name.length > 1 && name.length < 100) {
+        skus.push({ source_order: i + 1, source_sku_name: name });
+      }
+    }
+
+    var images = [];
+    var picImgs = document.querySelectorAll('img[src*="ir-2.ozone.ru"], img[src*="cdn1.ozone.ru"], img[src*="ozon.ru"]');
+    if (picImgs.length === 0) picImgs = document.querySelectorAll('[data-widget="webGallery"] img, [data-widget="webPhoto"] img');
+    if (picImgs.length === 0) picImgs = document.querySelectorAll('img[src*="product"]');
+    for (var j = 0; j < picImgs.length && j < 30; j++) {
+      var src = picImgs[j].src || picImgs[j].getAttribute('data-src') || '';
+      if (src && src.startsWith('http') && src.indexOf('icon') < 0 && src.indexOf('logo') < 0) {
+        images.push({ role: j === 0 ? 'main' : 'detail', src: src });
+      }
+    }
+
+    var specs = [];
+    var specEls = document.querySelectorAll('[data-widget="webCharacteristics"] div, [class*="characteristics"] div, [class*="props"] div');
+    for (var k = 0; k < specEls.length && k < 50; k++) {
+      var text = specEls[k].textContent.trim();
+      var sep = text.indexOf(':') > 0 ? ':' : (text.indexOf('：') > 0 ? '：' : '');
+      if (sep > 0) {
+        var n = text.substring(0, sep).trim();
+        var v = text.substring(sep + 1).trim();
+        if (n.length > 1 && n.length < 50 && v.length > 0 && v.length < 200) {
+          specs.push({ name: n, value: v });
+        }
+      }
+    }
+
+    return {
+      title: title, category: desc.substring(0, 100), description: desc,
+      shop_name: shop, skus: skus, images: images, specs: specs, detail_missing: false
+    };
+  }
