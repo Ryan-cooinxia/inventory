@@ -3007,7 +3007,11 @@
     floatingBtn.textContent = '...';
 
     var platform = detectPlatform();
-    if (platform === 'ozon_product') { await fetchOzonSplitState(); }
+    if (platform === ' + chr(39) + 'ozon_product' + chr(39) + ') {
+      await fetchOzonSplitState();
+      chrome.runtime.sendMessage({action:'startDebugCapture'}, function(r){console.log('[OZON DEBUG] debug capture:',r&&r.ok?'started':r&&r.error);});
+      await new Promise(function(r){setTimeout(r,1500);});
+    }
 
     // 自动滚动到底部，触发懒加载图片
     await scrollToBottom();
@@ -3075,6 +3079,15 @@
   // ── 启动 ────────────────────────────────────────────
   // 延迟初始化，确保页面动态内容已渲染
   setTimeout(init, 800);
+
+
+var __ozonDebugCaptureData = null;
+chrome.runtime.onMessage.addListener(function(msg) {
+  if (msg.action === 'debugCaptureResult' && msg.data) {
+    __ozonDebugCaptureData = msg.data;
+    console.log('[OZON DEBUG] API intercepted:', msg.data.rich_text_plain ? msg.data.rich_text_plain.length : 0, 'chars of rich text');
+  }
+});
 
 })();
 
@@ -3669,6 +3682,16 @@ function sleep(ms) { return new Promise(function(r){setTimeout(r,ms);}); }
     var productInfo = {title:title, category:category||desc.substring(0,100), shop_name:shop, description:desc};
     var v4RichText = extractOzonRichText();
     // Supplement from SPLIT_STATE (MAIN world data)
+    var capData = window.__ozonDebugCaptureData || window.__ozonSplitStateData;
+    if (capData && capData.rich_text_html && !v4RichText.plain_text) {
+      v4RichText.html = capData.rich_text_html;
+      v4RichText.plain_text = capData.rich_text_plain || '';
+      v4RichText.source = capData.video_url ? 'api_debug_capture' : 'split_state';
+      if (capData.attributes && capData.attributes.length && v4Attrs.length < 3) {
+        v4Attrs = v4Attrs.concat(capData.attributes.map(function(a){return {name:a.name||a.key||'',value:a.value||a.text||'',source:'api_capture'};}));
+      }
+    }
+    /* OLD SPLIT_STATE check — replaced by unified capData above
     if (window.__ozonSplitStateData && window.__ozonSplitStateData.rich_text_html && !v4RichText.plain_text) {
       v4RichText.html = window.__ozonSplitStateData.rich_text_html;
       v4RichText.plain_text = window.__ozonSplitStateData.rich_text_plain || '';
