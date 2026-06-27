@@ -45,14 +45,17 @@
     return false;
   }
 
-  function looksLikeProductImage(el, src) {
+  function looksLikeProductImage(el, src, strictSize) {
     if (!src) return false;
     var u = src.toLowerCase();
     if (/avatar|icon(?![^\/]*product)|logo|sprite|bank|payment|seller|shop(?!\/product)|static\/|favicon|qr|barcode|placeholder|loader|preview-small/.test(u)) return false;
-    var rect = el.getBoundingClientRect ? el.getBoundingClientRect() : {width:0,height:0};
-    var w = rect.width || el.naturalWidth || 0;
-    var h = rect.height || el.naturalHeight || 0;
-    if (w < 120 || h < 120) return false;
+    // 只在不严格模式检查尺寸（白名单区域不检查，因为轮播图隐藏图片尺寸为0）
+    if (strictSize) {
+      var rect = el.getBoundingClientRect ? el.getBoundingClientRect() : {width:0,height:0};
+      var w = rect.width || el.naturalWidth || 0;
+      var h = rect.height || el.naturalHeight || 0;
+      if (w > 0 && h > 0 && (w < 120 || h < 120)) return false;
+    }
     if (isBlockedNode(el)) return false;
     return true;
   }
@@ -71,7 +74,7 @@
     var y = window.scrollY + rect.top;
     var markers = ['Отзывы', 'Вопросы', 'Похожие товары', 'С этим товаром покупают', 'Рекомендуем', 'Смотрите также'];
     for (var mi = 0; mi < markers.length; mi++) {
-      var els = document.querySelectorAll('h2,h3,div,span');
+      var els = document.querySelectorAll('h2,h3');
       for (var ei = 0; ei < els.length; ei++) {
         var text = (els[ei].innerText || els[ei].textContent || '');
         if (text.indexOf(markers[mi]) >= 0) {
@@ -91,7 +94,7 @@
       var m = bg.match(/url\(["']?(https?:\/\/[^"')]+)["']?\)/);
       if (!m) continue;
       var src = m[1];
-      if (!looksLikeProductImage(nodes[ni], src)) continue;
+      if (!looksLikeProductImage(nodes[ni], src, true)) continue;
       if (isAfterReviewOrRecommendation(nodes[ni])) continue;
       var key = src.substring(0, 100);
       if (processedUrls[key]) continue;
@@ -108,7 +111,7 @@
       if (isBlockedNode(all[ai])) continue;
       var src = all[ai].currentSrc || all[ai].src || all[ai].getAttribute('srcset') || all[ai].getAttribute('data-src') || '';
       if (!src || !src.startsWith('http')) continue;
-      if (!looksLikeProductImage(all[ai], src)) continue;
+      if (!looksLikeProductImage(all[ai], src, true)) continue;
       if (isAfterReviewOrRecommendation(all[ai])) continue;
       var area = inferAreaByGeometry(all[ai]);
       if (area === 'unknown') continue;
@@ -3730,7 +3733,7 @@ function extractOzonProduct() {
       var gImgs = galleryEl.querySelectorAll('img, source');
       for (var gi = 0; gi < gImgs.length && images.length < 20; gi++) {
         var src = gImgs[gi].currentSrc || gImgs[gi].src || gImgs[gi].getAttribute('data-src') || gImgs[gi].getAttribute('srcset') || '';
-        if (src && src.startsWith('http') && looksLikeProductImage(gImgs[gi], src)) {
+        if (src && src.startsWith('http') && looksLikeProductImage(gImgs[gi], src, false)) {
           src = src.replace(/\/wc\d{1,4}(\/|$)/, '/wc1000/').replace(/\/crop\/\d+x\d+(\/|$)/, '/').replace(/[?&](size|w|h|quality|q)=\d+/gi, '').replace(/[?&]ts=\d+/gi, '').replace(/\?$/, '');
           var key = src.substring(0, 100);
           if (!processedUrls[key]) { processedUrls[key] = true; images.push({ role: 'main', src: src }); }
@@ -3745,7 +3748,7 @@ function extractOzonProduct() {
       var sImgs = skuEl.querySelectorAll('img, source');
       for (var si = 0; si < sImgs.length && images.length < 30; si++) {
         var src2 = sImgs[si].currentSrc || sImgs[si].src || sImgs[si].getAttribute('data-src') || '';
-        if (src2 && src2.startsWith('http') && looksLikeProductImage(sImgs[si], src2)) {
+        if (src2 && src2.startsWith('http') && looksLikeProductImage(sImgs[si], src2, false)) {
           src2 = src2.replace(/\/wc\d{1,4}(\/|$)/, '/wc1000/').replace(/[?&](size|w|h|quality|q)=\d+/gi, '').replace(/[?&]ts=\d+/gi, '').replace(/\?$/, '');
           var key2 = src2.substring(0, 100);
           if (!processedUrls[key2]) { processedUrls[key2] = true; images.push({ role: 'sku', src: src2 }); }
@@ -3761,7 +3764,7 @@ function extractOzonProduct() {
         if (isBlockedNode(dImgs[di])) continue;
         if (isAfterReviewOrRecommendation(dImgs[di])) break;
         var src3 = dImgs[di].currentSrc || dImgs[di].src || dImgs[di].getAttribute('data-src') || '';
-        if (src3 && src3.startsWith('http') && looksLikeProductImage(dImgs[di], src3)) {
+        if (src3 && src3.startsWith('http') && looksLikeProductImage(dImgs[di], src3, false)) {
           src3 = src3.replace(/\/wc\d{1,4}(\/|$)/, '/wc1000/').replace(/[?&](size|w|h|quality|q)=\d+/gi, '').replace(/[?&]ts=\d+/gi, '').replace(/\?$/, '');
           var key3 = src3.substring(0, 100);
           if (!processedUrls[key3]) { processedUrls[key3] = true; images.push({ role: 'detail', src: src3 }); }
