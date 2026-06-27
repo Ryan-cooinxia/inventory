@@ -231,7 +231,7 @@
           (data.spec_count > 0 ? '<div class="panel-stat"><div class="panel-stat-num">' + data.spec_count + '</div><div class="panel-stat-label">参数</div></div>' : '') +
         '</div>' +
         '<div style="font-size:11px;color:#6c757d;margin-bottom:6px;padding:0 4px">' +
-          '📷 主图: ' + (data.images ? data.images.filter(function(i){return i.role==='main'}).length : 0) +
+          '📷 主图: ' + (data.images ? data.images.filter(function(i){return i.role==='main'}).length : 0) + ' | 🎨 SKU: ' + (data.images ? data.images.filter(function(i){return i.role==='sku'}).length : 0) + ' | 📝 详情: ' + (data.images ? data.images.filter(function(i){return i.role==='detail'}).length : 0) + '<br>' + '💰 价格: ' + ((data.pricing && data.pricing.reference_price_rub) ? data.pricing.reference_price_rub+' RUB' : '未识别') + ' | 📄 富文本: ' + ((data.rich_text && data.rich_text.plain_text) ? '已采集(' + (data.rich_text.plain_text||'').length + '字)' : '未采集') + ' | 📑 属性: ' + (data.attribute_candidates ? data.attribute_candidates.length+'条' : '0条') + ' | 🎬 视频: ' + (data.video_candidates ? data.video_candidates.length+'个' : '0个') +
           ' | 🎨 SKU: ' + (data.images ? data.images.filter(function(i){return i.role==='sku'}).length : 0) +
           ' | 📝 详情: ' + (data.images ? data.images.filter(function(i){return i.role==='detail'}).length : 0) +
         '</div>' +
