@@ -392,6 +392,7 @@
     var st = document.getElementById('ozon-submit-status');
     var totalSteps = 7;
     var step = 0;
+    var collectWarnings = [];
 
     function stepMsg(n, msg) { updateCollectStatus('⏳ [' + n + '/' + totalSteps + '] ' + msg + '...', '#6f42c1'); }
 
@@ -420,16 +421,36 @@
       } catch(e) {}
       if (window.__ozonExtractedData) data = window.__ozonExtractedData;
 
-      // 4. 视频
-      stepMsg(++step, '采集主图视频');
+      // 4. 视频 — 主动打开主图视频入口 + 等待网络请求 + 读 background 缓存
+      stepMsg(++step, '采集主图视频(主动播放+网络监听)');
+      var oneClickVideos = [];
       try {
-        var videos = await autoCaptureOzonMainVideoOneClick();
-        if (videos && videos.length && window.__ozonExtractedData) {
-          window.__ozonExtractedData.product_videos = videos;
-          window.__ozonExtractedData.video_candidates = videos;
-          window.__ozonExtractedData.videos = videos;
+        // 先确保主图视频已展开播放
+        await ensureMainGalleryVideoPlayed();
+        // 再用完整策略采集（DOM→点击→网络监听→React）
+        var smartResult = await collectMainProductVideoSmart();
+        if (smartResult && smartResult.accepted && smartResult.accepted.length) {
+          oneClickVideos = normalizeOneClickVideos(smartResult.accepted);
+        }
+        // 兜底：如果策略没拿到，尝试从常驻缓存直读 PDP mp4
+        if (!oneClickVideos.length) {
+          try {
+            var pdpVids = await getCapturedOzonPdpVideos();
+            if (pdpVids && pdpVids.length) oneClickVideos = normalizeOneClickVideos(pdpVids);
+          } catch(e) {}
         }
       } catch(e) {}
+      // 合并所有视频源
+      oneClickVideos = mergeOzonVideoSources(oneClickVideos, window.__ozonCollectedVideos || []);
+      if (oneClickVideos.length && window.__ozonExtractedData) {
+        window.__ozonExtractedData.product_videos = oneClickVideos;
+        window.__ozonExtractedData.video_candidates = oneClickVideos;
+        window.__ozonExtractedData.videos = oneClickVideos;
+        window.__ozonCollectedVideos = oneClickVideos;
+      } else {
+        // 视频缺失不阻断，只记 warning
+        collectWarnings.push('未采集到视频');
+      }
       if (window.__ozonExtractedData) data = window.__ozonExtractedData;
 
       // 5. 组装 payload
@@ -439,7 +460,7 @@
       // 6. 校验
       stepMsg(++step, '校验数据完整性');
       var warnings = validateCollectPayload(payload);
-      payload._warnings = warnings;
+      payload._warnings = warnings.concat(collectWarnings);
 
       // 7. 提交入库
       stepMsg(++step, '提交入库');
@@ -3406,6 +3427,28 @@ function scrapeRichTextBySelection() {
     return urls;
   }
 
+  // ── 从富文本 DOM 提取视频 ──
+  function extractVideosFromRichRoot(root) {
+    var videos = [], seen = {};
+    if (!root) return videos;
+    root.querySelectorAll('video, video source, iframe, a[href], [data-src], [data-video]').forEach(function(el) {
+      var tag = (el.tagName || '').toLowerCase();
+      var urls = [];
+      ['src', 'href', 'data-src', 'data-video', 'data-url'].forEach(function(a) {
+        var v = el.getAttribute && el.getAttribute(a); if (v) urls.push(v);
+      });
+      if (tag === 'video') { if (el.src) urls.push(el.src); }
+      urls.forEach(function(url) {
+        if (!url) return;
+        if (!/video|\.mp4|\.m3u8|\.webm|vod\/video|ozone\.ru/i.test(url)) return;
+        var key = url.split('?')[0];
+        if (seen[key]) return; seen[key] = true;
+        videos.push({ url: url, poster: el.getAttribute && el.getAttribute('poster') || '', source_area: 'rich_text', source: 'rich_text_dom', video_state: /\.(mp4|webm)/i.test(url) ? 'playable' : 'streaming', confidence: 0.8 });
+      });
+    });
+    return videos;
+  }
+
   function autoScrapeRichText() {
     var st = document.getElementById('ozon-submit-status');
     if (st) st.innerHTML = '<span style="color:#20c997;">📝 正在自动抓取富文本...</span>';
@@ -3433,12 +3476,15 @@ function scrapeRichTextBySelection() {
 
     var plainText = (clone.innerText || clone.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
     var imageUrls = extractAllImageUrls(root);
+    var richVideos = extractVideosFromRichRoot(root);
 
     var rich = {
       plain_text: plainText.slice(0, 50000),
       html: clone.innerHTML.slice(0, 200000),
       image_urls: imageUrls,
       image_count: imageUrls.length,
+      videos: richVideos,
+      video_count: richVideos.length,
       source: 'root_extract',
       captured_at: new Date().toISOString()
     };
@@ -3468,10 +3514,20 @@ function scrapeRichTextBySelection() {
   }
 
   function parseOzonRubPrice(text) {
-    if (!text || !/(\u20bd|\u0440\u0443\u0431|RUB)/i.test(text)) return null;
-    var m = text.match(/([0-9][0-9\s.,]{1,14})\s*(\u20bd|\u0440\u0443\u0431|RUB)/i);
+    if (!text) return null;
+    // \u89c4\u8303\u5316\uff1a\u7edf\u4e00\u5404\u79cd\u7a7a\u767d\u5b57\u7b26
+    var clean = text.replace(/[\u00a0\u202f\u2009]/g, ' ').replace(/\s+/g, ' ').trim();
+    var currencyRx = /(\u20bd|\u0440\u0443\u0431|RUB)/i;
+    if (!currencyRx.test(clean)) return null;
+
+    // Pattern 1: \u20bd \u5728\u6570\u5b57\u540e\u9762 "32 083 \u20bd" / "7847\u20bd" / "32\u202f083\u20bd"
+    var m = clean.match(/(\d[\d\s.,]{1,14})\s*(\u20bd|\u0440\u0443\u0431|RUB)/i);
+    // Pattern 2: \u20bd \u5728\u6570\u5b57\u524d\u9762 "\u20bd 32 083"
+    if (!m) m = clean.match(/(\u20bd|\u0440\u0443\u0431|RUB)\s*(\d[\d\s.,]{1,14})/i);
+
     if (!m) return null;
-    var raw = m[1].replace(/[\s]/g, '').replace(',', '.');
+    var numPart = (m[1].match(/\d/) ? m[1] : m[2]) || '';
+    var raw = numPart.replace(/[\s]/g, '').replace(',', '.');
     var n = parseFloat(raw);
     if (!isFinite(n) || n <= 1 || n > 10000000) return null;
     return Math.round(n * 100) / 100;
@@ -3492,38 +3548,187 @@ function scrapeRichTextBySelection() {
     return Math.round(n * 100) / 100;
   }
 
-  function extractOzonPricing(stateData) {
+  function extractOzonPricing_old(stateData) {
     var result = { reference_price_rub: null, currency: 'RUB', source: '', confidence: 'low', price_candidates: [] };
-    function addPrice(price, source, confidence, text) {
-      if (!price || result.reference_price_rub) return;
-      result.reference_price_rub = price; result.source = source; result.confidence = confidence || 'medium';
-      result.price_candidates.push({ price: price, currency: 'RUB', source: source, confidence: confidence || 'medium', text: (text||'').slice(0,200), note: 'OZON reference price, needs manual confirmation' });
+    var seenPrices = {};
+    function addPrice(price, source, confidence, text, score) {
+      if (!price || seenPrices[price]) return;
+      seenPrices[price] = true;
+      result.price_candidates.push({ price: price, currency: 'RUB', source: source, confidence: confidence || 'medium', text: (text||'').slice(0,200), score: score || 0 });
     }
-    document.querySelectorAll('[data-widget*="webPrice"],[data-widget*="webSaleBlock"],[class*="price"],[class*="Price"]').forEach(function(el) {
+    function pickBest() {
+      // 按 score 降序排列，取最高分
+      result.price_candidates.sort(function(a,b){ return (b.score||0) - (a.score||0); });
+      var best = result.price_candidates[0];
+      if (best) {
+        result.reference_price_rub = best.price;
+        result.source = best.source;
+        result.confidence = best.confidence;
+      }
+    }
+
+    // ★ 第1层：购买区 DOM（高权重）
+    var buySelectors = [
+      '[data-widget*="webPrice"]', '[data-widget*="webSaleBlock"]',
+      '[data-widget*="webPriceWithButton"]', '[data-widget*="webStickyProducts"]',
+      '[data-widget*="webAddToCart"]', '[class*="Price"][class*="main"]',
+    ];
+    document.querySelectorAll(buySelectors.join(',')).forEach(function(el) {
       if (typeof isInBadArea === 'function' && isInBadArea(el)) return;
-      var text = (el.textContent||'').replace(/\s+/g,' ').trim();
+      // 自身
+      var text = (el.textContent||'').replace(/[\s]+/g,' ').trim();
       var p = parseOzonRubPrice(text);
-      addPrice(p, 'dom_price_area', 'medium', text);
+      if (p) { addPrice(p, 'dom_buy_block', 'high', text, 90); return; }
+      // 父节点（合并: <span>32 083</span><span>₽</span>）
+      if (el.parentElement) {
+        var ptext = (el.parentElement.textContent||'').replace(/[\s]+/g,' ').trim();
+        p = parseOzonRubPrice(ptext);
+        if (p) addPrice(p, 'dom_buy_block_parent', 'high', ptext, 80);
+      }
     });
-    var meta = document.querySelector('meta[property="product:price:amount"],meta[itemprop="price"]');
-    if (meta && !result.reference_price_rub) {
-      var mn = parseFloat((meta.getAttribute('content')||'').replace(/[^\d.]/g,''));
-      if (isFinite(mn) && mn > 1) addPrice(mn, 'meta', 'medium', meta.getAttribute('content'));
+
+    // 也扫描含 price 的通用区域（低权重）
+    document.querySelectorAll('[class*="price"],[class*="Price"]').forEach(function(el) {
+      if (typeof isInBadArea === 'function' && isInBadArea(el)) return;
+      var text = (el.textContent||'').replace(/[\s]+/g,' ').trim();
+      var p = parseOzonRubPrice(text);
+      if (!p && el.parentElement) p = parseOzonRubPrice((el.parentElement.textContent||'').replace(/[\s]+/g,' ').trim());
+      if (p) addPrice(p, 'dom_price_area', 'medium', text, 50);
+      var p = parseOzonRubPrice(text);
+      // 自身没匹配到，尝试父节点文本（合并兄弟节点）
+      if (!p && el.parentElement) {
+        var ptext = (el.parentElement.textContent||'').replace(/[\s  ]+/g,' ').trim();
+        p = parseOzonRubPrice(ptext);
+      }
+      if (p) addPrice(p, 'dom_price_area', 'medium', text, 50);
+    });
+
+    // ★ 第2层：全页面文本兜底扫描
+    if (!result.reference_price_rub) {
+      var bodyText = (document.body.textContent||document.body.innerText||'').replace(/[\s]+/g,' ').trim();
+      var rubMatches = bodyText.match(/(\d[\d\s]{2,})\s*[₽]/g);
+      if (rubMatches) {
+        rubMatches.forEach(function(m) {
+          var p = parseOzonRubPrice(m);
+          if (p) addPrice(p, 'body_text_scan', 'low', m, 10);
+        });
+      }
     }
-    if (stateData && stateData.length && !result.reference_price_rub) {
-      walkOzonState(stateData[0], function(obj) {
-        if (result.reference_price_rub) return;
-        var raw = obj.finalPrice || obj.salePrice || obj.cardPrice || obj.currentPrice || obj.price;
-        var n = normalizeOzonPriceNumber(raw);
-        if (n) addPrice(n, 'state_json', 'medium', String(raw));
+
+    // ★ 第3层：JSON state / meta 兜底
+    var meta = document.querySelector('meta[property="product:price:amount"],meta[itemprop="price"]');
+    if (meta) {
+      var mn = parseFloat((meta.getAttribute('content')||'').replace(/[^\d.]/g,''));
+      if (isFinite(mn) && mn > 1) addPrice(mn, 'meta', 'medium', meta.getAttribute('content'), 30);
+    }
+    if (stateData && stateData.length) {
+      var stateArr = Array.isArray(stateData) ? stateData : [stateData];
+      stateArr.forEach(function(sd) {
+        if (!sd || typeof sd !== 'object') return;
+        walkOzonState(sd, function(obj) {
+          var raw = obj.finalPrice || obj.salePrice || obj.cardPrice || obj.currentPrice || obj.price;
+          if (!raw && obj.offerData) raw = obj.offerData.price || obj.offerData.salePrice;
+          var n = normalizeOzonPriceNumber(raw);
+          if (n) addPrice(n, 'state_json', 'medium', String(raw), 30);
+        });
       });
     }
+
+    pickBest();
+    return result;
+  }
+
+  // ── 新版价格提取：按钮定位优先 + 全页面 ₽ 扫描 ──
+  function extractOzonPricing(stateData) {
+    var result = { reference_price_rub: null, currency: 'RUB', source: '', confidence: 'low', price_candidates: [] };
+    var seenValues = {};
+    function addPrice(price, source, confidence, text, score) {
+      if (!price || !isFinite(price) || price < 100) return;
+      if (seenValues[price]) return; seenValues[price] = true;
+      result.price_candidates.push({ price: price, currency: 'RUB', source: source, confidence: confidence || 'medium', text: (text||'').slice(0,200), score: score || 0 });
+    }
+    function pickBest() {
+      result.price_candidates.sort(function(a,b){ return (b.score||0) - (a.score||0); });
+      var best = result.price_candidates[0];
+      if (best) { result.reference_price_rub = best.price; result.source = best.source; result.confidence = best.confidence; }
+    }
+
+    // ★ A: 从"В корзину"按钮反查价格 (score=100)
+    var allEls = document.querySelectorAll('button, a, [role="button"], span, div');
+    for (var ei = 0; ei < allEls.length; ei++) {
+      var el = allEls[ei];
+      var txt = (el.textContent||'').trim();
+      if (!/В корзину|Купить|купить|Оплатить/i.test(txt) || txt.length > 30) continue;
+      var node = el;
+      for (var d = 0; d < 6 && node; d++, node = node.parentElement) {
+        if (!node || node === document.body || node === document.documentElement) break;
+        var ntext = (node.textContent||'').replace(/[\s]+/g,' ').trim();
+        var p = parseOzonRubPrice(ntext);
+        if (p && p > 100) { addPrice(p, 'cart_btn_parent', 'high', ntext, 100); break; }
+      }
+    }
+
+    // ★ B: 全页面含 ₽ 的叶子节点 (score=50~80)
+    document.querySelectorAll('*').forEach(function(el) {
+      if (el.children && el.children.length > 0) return;
+      var t = (el.textContent||'').trim();
+      if (t.length > 40 || !/[₽]/.test(t)) return;
+      var p = parseOzonRubPrice(t);
+      if (!p || p < 100) return;
+      var rect = el.getBoundingClientRect ? el.getBoundingClientRect() : {};
+      var score = 60;
+      if (rect.left > window.innerWidth * 0.45) score += 15; // 右侧购买栏
+      try {
+        var fs = parseFloat(window.getComputedStyle(el).fontSize);
+        if (fs > 20) score += 10;
+        var pdeco = window.getComputedStyle(el.parentElement).textDecoration || '';
+        if (pdeco.indexOf('line-through') >= 0) score -= 30;
+      } catch(e) {}
+      var ptext = el.parentElement ? (el.parentElement.textContent||'') : '';
+      if (/от\s+\d/.test(ptext)) score -= 20;
+      if (/дешевле/.test(ptext)) score -= 20;
+      addPrice(p, 'rub_leaf_scan', score > 70 ? 'high' : 'medium', t, score);
+    });
+
+    // ★ C: body 全局正则匹配 (score=30)
+    var bodyText = (document.body.textContent||document.body.innerText||'');
+    var allVals = [], rx = /(\d\s*\d{3})\s*[₽]/g, rm;
+    while ((rm = rx.exec(bodyText)) !== null) {
+      var v = parseInt(rm[1].replace(/\s/g, ''), 10);
+      if (v > 100 && allVals.indexOf(v) < 0) allVals.push(v);
+    }
+    allVals.forEach(function(v) { addPrice(v, 'body_global_rx', 'low', v+' RUB', 30); });
+
+    // ★ D: meta / JSON state (score=25)
+    var meta = document.querySelector('meta[property="product:price:amount"],meta[itemprop="price"]');
+    if (meta) { var mn = parseFloat((meta.getAttribute('content')||'').replace(/[^\d.]/g,'')); if (isFinite(mn) && mn > 1) addPrice(mn, 'meta', 'medium', meta.getAttribute('content'), 25); }
+    if (stateData && stateData.length) {
+      (Array.isArray(stateData)?stateData:[stateData]).forEach(function(sd) {
+        if (!sd || typeof sd !== 'object') return;
+        walkOzonState(sd, function(obj) {
+          var raw = obj.finalPrice || obj.salePrice || obj.cardPrice || obj.currentPrice || obj.price;
+          if (!raw && obj.offerData) raw = obj.offerData.price || obj.offerData.salePrice;
+          var n = normalizeOzonPriceNumber(raw);
+          if (n) addPrice(n, 'state_json', 'medium', String(raw), 25);
+        });
+      });
+    }
+
+    pickBest();
     return result;
   }
 
   function extractOzonSkus(stateData, productInfo, pricing) {
     var name = productInfo.title || '默认规格';
-    return [{source_order:1,source_sku_id:'default',source_sku_name:name,style_cn:name,bundle_quantity:1,purchase_price_cny:pricing.reference_price_rub||null}];
+    // OZON 售价是 RUB，不是 CNY 采购价 — 不写入 purchase_price_cny
+    return [{
+      source_order:1, source_sku_id:'default', source_sku_name:name, style_cn:name,
+      bundle_quantity:1,
+      purchase_price_cny: null,
+      reference_price_rub: (pricing && pricing.reference_price_rub) || null,
+      source_price_currency: 'RUB',
+      price_manual_confirmed: false
+    }];
   }
 
 function extractOzonRichText() {
@@ -3718,6 +3923,49 @@ function sleep(ms) { return new Promise(function(r){setTimeout(r,ms);}); }
   }
 
   // ── 查找主图 Gallery 中的视频入口（带播放按钮的 thumb） ──
+  // ── 一键采集：主动触发主图视频播放 ──
+  async function ensureMainGalleryVideoPlayed() {
+    try {
+      window.scrollTo({ top: 0, behavior: 'instant' });
+      await sleep(600);
+      var entry = findOzonMainVideoEntry();
+      if (entry && entry.click) { entry.click(); await sleep(1500); }
+      var videos = document.querySelectorAll('video');
+      for (var i = 0; i < videos.length; i++) {
+        try { videos[i].muted = true; await videos[i].play(); await sleep(1000); break; } catch(e) {}
+      }
+      // 等待 background webRequest 捕获 mp4
+      await sleep(3000);
+    } catch(e) {}
+  }
+
+  // ── 一键采集：过滤+规范化视频列表 ──
+  function normalizeOneClickVideos(videos) {
+    if (!Array.isArray(videos)) return [];
+    var seen = {}, result = [];
+    videos.forEach(function(v) {
+      if (!v) return;
+      var url = v.url || v.src || '';
+      if (!url) return;
+      var lower = url.toLowerCase();
+      if (lower.indexOf('.mp4') < 0 && lower.indexOf('.m3u8') < 0) return;
+      if (lower.indexOf('/s3/video-') >= 0 || lower.indexOf('review') >= 0 || lower.indexOf('comment') >= 0) return;
+      var isPdp = lower.indexOf('v-') >= 0 && lower.indexOf('ozone.ru') >= 0 && lower.indexOf('/vod/video-') >= 0 && lower.indexOf('type=pdp') >= 0;
+      if (!isPdp && lower.indexOf('ozon') < 0 && lower.indexOf('ozone') < 0) return;
+      var key = lower.split('?')[0];
+      if (seen[key]) return; seen[key] = true;
+      result.push({ role: 'main_video', url: url, src: url, poster: v.poster || '', duration_text: v.duration_text || '', source_area: 'main_gallery', source: v.source || 'one_click_video', confidence: isPdp ? 0.95 : 0.75, need_manual_check: !isPdp });
+    });
+    return result;
+  }
+
+  // ── 一键采集：合并多个视频源 ──
+  function mergeOzonVideoSources() {
+    var all = [];
+    for (var i = 0; i < arguments.length; i++) { if (Array.isArray(arguments[i])) all = all.concat(arguments[i]); }
+    return normalizeOneClickVideos(all);
+  }
+
   function findOzonMainVideoEntry() {
     var gallery = document.querySelector('[data-widget*="webGallery"],[data-widget*="gallery"]');
     if (!gallery) return null;
@@ -4295,8 +4543,8 @@ function sleep(ms) { return new Promise(function(r){setTimeout(r,ms);}); }
     var mainImgs = document.querySelectorAll('[data-widget="webGallery"] img, [class*="gallery"] img[src*="ozon"], [data-widget="webPhoto"] img');
     // SKU变体图片
     var skuImgs = document.querySelectorAll('[data-widget="webVariant"] img, [class*="variant"] img[src*="ozon"], [class*="sku"] img[src*="ozon"]');
-    // 详情富文本图片
-    var detailImgs = document.querySelectorAll('[data-widget="webDescription"] img, [class*="description"] img, [class*="ra"] img, article img, [data-widget="webDetail"] img, [class*="detail"] img');
+    // 详情富文本图片（只允许可靠区域，禁用 [class*="ra"] / article / [class*="detail"] 等过宽选择器）
+    var detailImgs = document.querySelectorAll('[data-widget="webDescription"] img, [data-widget="webDetail"] img, [class*="description"] img');
     var allImgs = document.querySelectorAll('img[src*="ozon"], img[src*="ir-2.ozone.ru"], img[src*="cdn1.ozone.ru"], img[src*="woody"], img[src*="product"]');
     var processedUrls = {};
 
@@ -4374,14 +4622,16 @@ function sleep(ms) { return new Promise(function(r){setTimeout(r,ms);}); }
     for (var si2 = 0; si2 < skuImgs.length; si2++) { addImage(skuImgs[si2].src || skuImgs[si2].getAttribute('data-src'), 'sku', skuImgs[si2]); }
     // 详情图
     for (var di = 0; di < detailImgs.length; di++) { addImage(detailImgs[di].src || detailImgs[di].getAttribute('data-src'), 'detail', detailImgs[di]); }
-    // 兜底：仅在白名单没抓到图时才从allImgs补充(且必须在评论/推荐区之上)
+    // 兜底：全量采集但分类为 unknown，不硬标 detail
+    // detail 不足时不再从全页面乱补 — 宁可进入待审核也不能错进详情图
     var mainCount = images.filter(function(x){return x.role==='main';}).length;
-    var detailCount = images.filter(function(x){return x.role==='detail';}).length;
-    if (mainCount === 0 || detailCount < 3) {
-      for (var ai = 0; ai < Math.min(allImgs.length, 30); ai++) {
-        var fallbackRole = (mainCount === 0 && ai < 10) ? 'main' : 'detail';
-        addImage(allImgs[ai].src || allImgs[ai].getAttribute('data-src'), fallbackRole, allImgs[ai]);
-      }
+    var capturedUrls = {};
+    images.forEach(function(x){ if(x.src) capturedUrls[x.src] = true; });
+    for (var ai = 0; ai < Math.min(allImgs.length, 50); ai++) {
+      var fsrc = allImgs[ai].src || allImgs[ai].getAttribute('data-src') || '';
+      if (!fsrc || capturedUrls[fsrc]) continue;
+      capturedUrls[fsrc] = true;
+      addImage(fsrc, 'unknown', allImgs[ai]);
     }
 
     // ── 5. 视频提取 ──

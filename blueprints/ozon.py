@@ -661,17 +661,26 @@ def api_source_add():
     debug_data = data.get('debug') or {}
 
     # OZON 参考商品经常没有显式 SKU 按钮；如果插件已经识别到标题/参考售价，
-    # 这里兜底创建 1 个默认规格，避免适配工作台出现“源 SKU(0)”断流。
+    # 这里兜底创建 1 个默认规格，避免适配工作台出现”源 SKU(0)”断流。
     if platform == 'ozon_product' and not skus:
-        fallback_price = pricing.get('source_price_cny') or pricing.get('candidate_price_cny')
+        fallback_price = None
+        # 只有明确 CNY 的价格才进入 purchase_price_cny（RUB 是参考售价不是采购价）
+        if pricing.get('source_price_cny') or pricing.get('candidate_price_cny'):
+            fallback_price = pricing.get('source_price_cny') or pricing.get('candidate_price_cny')
         if not fallback_price and price_candidates:
-            fallback_price = price_candidates[0].get('price')
+            for p in price_candidates:
+                if str(p.get('currency', '')).upper() == 'CNY':
+                    fallback_price = p.get('price')
+                    break
         skus = [{
             'source_order': 1,
             'source_sku_name': title[:120] or '默认规格',
             'style_cn': '默认规格',
             'bundle_quantity': 1,
             'purchase_price_cny': fallback_price,
+            'reference_price_rub': pricing.get('reference_price_rub'),
+            'source_price_currency': 'RUB',
+            'price_manual_confirmed': False,
         }]
 
     # ── 构建 raw_json（含 specs）────────────────────
@@ -893,26 +902,27 @@ def api_source_add():
                 if rank > 0:
                     clean_videos[idx]['duplicate_group'] = key
 
-    # Move duplicates to rejected_videos (mark, don't delete)
+    # Move duplicates to rejected_videos and remove from clean_videos
+    final_clean = []
     for v in clean_videos:
-        if isinstance(v, dict):
-            ds = v.get('duplicate_status', '')
-            if ds == 'duplicate':
-                v_src = v.get('src') or v.get('url') or ''
-                rejected_videos.append({
-                    'url': v_src,
-                    'poster': v.get('poster') or '',
-                    'source': v.get('source') or '',
-                    'source_area': v.get('source_area') or '',
-                    'video_classification': _classify_video_state(v),
-                    'need_manual_check': False,
-                    'reason': f'duplicate of group {v.get("duplicate_group", "")}',
-                    'duplicate_status': 'duplicate',
-                    'duplicate_group': v.get('duplicate_group', ''),
-                })
+        if isinstance(v, dict) and v.get('duplicate_status') == 'duplicate':
+            v_src = v.get('src') or v.get('url') or ''
+            rejected_videos.append({
+                'url': v_src,
+                'poster': v.get('poster') or '',
+                'source': v.get('source') or '',
+                'source_area': v.get('source_area') or '',
+                'video_classification': _classify_video_state(v),
+                'need_manual_check': False,
+                'reason': f'duplicate of group {v.get("duplicate_group", "")}',
+                'duplicate_status': 'duplicate',
+                'duplicate_group': v.get('duplicate_group', ''),
+            })
+        else:
+            final_clean.append(v)
 
-    # ── 视频候选排序（保留全部，去重标记后）──
-    video_candidates = sorted(clean_videos, key=score, reverse=True)
+    # ── 视频候选排序（只保留 primary，去重后）──
+    video_candidates = sorted(final_clean, key=score, reverse=True)
 
     # ── 视频入库 ──
     if source and hasattr(source, 'id') and source.id:
@@ -2139,6 +2149,38 @@ def api_restore_source_media(media_id):
     source.save()
 
     return jsonify({'ok': True, 'message': '图片已恢复'})
+
+
+@ozon_bp.route('/api/source-media/<int:media_id>/reject', methods=['POST'])
+@login_required
+def api_reject_source_media(media_id):
+    """将源媒体标记为不可用。用于人工移除重复视频、误采图片等。"""
+    media = (OzonSourceMedia
+             .select()
+             .join(OzonSource)
+             .where((OzonSourceMedia.id == media_id) & (OzonSource.user == current_user))
+             .first())
+    if not media:
+        return jsonify({'ok': False, 'error': '媒体不存在'}), 404
+
+    payload = request.get_json(silent=True) or {}
+    reason = (payload.get('reason') or '').strip() or '人工移除'
+
+    media.compliance_status = 'rejected'
+    media.review_status = 'rejected'
+    media.reject_reason = reason[:200]
+    media.save()
+
+    source = media.source
+    source.image_count = (OzonSourceMedia
+                          .select()
+                          .where((OzonSourceMedia.source == source) &
+                                 ((OzonSourceMedia.compliance_status != 'rejected') |
+                                  (OzonSourceMedia.compliance_status.is_null())))
+                          .count())
+    source.save()
+
+    return jsonify({'ok': True, 'message': '媒体已移除', 'media_id': media.id})
 
 
 @ozon_bp.route('/api/source-media/<int:source_id>/upload', methods=['POST'])
@@ -3766,7 +3808,25 @@ def adaptation_workspace(source_id):
     rich_text = raw.get('rich_text') or {}
     source_attributes = raw.get('source_attributes') or raw.get('specs_json') or []
     variant_matrix = raw.get('variant_matrix') or {}
-    video_media = [m for m in source_media if getattr(m, 'role', '') == 'video']
+    video_media = [m for m in source_media if getattr(m, 'role', '') in ('video', 'main_video') and getattr(m, 'compliance_status', '') != 'rejected']
+
+    def _should_show_in_gallery(m, extra):
+        role = (m.role or '').lower()
+        comp = (m.compliance_status or '').lower()
+        src_area = (extra.get('source_area') or '').lower()
+        media_src = (m.media_source or '').lower()
+        # 已拒绝 → 隐藏
+        if comp == 'rejected': return False
+        # 视频 → 不进图库
+        if role in ('video', 'main_video') or media_src in ('ozon_video', 'video', 'main_video'): return False
+        # 买家秀 → 不进主图库（进单独分组）
+        if role == 'buyer_review' or src_area == 'buyer_review': return False
+        # 明确非商品区域 → 隐藏
+        if src_area in ('shop', 'shop_header', 'logo', 'banner', 'ad', 'recommend', 'similar', 'footer', 'nav', 'floating', 'header', 'sidebar', 'unknown', 'review', 'video'): return False
+        # ★ 严格白名单：只有 main / sku / detail 显示
+        if role in ('main', 'sku', 'detail'): return True
+        # 其他一律不显示（不用兜底逻辑）
+        return False
 
     # 检查是否有已启用的视觉模型配置
     has_vision_config = (VisionModelConfig
@@ -3777,6 +3837,7 @@ def adaptation_workspace(source_id):
 
     # 构建 source_media JSON 列表（供前端图库弹窗使用）
     source_media_list_json = []
+    hidden_source_media_list_json = []
     for m in source_media:
         # 解析 raw_json 中的扩展元数据
         extra = {}
@@ -3785,28 +3846,21 @@ def adaptation_workspace(source_id):
                 extra = json.loads(m.raw_json) if isinstance(m.raw_json, str) else m.raw_json
             except (json.JSONDecodeError, TypeError):
                 pass
-        source_media_list_json.append({
-            'id': m.id,
-            'source_url': m.source_url or '',
-            'role': m.role or 'sku',
-            'compliance_status': m.compliance_status or 'usable',
-            'reject_reason': m.reject_reason or '',
-            'review_status': m.review_status or 'pending',
-            'width': m.width or 0,
-            'height': m.height or 0,
-            'source_area': extra.get('source_area', 'unknown'),
-            'dom_path': extra.get('dom_path', ''),
-            'alt': extra.get('alt', ''),
-            'nearby_text': (extra.get('nearby_text') or '')[:100],
-            'rule': extra.get('rule', ''),
-            'evidence': extra.get('evidence', ''),
-            'source_selector': extra.get('source_selector', ''),
-            'collect_reason': extra.get('collect_reason', ''),
-            'linked_sku_name': extra.get('linked_sku_name'),
-            'media_source': m.media_source or 'browser_extension',
-            'duplicate_status': extra.get('duplicate_status', ''),
-            'duplicate_group': extra.get('duplicate_group', ''),
-        })
+        item = {
+            'id': m.id, 'source_url': m.source_url or '', 'role': m.role or 'sku',
+            'compliance_status': m.compliance_status or 'usable', 'reject_reason': m.reject_reason or '',
+            'review_status': m.review_status or 'pending', 'width': m.width or 0, 'height': m.height or 0,
+            'source_area': extra.get('source_area', 'unknown'), 'dom_path': extra.get('dom_path', ''),
+            'alt': extra.get('alt', ''), 'nearby_text': (extra.get('nearby_text') or '')[:100],
+            'rule': extra.get('rule', ''), 'evidence': extra.get('evidence', ''),
+            'source_selector': extra.get('source_selector', ''), 'collect_reason': extra.get('collect_reason', ''),
+            'linked_sku_name': extra.get('linked_sku_name'), 'media_source': m.media_source or 'browser_extension',
+            'duplicate_status': extra.get('duplicate_status', ''), 'duplicate_group': extra.get('duplicate_group', ''),
+        }
+        if _should_show_in_gallery(m, extra):
+            source_media_list_json.append(item)
+        else:
+            hidden_source_media_list_json.append(item)
 
     # ── 构造 video_media_parsed（供模板视频播放器使用）──
     video_media_parsed = []
@@ -3843,10 +3897,15 @@ def adaptation_workspace(source_id):
 
     rejected_video_candidates = raw.get('rejected_video_candidates') or []
 
+    # 可见图片（与图库弹窗同源）
+    visible_source_images = [m for m in source_media if m.compliance_status != 'rejected' and m.role in ('main', 'sku', 'detail')]
+
     return render_template('ozon/adaptation_workspace.html',
                            source=source, source_skus=source_skus,
                            source_media=source_media,
+                           visible_source_images=visible_source_images,
                            source_media_list_json=source_media_list_json,
+                           hidden_source_media_list_json=hidden_source_media_list_json,
                            group=group, fact=fact, fact_skus=fact_skus,
                            adaptation=adaptation, gaps=gaps,
                            image_facts=image_facts,

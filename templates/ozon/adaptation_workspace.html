@@ -11,6 +11,8 @@
 .ozon-rich-preview p, .ozon-rich-preview div { margin-bottom: 8px; }
 .ozon-rich-preview table { width: 100%; border-collapse: collapse; }
 .ozon-rich-preview iframe, .ozon-rich-preview script, .ozon-rich-preview style { display: none !important; }
+.ozon-rich-preview video { width: 100%; max-height: 360px; display: block; margin: 10px auto; background: #000; border-radius: 6px; }
+.ozon-rich-video-block { margin: 12px 0; padding: 8px; border: 1px solid #ddd; background: #fafafa; border-radius: 6px; }
 </style>
 <div class="d-flex justify-content-between align-items-center mb-2">
   <div>
@@ -39,8 +41,19 @@
       <div class="card-body p-2 overflow-auto" style="font-size:12px">
         <div class="mb-2"><span class="text-muted">标题：</span>{{ source.title_cn }}</div>
         <div class="mb-2"><span class="text-muted">供应商：</span>{{ source.shop_name or '-' }}</div>
+        {% if source.platform == 'ozon_product' %}
+        <div class="mb-2">
+          <span class="text-muted">OZON参考售价：</span>
+          {% if pricing and pricing.reference_price_rub %}
+          <span class="text-danger">₽{{ '{:,.0f}'.format(pricing.reference_price_rub) }}</span>
+          <small class="text-muted">（非采购价）</small>
+          {% else %}
+          <span class="text-muted">未识别</span>
+          {% endif %}
+        </div>
+        {% endif %}
         <div class="mb-2"><span class="text-muted">采购价：</span><span class="text-danger">¥{{ '{:,.2f}'.format(source_skus[0].purchase_price_cny) if source_skus and source_skus[0].purchase_price_cny else '-' }}</span></div>
-        
+
         <!-- 采集成果确认 -->
         {% if collection_summary %}
         <hr class="my-2">
@@ -76,7 +89,7 @@
         <hr class="my-2">
         <hr class="my-2">
         <div class="d-flex justify-content-between align-items-center">
-          <strong style="font-size:11px">源图片 ({{ source_media|length }})</strong>
+          <strong style="font-size:11px">源图片 ({{ visible_source_images|length }} 显示 / {{ source_media|length }} 原始)</strong>
           {% if has_vision_config %}
           <button class="btn btn-sm btn-outline-info" style="font-size:10px;padding:2px 8px" id="btnAnalyze" onclick="return analyzeProductFacts(this)">
             🔍 AI识别图片
@@ -84,7 +97,7 @@
           {% endif %}
         </div>
         <div class="d-flex flex-wrap gap-1 mt-1" id="sourceImageGrid">
-        {% for m in source_media %}
+        {% for m in visible_source_images %}
           {% if loop.index <= 8 %}
           <img src="{{ m.source_url }}" alt="{{ m.role }}" referrerpolicy="no-referrer"
                style="width:48px;height:48px;object-fit:cover;border-radius:4px;cursor:pointer;border:1px solid #dee2e6"
@@ -93,11 +106,14 @@
                onerror="this.style.display='none'" title="{{ m.role }} — 点击查看大图">
           {% endif %}
         {% endfor %}
-        {% if source_media|length > 8 %}
+        {% if visible_source_images|length > 8 %}
         <button class="btn btn-sm btn-outline-secondary" style="width:48px;height:48px;font-size:10px;padding:0;border-radius:4px;border-style:dashed"
-                onclick="openSourceGallery()" title="查看全部 {{ source_media|length }} 张源图片">
-          +{{ source_media|length - 8 }}
+                onclick="openSourceGallery()" title="查看全部 {{ visible_source_images|length }} 张源图片">
+          +{{ visible_source_images|length - 8 }}
         </button>
+        {% endif %}
+        {% if source_media|length > visible_source_images|length %}
+        <div style="font-size:9px;color:#999;margin-top:2px">已隐藏 {{ source_media|length - visible_source_images|length }} 张 (unknown/buyer_review/video等)，图库底部可查看</div>
         {% endif %}
         </div>
         {% if source.platform == '1688' and source.detail_missing %}
@@ -346,7 +362,15 @@
     </div>
 
     <!-- 图片网格 -->
-    <div id="galleryGrid" class="row g-2" style="padding-bottom:40px"></div>
+    <div id="galleryGrid" class="row g-2" style="padding-bottom:20px"></div>
+
+    <!-- 隐藏资源（unknown/video/logo等，默认折叠） -->
+    <div id="hiddenResources" style="display:none;border-top:1px solid #555;padding-top:8px;margin-top:8px">
+      <details>
+        <summary style="color:#aaa;font-size:11px;cursor:pointer">🔧 隐藏/调试资源（unknown、video占位、logo、横幅等） <span style="color:#888" id="hiddenCount"></span></summary>
+        <div id="hiddenGrid" class="row g-2 mt-1" style="padding-bottom:20px"></div>
+      </details>
+    </div>
 
     <!-- 大图预览层 -->
     <div id="galleryFullView" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.95);z-index:10001;cursor:pointer"
@@ -437,6 +461,7 @@ function generateDraft() {
 
 
 var allSourceMedia = {{ source_media_list_json | tojson | safe }};
+var hiddenSourceMedia = {{ hidden_source_media_list_json | tojson | safe }};
 var STATUS_LABELS = {'usable': '可用', 'needs_review': '待审核', 'rejected': '已过滤'};
 var STATUS_COLORS = {'usable': '#28a745', 'needs_review': '#ffc107', 'rejected': '#dc3545', 'pending': '#6c757d', 'approved': '#28a745'};
 var AREA_LABELS = {'main_gallery': '主图区', 'sku_panel': 'SKU区', 'detail_content': '详情区', 'manual_upload': '手动上传', 'shop_header': '店铺头部', 'floating': '浮动元素', 'sidebar': '侧栏', 'footer': '页脚', 'nav': '导航栏', 'ad': '广告位', 'certification': '认证标识', 'unknown': '未知来源'};
@@ -628,8 +653,54 @@ function openSourceGallery() {
   });
 
   grid.innerHTML = html;
+  // ── 隐藏资源（unknown/video/logo等）──
+  var hiddenGrid = document.getElementById('hiddenGrid');
+  var hiddenSection = document.getElementById('hiddenResources');
+  var hiddenCountEl = document.getElementById('hiddenCount');
+  if (hiddenSourceMedia && hiddenSourceMedia.length && hiddenGrid) {
+    var hhtml = '';
+    hiddenSourceMedia.forEach(function(m) {
+      hhtml += '<div class="col-2" style="padding:2px">' +
+        '<div style="background:#1a1a2e;border-radius:4px;overflow:hidden;opacity:.5">' +
+        '<img src="' + m.source_url + '" loading="lazy" referrerpolicy="no-referrer" ' +
+        'style="width:100%;height:60px;object-fit:cover" ' +
+        'onerror="this.parentElement.innerHTML=\'<div style=color:#666;font-size:9px;height:60px;display:flex;align-items:center;justify-content:center>N/A</div>\'">' +
+        '<div style="font-size:8px;color:#999;padding:2px;text-align:center">' + (m.role || '?') + '/' + (m.source_area || '?') + '</div>' +
+        '</div></div>';
+    });
+    hiddenGrid.innerHTML = hhtml;
+    if (hiddenCountEl) hiddenCountEl.textContent = '(' + hiddenSourceMedia.length + ' 项)';
+    if (hiddenSection) hiddenSection.style.display = 'block';
+  }
   overlay.style.display = 'block';
   document.body.style.overflow = 'hidden';
+}
+
+function removeSourceVideo(mediaId, btn) {
+  if (!mediaId) return;
+  if (!confirm('确定移除这个视频吗？移除后不再参与后续发布。')) return;
+  var oldText = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '移除中...'; }
+  fetch('/ozon/api/source-media/' + mediaId + '/reject', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({reason: '人工移除重复/多余视频'})
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (!data.ok) throw new Error(data.error || '移除失败');
+    var card = btn ? btn.closest('.border.rounded') : null;
+    if (card) card.remove();
+    var badge = document.querySelector('.card-header strong') && document.querySelector('.badge.bg-primary');
+    if (badge) {
+      var m = (badge.textContent || '').match(/\d+/);
+      if (m) badge.textContent = Math.max(0, parseInt(m[0]) - 1) + ' 个';
+    }
+  })
+  .catch(function(e) {
+    alert('移除失败: ' + e.message);
+    if (btn) { btn.disabled = false; btn.innerHTML = oldText; }
+  });
 }
 
 function copyVideoUrl(url) {
@@ -942,6 +1013,7 @@ function submitManualUpload() {
               <div class="text-muted mb-1" style="font-size:9px">📌 仅入口 — 封面已保存，需播放后获取真实地址</div>
               {% endif %}
               <div class="d-flex gap-1 flex-wrap">
+                <button class="btn btn-sm btn-outline-danger" style="font-size:9px;padding:1px 4px" onclick="removeSourceVideo({{ vm.id }}, this)">🗑 移除</button>
                 {% if vm.video_url %}
                 <button class="btn btn-sm btn-outline-primary" style="font-size:9px;padding:1px 4px" onclick="copyVideoUrl('{{ vm.video_url }}')">📋 复制URL</button>
                 <a href="{{ vm.video_url }}" target="_blank" class="btn btn-sm btn-outline-success" style="font-size:9px;padding:1px 4px">⬇ 下载</a>
@@ -982,6 +1054,7 @@ function submitManualUpload() {
       {% if rich_text and (rich_text.plain_text or rich_text.html) %}
         <span class="badge bg-success" style="font-size:10px">已采集</span>
         {% if rich_text.image_count %}<span class="badge bg-info" style="font-size:10px">{{ rich_text.image_count }} 图</span>{% endif %}
+        {% if rich_text.video_count %}<span class="badge bg-purple" style="font-size:10px;background:#6f42c1;color:#fff">{{ rich_text.video_count }} 视频</span>{% endif %}
       {% else %}<span class="badge bg-secondary" style="font-size:10px">未采集</span>{% endif %}
     </div>
   </div>
