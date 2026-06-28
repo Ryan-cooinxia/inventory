@@ -3822,7 +3822,7 @@ def adaptation_workspace(source_id):
         # 买家秀 → 不进主图库（进单独分组）
         if role == 'buyer_review' or src_area == 'buyer_review': return False
         # 明确非商品区域 → 隐藏
-        if src_area in ('shop', 'shop_header', 'logo', 'banner', 'ad', 'recommend', 'similar', 'footer', 'nav', 'floating', 'header', 'sidebar', 'unknown', 'review', 'video'): return False
+        if src_area in ('shop', 'shop_header', 'logo', 'banner', 'ad', 'recommend', 'similar', 'footer', 'nav', 'floating', 'header', 'sidebar', 'review', 'video'): return False
         # ★ 严格白名单：只有 main / sku / detail 显示
         if role in ('main', 'sku', 'detail'): return True
         # 其他一律不显示（不用兜底逻辑）
