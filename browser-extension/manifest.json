@@ -3,16 +3,16 @@
   "name": "电商商品采集器",
   "version": "1.0",
   "description": "一键采集1688/淘宝/天猫/拼多多商品信息到库存管理系统",
-  "permissions": ["activeTab", "storage", "scripting"],
+  "permissions": ["activeTab", "storage", "scripting", "webRequest", "tabs"],
   "host_permissions": [
     "http://127.0.0.1:5000/*",
     "http://localhost:5000/*",
-    "https://www.ozon.ru/*",
-    "https://ozon.ru/*",
-    "https://www.ozon.by/*",
-    "https://ozon.by/*",
-    "https://www.ozon.kz/*",
-    "https://ozon.kz/*"
+    "https://*.ozon.ru/*",
+    "https://*.ozone.ru/*",
+    "https://*.ozonusercontent.com/*",
+    "https://*.cdn-ozon.ru/*",
+    "https://*.ozon.by/*",
+    "https://*.ozon.kz/*"
   ],
   "background": {
     "service_worker": "background.js"

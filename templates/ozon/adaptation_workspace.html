@@ -1,6 +1,17 @@
 {% extends "base.html" %}
 {% block title %}商品适配工作台 — 仓库记账系统{% endblock %}
 {% block content %}
+<style>
+.ozon-rich-preview {
+  max-height: 720px; overflow: auto; background: #fff;
+  border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px;
+  font-size: 14px; line-height: 1.65; color: #111827;
+}
+.ozon-rich-preview img { max-width: 100%; height: auto; display: block; margin: 8px auto; border-radius: 4px; }
+.ozon-rich-preview p, .ozon-rich-preview div { margin-bottom: 8px; }
+.ozon-rich-preview table { width: 100%; border-collapse: collapse; }
+.ozon-rich-preview iframe, .ozon-rich-preview script, .ozon-rich-preview style { display: none !important; }
+</style>
 <div class="d-flex justify-content-between align-items-center mb-2">
   <div>
     <h5 class="mb-0">🔄 商品适配工作台</h5>
@@ -433,6 +444,7 @@ function getSourceLabel(m) {
   if (m.role === 'main')   return '<span class="badge bg-primary" style="font-size:8px">主图</span>';
   if (m.role === 'sku')    return '<span class="badge bg-secondary" style="font-size:8px">SKU图</span>';
   if (m.role === 'detail') return '<span class="badge bg-success" style="font-size:8px">详情图</span>';
+  if (m.role === 'buyer_review') return '<span class="badge bg-info" style="font-size:8px">买家秀</span>';
   return '<span class="badge bg-dark" style="font-size:8px">' + (m.role || '未知') + '</span>';
 }
 
@@ -542,15 +554,17 @@ function openSourceGallery() {
   function getGroupKey(m) {
     if (m.compliance_status === 'rejected') return 'reject';
     if (m.compliance_status === 'needs_review') return 'review';
+    if (m.role === 'buyer_review' || m.source_area === 'buyer_review') return 'buyer_review';
     if (m.role === 'main') return 'main';
     if (m.role === 'sku') return 'sku';
     if (m.role === 'detail') return 'detail';
     return 'reject';
   }
-  var groupOrder = {'main': 0, 'sku': 1, 'detail': 2, 'review': 3, 'reject': 4};
+  var groupOrder = {'main': 0, 'sku': 1, 'detail': 2, 'buyer_review': 3, 'review': 4, 'reject': 5};
   var groupLabels = {
     'main': '📷 主图', 'sku': '🎨 SKU 图',
-    'detail': '📝 详情图', 'review': '⚠️ 待审核', 'reject': '🚫 已过滤'
+    'detail': '📝 详情图', 'buyer_review': '🧑‍💬 买家秀参考图',
+    'review': '⚠️ 待审核', 'reject': '🚫 已过滤'
   };
   var sorted = allSourceMedia.slice().sort(function(a, b) {
     return (groupOrder[getGroupKey(a)] || 4) - (groupOrder[getGroupKey(b)] || 4);
@@ -616,6 +630,14 @@ function openSourceGallery() {
   grid.innerHTML = html;
   overlay.style.display = 'block';
   document.body.style.overflow = 'hidden';
+}
+
+function copyVideoUrl(url) {
+  navigator.clipboard.writeText(url).then(function() {
+    alert('已复制视频URL');
+  }).catch(function() {
+    prompt('复制以下URL:', url);
+  });
 }
 
 function closeSourceGallery() {
@@ -877,7 +899,82 @@ function submitManualUpload() {
         </div>
         {% endif %}
 
-        <!-- V4: 源商品富文本详情 -->
+        <!-- V4: 源商品视频 -->
+        {% if video_media_parsed %}
+        {% set playable_videos = video_media_parsed | selectattr('video_state', 'equalto', 'playable') | list %}
+        {% set streaming_videos = video_media_parsed | selectattr('video_state', 'equalto', 'streaming') | list %}
+        {% set entry_videos = video_media_parsed | selectattr('video_state', 'equalto', 'entry_only') | list %}
+        <div class="card mt-2">
+          <div class="card-header py-1 d-flex justify-content-between align-items-center">
+            <strong style="font-size:12px">🎬 源商品视频</strong>
+            <span class="badge bg-primary" style="font-size:10px">{{ video_media_parsed|length }} 个</span>
+          </div>
+          <div class="card-body p-2">
+            {% for vm in video_media_parsed %}
+            <div class="border rounded p-2 mb-2" style="font-size:11px">
+              <div class="d-flex justify-content-between align-items-start mb-1">
+                <strong>{{ vm.media_id }}</strong>
+                <span>
+                  {% if vm.video_state == 'playable' %}
+                  <span class="badge bg-success" style="font-size:8px">▶ 可播放</span>
+                  {% elif vm.video_state == 'streaming' %}
+                  <span class="badge bg-info text-dark" style="font-size:8px">📡 流媒体</span>
+                  {% elif vm.video_state == 'entry_only' %}
+                  <span class="badge bg-warning text-dark" style="font-size:8px">📌 仅入口</span>
+                  {% else %}
+                  <span class="badge bg-secondary" style="font-size:8px">{{ vm.video_state }}</span>
+                  {% endif %}
+                  {% if vm.duplicate_status == 'duplicate' %}
+                  <span class="badge bg-warning text-dark" style="font-size:8px">🔄 疑似重复</span>
+                  {% endif %}
+                </span>
+              </div>
+              {% if vm.duration_text %}<span class="text-muted">⏱ {{ vm.duration_text }}</span>{% endif %}
+              {% if vm.source %}<span class="badge bg-light text-dark ms-1" style="font-size:8px">{{ vm.source }}</span>{% endif %}
+              {% if vm.video_state == 'playable' %}
+              <div class="mb-1 mt-1">
+                <video controls preload="metadata" style="width:100%;max-height:180px;border-radius:4px;background:#000"
+                       poster="{{ vm.poster or '' }}" referrerpolicy="no-referrer">
+                  <source src="{{ vm.video_url }}" type="video/mp4">
+                </video>
+              </div>
+              {% elif vm.video_state == 'entry_only' %}
+              <div class="text-muted mb-1" style="font-size:9px">📌 仅入口 — 封面已保存，需播放后获取真实地址</div>
+              {% endif %}
+              <div class="d-flex gap-1 flex-wrap">
+                {% if vm.video_url %}
+                <button class="btn btn-sm btn-outline-primary" style="font-size:9px;padding:1px 4px" onclick="copyVideoUrl('{{ vm.video_url }}')">📋 复制URL</button>
+                <a href="{{ vm.video_url }}" target="_blank" class="btn btn-sm btn-outline-success" style="font-size:9px;padding:1px 4px">⬇ 下载</a>
+                {% endif %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% else %}
+        <div class="card mt-2">
+          <div class="card-header py-1"><strong style="font-size:12px">🎬 源商品视频</strong><span class="badge bg-secondary float-end" style="font-size:10px">无数据</span></div>
+          <div class="card-body p-2 text-muted" style="font-size:10px">📭 尚未采集视频数据</div>
+        </div>
+        {% endif %}
+
+        {# 已过滤视频明细 #}
+        {% if rejected_video_candidates %}
+        <details class="mt-1">
+          <summary class="text-muted" style="font-size:10px;cursor:pointer">🔍 已过滤视频候选 ({{ rejected_video_candidates|length }})</summary>
+          <div style="max-height:250px;overflow-y:auto">
+          {% for rv in rejected_video_candidates[:10] %}
+          <div class="border rounded p-1 mt-1" style="font-size:9px;background:#fafafa">
+            <b>原因:</b> <span class="text-danger">{{ rv.reason or 'unknown' }}</span><br>
+            <b>来源:</b> {{ rv.source or '(无)' }} / {{ rv.source_area or '(无)' }}<br>
+            {% if rv.url %}<div style="word-break:break-all"><b>URL:</b> <code style="font-size:8px">{{ rv.url[:200] }}</code></div>{% endif %}
+          </div>
+          {% endfor %}
+          </div>
+        </details>
+        {% endif %}
+
+        <!-- V4: 源商品富文本详情（4-tab 预览） -->
         <div class="card mt-2">
   <div class="card-header py-1 d-flex justify-content-between align-items-center">
     <strong style="font-size:12px">源商品富文本详情</strong>
@@ -885,31 +982,48 @@ function submitManualUpload() {
       {% if rich_text and (rich_text.plain_text or rich_text.html) %}
         <span class="badge bg-success" style="font-size:10px">已采集</span>
         {% if rich_text.image_count %}<span class="badge bg-info" style="font-size:10px">{{ rich_text.image_count }} 图</span>{% endif %}
-      {% elif rich_text %}<span class="badge bg-warning text-dark" style="font-size:10px">字段为空</span>
       {% else %}<span class="badge bg-secondary" style="font-size:10px">未采集</span>{% endif %}
     </div>
   </div>
   <div class="card-body p-0">
-    {% if rich_text and (rich_text.plain_text or rich_text.html) %}
-      <ul class="nav nav-tabs px-1 pt-1" style="font-size:10px">
-        <li class="nav-item"><button class="nav-link active py-0 px-2" data-bs-toggle="tab" data-bs-target="#rich-plain">纯文本</button></li>
-        <li class="nav-item"><button class="nav-link py-0 px-2" data-bs-toggle="tab" data-bs-target="#rich-html">HTML</button></li>
-      </ul>
-      <div class="tab-content p-1">
-        <div class="tab-pane fade show active" id="rich-plain">
-          <textarea class="form-control form-control-sm" rows="6" readonly style="font-size:10px">{{ (rich_text.plain_text or '')[:5000] }}</textarea>
-        </div>
-        <div class="tab-pane fade" id="rich-html" style="max-height:200px;overflow:auto">
-          <pre class="small p-1" style="font-size:10px">{{ (rich_text.html or '')[:10000] }}</pre>
-        </div>
+    <ul class="nav nav-tabs px-1 pt-1" style="font-size:10px">
+      <li class="nav-item"><button class="nav-link active py-0 px-2" data-bs-toggle="tab" data-bs-target="#rich-preview">🔍 预览</button></li>
+      <li class="nav-item"><button class="nav-link py-0 px-2" data-bs-toggle="tab" data-bs-target="#rich-plain">📝 纯文本</button></li>
+      <li class="nav-item"><button class="nav-link py-0 px-2" data-bs-toggle="tab" data-bs-target="#rich-html">📋 HTML</button></li>
+      <li class="nav-item"><button class="nav-link py-0 px-2" data-bs-toggle="tab" data-bs-target="#rich-images">🖼 图片 ({{ rich_text.image_count if rich_text else 0 }})</button></li>
+    </ul>
+    <div class="tab-content p-2">
+      <div class="tab-pane fade show active" id="rich-preview">
+        {% if rich_text and rich_text.html %}
+          <div class="ozon-rich-preview">{{ rich_text.html | safe }}</div>
+        {% elif rich_text and rich_text.plain_text %}
+          <div class="ozon-rich-preview">{{ rich_text.plain_text | replace('\n', '<br>') | safe }}</div>
+        {% else %}
+          <div class="text-muted" style="font-size:12px">暂无富文本内容</div>
+        {% endif %}
       </div>
-    {% else %}
-      <div class="p-2 text-muted" style="font-size:11px">
-        <div class="mb-1">暂未采集到富文本详情。</div>
-        <ul class="mb-2 ps-3"><li>插件未识别到描述区域</li><li>页面尚未加载完成</li><li>该商品本身无富文本</li></ul>
-        <div class="alert alert-warning py-1 px-2 mb-1" style="font-size:11px">建议：滚动到OZON商品描述区域后重新采集</div>
+      <div class="tab-pane fade" id="rich-plain">
+        <textarea class="form-control form-control-sm" rows="8" readonly style="font-size:10px">{{ (rich_text.plain_text if rich_text else '') or '' }}</textarea>
       </div>
-    {% endif %}
+      <div class="tab-pane fade" id="rich-html" style="max-height:320px;overflow:auto">
+        <pre class="small p-1 bg-light border rounded" style="font-size:10px">{{ (rich_text.html if rich_text else '') or '' }}</pre>
+      </div>
+      <div class="tab-pane fade" id="rich-images">
+        {% if rich_text and rich_text.image_urls %}
+          <div class="d-flex flex-wrap gap-2">
+            {% for img in rich_text.image_urls[:50] %}
+            <a href="{{ img }}" target="_blank">
+              <img src="{{ img }}" referrerpolicy="no-referrer"
+                   style="max-width:160px;max-height:160px;object-fit:contain;border:1px solid #ddd;border-radius:4px;background:#fafafa;padding:4px"
+                   onerror="this.style.display='none'">
+            </a>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="text-muted" style="font-size:12px">暂无富文本图片</div>
+        {% endif %}
+      </div>
+    </div>
   </div>
 </div>
 

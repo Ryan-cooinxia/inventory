@@ -36,6 +36,12 @@
       authToken = '';
     }
 
+    if (platform === 'ozon_product') {
+      try {
+        await sendExtMessage({ action: 'startOzonVideoNetworkCapture' });
+      } catch(e) {}
+    }
+
     injectStyles();
     injectFloatingButton(platform);
   }
@@ -261,6 +267,8 @@
         ((data.quality_warnings && data.quality_warnings.length > 0) ? data.quality_warnings.map(function(w) { return '<div style="background:#fff3cd;color:#856404;padding:6px 10px;border-radius:4px;margin-bottom:6px;font-size:11px;border:1px solid #ffc107;">⚠️ ' + escHtml(w) + '</div>'; }).join('') : '') +
         '<button class="btn-collect" id="ozon-btn-submit">📥 一键采集入库</button>' +
         '<button class="btn-collect" id="ozon-btn-selection" style="background:#6c757d;margin-top:4px;font-size:11px">📋 采集选中文本</button>' +
+        ((detectPlatform() === 'ozon_product') ? '<button class="btn-collect" id="ozon-btn-auto-rt" style="background:#20c997;margin-top:4px;font-size:11px">📝 自动抓取富文本</button>' : '') +
+        ((detectPlatform() === 'ozon_product') ? '<button class="btn-collect" id="ozon-btn-video" style="background:#0d6efd;margin-top:4px;font-size:11px">🎬 采集主视频</button>' : '') +
         '<div id="ozon-submit-status" style="text-align:center;margin-top:8px;font-size:13px;"></div>' +
       '</div>';
 
@@ -284,6 +292,51 @@
       }
     });
 
+    // 📝 自动抓取富文本按钮
+    var autoRtBtn = document.getElementById('ozon-btn-auto-rt');
+    if (autoRtBtn) autoRtBtn.addEventListener('click', function() {
+      autoScrapeRichText();
+    });
+
+    // 🎬 视频采集按钮
+    var videoBtn = document.getElementById('ozon-btn-video');
+    if (videoBtn) videoBtn.addEventListener('click', async function() {
+      var st = document.getElementById('ozon-submit-status');
+      if (st) st.innerHTML = '<span style="color:#0d6efd;">正在采集主视频...</span>';
+      videoBtn.disabled = true;
+      try {
+        var smartVideos = await collectMainProductVideoSmart();
+        if (smartVideos && smartVideos.length) {
+          if (smartVideos._extensionInvalidated) {
+            if (st) st.innerHTML = '<span style="color:#dc3545;">扩展上下文失效，请刷新页面后重试</span>';
+          } else if (smartVideos._segmentOnly) {
+            if (st) st.innerHTML = '<span style="color:#856404;">仅捕获到片段视频，建议手动检查</span>';
+          } else {
+            var hasReal = smartVideos.some(function(v) { return v.url && v.url.indexOf('.mp4') >= 0; });
+            if (hasReal) {
+              // 更新到当前数据中
+              if (window.__ozonExtractedData) {
+                window.__ozonExtractedData.video_candidates = smartVideos;
+                window.__ozonExtractedData.product_videos = smartVideos;
+                window.__ozonExtractedData.videos = smartVideos;
+              }
+              if (st) st.innerHTML = '<span style="color:#198754;">主视频采集完成: ' + smartVideos.length + ' 个</span>';
+            } else {
+              if (st) st.innerHTML = '<span style="color:#856404;">未找到可播放的主视频</span>';
+            }
+          }
+        }
+      } catch(e) {
+        var errMsg = e.message || String(e);
+        if (/Extension context invalidated/i.test(errMsg)) {
+          if (st) st.innerHTML = '<span style="color:#dc3545;">扩展上下文失效，请刷新页面后重试</span>';
+        } else {
+          if (st) st.innerHTML = '<span style="color:#dc3545;">视频采集失败: ' + escHtml(errMsg) + '</span>';
+        }
+      }
+      videoBtn.disabled = false;
+    });
+
     // 存储数据供提交使用
     window.__ozonExtractedData = data;
   }
@@ -304,6 +357,26 @@
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span>采集中...';
     status.textContent = '';
+
+    if (detectPlatform() === 'ozon_product') {
+      var existingVideos = data.video_candidates || data.product_videos || data.videos || [];
+      var hasRealPdpVideo = existingVideos.some(function(v) {
+        var vu = (v.url || v.src || '').toLowerCase();
+        return vu.indexOf('.mp4') >= 0 && (vu.indexOf('ozon') >= 0 || vu.indexOf('ozone') >= 0);
+      });
+      if (!hasRealPdpVideo) {
+        status.textContent = '正在尝试采集主视频...';
+        try {
+          var capturedVideos = await autoCaptureOzonMainVideoOneClick();
+          if (capturedVideos && capturedVideos.length) {
+            data.video_candidates = capturedVideos;
+            data.product_videos = capturedVideos;
+            data.videos = capturedVideos;
+          }
+        } catch(e) {}
+        status.textContent = '';
+      }
+    }
 
     const payload = {
       platform: data.platform,
@@ -359,6 +432,12 @@
         }
         if (apiResult.detail_missing_warning) {
           successParts.push('<span style="color:#e67e22">⚠️ ' + escHtml(apiResult.detail_missing_warning) + '</span>');
+        }
+        // 视频调试信息
+        if (apiResult.video_received_count !== undefined) {
+          var vd = '🎬 视频: 收到' + apiResult.video_received_count + ' / 保存' + (apiResult.video_saved_count || 0);
+          if (apiResult.video_rejected_count > 0) vd += ' / 拒绝' + apiResult.video_rejected_count;
+          successParts.push('<span style="font-size:10px;color:#6c757d">' + vd + '</span>');
         }
 
         status.innerHTML = '<span style="color:#198754;">' + successParts.join('<br>') + '</span>';
@@ -2973,7 +3052,10 @@
           nearby_text: img.nearby_text || '',
           source_selector: img.source_selector || '',
           reason: img.reason || '',
-          linked_sku_name: img.linked_sku_name || null
+          linked_sku_name: img.linked_sku_name || null,
+          confidence: img.confidence || 0,
+          usage_scope: img.usage_scope || 'unknown',
+          need_manual_check: img.need_manual_check !== undefined ? img.need_manual_check : true
         };
       }),
       specs: data.specs || [],
@@ -3122,6 +3204,83 @@ function scrapeRichTextBySelection() {
     var t = (d.innerText||d.textContent||"").replace(/[ ]{3,}/g, "  ").trim();
     var urls = Array.from(d.querySelectorAll("img")).map(function(x){return x.src||x.getAttribute("data-src")||"";}).filter(Boolean);
     return {plain_text:t.slice(0,50000),html:d.innerHTML.slice(0,200000),image_urls:urls,image_count:urls.length,source:"user_selection",captured_at:new Date().toISOString()};
+  }
+
+  // 自动抓取富文本 — 不依赖 Selection，直接从 DOM 根提取
+  // 从 DOM 元素提取所有图片 URL（含 src/srcset/data-src/lazy/background-image）
+  function extractAllImageUrls(rootEl) {
+    var urls = [];
+    var seen = {};
+    function add(u) {
+      if (u && u.startsWith('http') && !seen[u]) { seen[u] = true; urls.push(u); }
+    }
+    // img 标签
+    rootEl.querySelectorAll('img').forEach(function(img) {
+      add(img.src); add(img.currentSrc);
+      add(img.getAttribute('data-src')); add(img.getAttribute('data-lazy-src'));
+      add(img.getAttribute('data-original')); add(img.getAttribute('data-srcset'));
+      var srcset = img.getAttribute('srcset') || '';
+      srcset.replace(/https?:\/\/[^\s,]+/g, function(m) { add(m); return m; });
+    });
+    // picture > source
+    rootEl.querySelectorAll('picture source').forEach(function(s) {
+      add(s.getAttribute('srcset')); add(s.getAttribute('data-srcset'));
+    });
+    // CSS background-image
+    rootEl.querySelectorAll('[style]').forEach(function(el) {
+      var bg = (el.getAttribute('style') || '').match(/background-image:\s*url\(["']?([^)"']+)["']?\)/i);
+      if (bg && bg[1]) add(bg[1]);
+    });
+    return urls;
+  }
+
+  function autoScrapeRichText() {
+    var st = document.getElementById('ozon-submit-status');
+    if (st) st.innerHTML = '<span style="color:#20c997;">📝 正在自动抓取富文本...</span>';
+
+    // 尝试从描述区提取
+    var root = document.querySelector('[data-widget="webDescription"]') ||
+               document.querySelector('[class*="description"]') ||
+               document.querySelector('article') ||
+               document.querySelector('[class*="ra"]');
+    if (!root) root = document.body;
+
+    var clone = root.cloneNode(true);
+    clone.querySelectorAll('script,style,button,nav,header,footer,svg').forEach(function(el){el.remove();});
+
+    // 规范化 img：补全 src，移懒加载
+    clone.querySelectorAll('img').forEach(function(img) {
+      var s = img.src || img.currentSrc || img.getAttribute('data-src') ||
+              img.getAttribute('data-lazy-src') || img.getAttribute('data-original') || '';
+      if (s && s.startsWith('http')) {
+        img.setAttribute('src', s);
+        img.removeAttribute('data-src'); img.removeAttribute('data-lazy-src');
+        img.removeAttribute('data-original'); img.removeAttribute('loading');
+      }
+    });
+
+    var plainText = (clone.innerText || clone.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
+    var imageUrls = extractAllImageUrls(root);
+
+    var rich = {
+      plain_text: plainText.slice(0, 50000),
+      html: clone.innerHTML.slice(0, 200000),
+      image_urls: imageUrls,
+      image_count: imageUrls.length,
+      source: 'root_extract',
+      captured_at: new Date().toISOString()
+    };
+
+    window.__ozonManualRichText = rich;
+    if (window.__ozonExtractedData) { window.__ozonExtractedData.rich_text = rich; }
+
+    if (st) {
+      if (rich.plain_text && rich.plain_text.length > 10) {
+        st.innerHTML = '<span style="color:#198754;">✅ 已自动抓取富文本: ' + rich.plain_text.length + ' 字, ' + rich.image_count + ' 图</span>';
+      } else {
+        st.innerHTML = '<span style="color:#856404;">⚠️ 未获取到描述区文本，请先滚动到描述区域再试。</span>';
+      }
+    }
   }
 
 })();
@@ -3370,6 +3529,443 @@ function sleep(ms) { return new Promise(function(r){setTimeout(r,ms);}); }
     }
     return false;
   }
+
+  // ── OZON 买家秀区域检测 ──
+  function isOzonBuyerReviewArea(el) {
+    var node = el;
+    while (node && node !== document.body) {
+      var t = (node.innerText || node.textContent || '').slice(0, 300);
+      if (/Фото и видео покупателей|Отзывы|Вопросы|покупателей/i.test(t)) return true;
+      var dw = (node.getAttribute && node.getAttribute('data-widget')) || '';
+      if (/webReview|webComment|webFeedback/i.test(dw)) return true;
+      var cls = (node.className || '').toString().toLowerCase();
+      if (/review|feedback|buyer-photo/i.test(cls)) return true;
+      node = node.parentElement;
+    }
+    return false;
+  }
+
+  // ── 查找主图 Gallery 中的视频入口（带播放按钮的 thumb） ──
+  function findOzonMainVideoEntry() {
+    var gallery = document.querySelector('[data-widget*="webGallery"],[data-widget*="gallery"]');
+    if (!gallery) return null;
+    var candidates = gallery.querySelectorAll('[class*="play"],button,img');
+    for (var i = 0; i < candidates.length; i++) {
+      var el = candidates[i];
+      if (isBuyerMediaArea(el)) continue;
+      var aria = el.getAttribute('aria-label') || '';
+      var cls = (el.className || '').toString();
+      var txt = (el.innerText || el.textContent || '').trim();
+      if (/video|play|Видео|видео/i.test(aria + ' ' + cls + ' ' + txt)) {
+        var clickable = el.closest('button') || el.closest('[role="button"]') || el;
+        return clickable;
+      }
+    }
+    return null;
+  }
+
+  // ── 自动展开主图视频播放器 ──
+  async function autoOpenOzonMainVideoPlayer() {
+    var entry = findOzonMainVideoEntry();
+    if (entry) {
+      entry.click();
+      await sleep(1200);
+      return true;
+    }
+    var gallery = document.querySelector('[data-widget*="webGallery"]');
+    if (gallery) {
+      var firstImg = gallery.querySelector('img');
+      if (firstImg) { firstImg.click(); await sleep(800); }
+    }
+    return false;
+  }
+
+  // ── 判断是否 OZON PDP MP4 ──
+  function isOzonPdpMp4(url) {
+    var u = String(url || '').toLowerCase();
+    if (!u) return false;
+    if (!/\.mp4(\?|$)/i.test(u)) return false;
+    return u.indexOf('ozon') >= 0 || u.indexOf('ozone') >= 0 || u.indexOf('cdn-ozon') >= 0;
+  }
+
+  // ── 判断是否 OZON 评论/买家秀视频 ──
+  function isOzonReviewVideoUrl(url) {
+    var u = String(url || '').toLowerCase();
+    if (!u) return false;
+    return (
+      u.indexOf('/s3/video-') >= 0 ||
+      u.indexOf('ir.ozone.ru/s3/video') >= 0 ||
+      u.indexOf('review') >= 0 ||
+      u.indexOf('comment') >= 0 ||
+      u.indexOf('feedback') >= 0 ||
+      u.indexOf('buyer') >= 0
+    );
+  }
+
+  // ── 高置信 OZON PDP 主视频 URL ──
+  function isHighConfidenceOzonPdpVideoUrl(url) {
+    return /https:\/\/v-\d+\.ozone\.ru\/vod\/video-\d+\//i.test(url) &&
+           /asset_\d+_h264\.mp4/i.test(url) &&
+           /type=pdp/i.test(url);
+  }
+
+  // ── 视频去重 Key ──
+  function getOzonVideoDedupKey(url) {
+    if (!url) return '';
+    var u = String(url);
+    var m = u.match(/\/vod\/video-(\d+)\//i);
+    if (m) return 'vod/video-' + m[1];
+    m = u.match(/\/s3\/video-(\d+)\//i);
+    if (m) return 's3/video-' + m[1];
+    var filename = u.split('?')[0].split('/').pop();
+    return filename || u.substring(0, 80);
+  }
+
+  // ── 增强视频去重（打分 + 标记模式） ──
+  function dedupeVideoResults(list) {
+    if (!list || !list.length) return list;
+    var groups = {};
+    list.forEach(function(v, i) {
+      var key = getOzonVideoDedupKey(v.url || v.src || '');
+      if (!groups[key]) groups[key] = [];
+      var score = 0;
+      var url = v.url || v.src || '';
+      if (url && /\.mp4(\?|$)/i.test(url)) score += 10;
+      if (isHighConfidenceOzonPdpVideoUrl(url)) score += 20;
+      if (v.poster) score += 5;
+      if (v.source === 'dom_video') score += 8;
+      if (v.source === 'network_capture' || v.source === 'background_persistent_webrequest') score += 3;
+      if (v.source === 'react_fiber_gallery_string' || v.source === 'react_fiber_gallery_object') score += 12;
+      v._dedup_score = score;
+      v._orig_index = i;
+      groups[key].push(v);
+    });
+    var result = [];
+    Object.keys(groups).forEach(function(key) {
+      var group = groups[key];
+      group.sort(function(a, b) { return b._dedup_score - a._dedup_score; });
+      var primary = group[0];
+      primary.duplicate_group = key;
+      primary.is_primary = true;
+      result.push(primary);
+      for (var gi = 1; gi < group.length; gi++) {
+        group[gi].duplicate_group = key;
+        group[gi].is_primary = false;
+        group[gi].primary_url = primary.url || primary.src || '';
+        result.push(group[gi]);
+      }
+    });
+    return result;
+  }
+
+  // ── 安全发送扩展消息（处理 Extension context invalidated） ──
+  function sendExtMessage(payload) {
+    return new Promise(function(resolve) {
+      try {
+        if (!chrome.runtime || !chrome.runtime.sendMessage) {
+          resolve({ ok: false, error: 'runtime_unavailable', _extensionInvalidated: true });
+          return;
+        }
+        chrome.runtime.sendMessage(payload, function(resp) {
+          if (chrome.runtime.lastError) {
+            var msg = chrome.runtime.lastError.message || '';
+            if (/Extension context invalidated/i.test(msg)) {
+              resolve({ ok: false, error: msg, _extensionInvalidated: true });
+            } else {
+              resolve({ ok: false, error: msg });
+            }
+            return;
+          }
+          resolve(resp || { ok: true });
+        });
+      } catch(e) {
+        resolve({ ok: false, error: e.message || String(e), _extensionInvalidated: /invalidated/i.test(e.message || '') });
+      }
+    });
+  }
+
+  // ── 判断是否应被过滤的视频 URL ──
+  function isOzonRejectedVideoUrl(url) {
+    var u = String(url || '').toLowerCase();
+    if (!u) return true;
+    if (/\.(jpg|jpeg|png|webp|avif|gif|svg)(\?|$)/i.test(u)) return true;
+    if (u.indexOf('/multimedia-') >= 0) return true;
+    if (u.indexOf('thumbnail') >= 0 || u.indexOf('preview') >= 0) return true;
+    if (isOzonReviewVideoUrl(url)) return true;
+    return false;
+  }
+
+  // ── 判断是否可播放的视频 URL ──
+  function isOzonPlayableVideoUrl(url) {
+    var u = String(url || '').toLowerCase();
+    if (!u) return false;
+    if (/\.(mp4|webm|mov)(\?|$)/i.test(u)) return true;
+    if (/\.m3u8(\?|$)/i.test(u)) return true;
+    if (/\.mpd(\?|$)/i.test(u)) return true;
+    return false;
+  }
+
+  // ── 点击主图 Gallery 中的视频播放器 ──
+  function clickMainGalleryVideoPlayer() {
+    var gallery = document.querySelector('[data-widget*="webGallery"]');
+    if (!gallery) return false;
+    var video = gallery.querySelector('video');
+    if (video && video.play) {
+      try { video.play(); return true; } catch(e) {}
+    }
+    var playBtn = gallery.querySelector('[class*="play"],[aria-label*="play"],[aria-label*="Play"]');
+    if (playBtn) { playBtn.click(); return true; }
+    var imgs = gallery.querySelectorAll('img');
+    for (var i = 0; i < imgs.length; i++) {
+      if (imgs[i].offsetWidth > 100) { imgs[i].click(); return true; }
+    }
+    return false;
+  }
+
+  // ── 通过网络请求捕获主视频（缓存模式：读 background 缓存） ──
+  async function captureMainVideoByNetwork() {
+    try {
+      await sleep(500);
+      var resp = await sendExtMessage({ action: 'getOzonVideoNetworkCapture' });
+      var requests = (resp && resp.requests) || [];
+      var videos = [];
+      var seen = {};
+      requests.forEach(function(r) {
+        var url = r.url || '';
+        if (!url || seen[url]) return;
+        if (isOzonRejectedVideoUrl(url)) return;
+        if (!isOzonPdpMp4(url) && !isOzonPlayableVideoUrl(url)) return;
+        seen[url] = true;
+        var isHighConf = isHighConfidenceOzonPdpVideoUrl(url);
+        videos.push({
+          role: isHighConf ? 'main_video' : 'video',
+          url: url,
+          poster: '',
+          duration_text: '',
+          source_area: 'main_gallery',
+          source: 'network_capture',
+          need_manual_check: !isHighConf,
+          confidence: isHighConf ? 0.95 : 0.5
+        });
+      });
+      if (!videos.length) {
+        videos.push({
+          role: 'main_video', url: '', poster: '', duration_text: '',
+          source_area: 'main_gallery', source: 'network_no_match',
+          need_manual_check: true, confidence: 0
+        });
+      }
+      return videos;
+    } catch(e) {
+      return [{ role: 'main_video', url: '', poster: '', duration_text: '',
+                source_area: 'main_gallery', source: 'network_error',
+                need_manual_check: true, confidence: 0,
+                error: e.message || String(e) }];
+    }
+  }
+
+  // ── 从 background 常驻缓存读取最近 OZON 视频请求 ──
+  async function getRecentOzonVideoRequestsFromBackground() {
+    try {
+      var resp = await sendExtMessage({ action: 'getRecentOzonVideoRequests' });
+      if (!resp || !resp.ok) return [];
+      return resp.requests || [];
+    } catch(e) { return []; }
+  }
+
+  // ── 获取捕获到的 OZON PDP 视频（优先高置信） ──
+  async function getCapturedOzonPdpVideos() {
+    var recentRequests = await getRecentOzonVideoRequestsFromBackground();
+    var videos = [];
+    var seen = {};
+    recentRequests.forEach(function(r) {
+      var url = r.url || '';
+      if (!url || seen[url]) return;
+      if (isOzonRejectedVideoUrl(url)) return;
+      seen[url] = true;
+      var isHighConf = isHighConfidenceOzonPdpVideoUrl(url);
+      videos.push({
+        role: isHighConf ? 'main_video' : 'video',
+        url: url,
+        poster: '',
+        duration_text: '',
+        source_area: 'main_gallery',
+        source: 'background_persistent_webrequest',
+        need_manual_check: !isHighConf,
+        confidence: isHighConf ? 0.95 : (isOzonPdpMp4(url) ? 0.7 : 0.3),
+        video_kind: r.video_kind || 'unknown'
+      });
+    });
+    return videos;
+  }
+
+  // ── 一键自动采集 OZON 主视频 ──
+  async function autoCaptureOzonMainVideoOneClick() {
+    try {
+      // Step 1: DOM 直接查找
+      var mainVideos = extractOzonMainProductVideo();
+      var hasRealVideo = mainVideos.some(function(v) { return v.url && isOzonPdpMp4(v.url); });
+      if (hasRealVideo) return cleanProductVideos(dedupeVideoResults(mainVideos));
+
+      // Step 2: 点击触发播放
+      await autoOpenOzonMainVideoPlayer();
+
+      // Step 3: 网络缓存读取
+      var networkVideos = await captureMainVideoByNetwork();
+      var netHasReal = networkVideos.some(function(v) { return v.url && isOzonPdpMp4(v.url); });
+      if (netHasReal) return cleanProductVideos(dedupeVideoResults(networkVideos));
+
+      // Step 4: React Fiber 探测
+      var probeResult = await probeMainGalleryVideoFromReact();
+      if (probeResult && probeResult.length && probeResult.some(function(v) { return v.url && isOzonPdpMp4(v.url); })) {
+        return cleanProductVideos(dedupeVideoResults(probeResult));
+      }
+
+      // 全失败
+      return [{ role: 'main_video', url: '', poster: '', duration_text: '',
+                source_area: 'main_gallery', source: 'all_strategies_failed',
+                need_manual_check: true, confidence: 0 }];
+    } catch(e) {
+      return [{ role: 'main_video', url: '', poster: '', duration_text: '',
+                source_area: 'main_gallery', source: 'auto_capture_error',
+                need_manual_check: true, confidence: 0,
+                error: e.message || String(e) }];
+    }
+  }
+
+  // ── 智能采集主商品视频（含缓存预取） ──
+  async function collectMainProductVideoSmart() {
+    try {
+      // Step 0: 缓存预取
+      var cachedPdpVideos = await getCapturedOzonPdpVideos();
+      var hasHighConfCached = cachedPdpVideos.some(function(v) { return v.confidence >= 0.9; });
+
+      if (hasHighConfCached) {
+        var trusted = cachedPdpVideos.filter(function(v) { return v.confidence >= 0.9; });
+        var cleaned = cleanProductVideos(dedupeVideoResults(trusted));
+        cleaned._segmentOnly = false;
+        return cleaned;
+      }
+
+      // Step 1-4: 完整四级策略
+      var result = await autoCaptureOzonMainVideoOneClick();
+
+      // 合并缓存中的低置信结果
+      if (cachedPdpVideos.length && (!result.length || !result[0].url)) {
+        var merged = result.concat(cachedPdpVideos.filter(function(v) { return v.confidence >= 0.7; }));
+        result = cleanProductVideos(dedupeVideoResults(merged));
+      }
+
+      result._segmentOnly = false;
+      return result;
+    } catch(e) {
+      return [{ role: 'main_video', url: '', poster: '', duration_text: '',
+                source_area: 'main_gallery', source: 'smart_collect_error',
+                need_manual_check: true, confidence: 0,
+                error: e.message || String(e) }];
+    }
+  }
+
+  // ── 判断是否可信的主图 Gallery 视频 ──
+  function isTrustedMainGalleryVideo(v) {
+    if (!v) return false;
+    var url = v.url || v.src || '';
+    var poster = v.poster || '';
+    var sourceArea = v.source_area || '';
+    var source = v.source || '';
+
+    // 高置信 PDP 视频：直接通过
+    if (url && isHighConfidenceOzonPdpVideoUrl(url)) return true;
+
+    // 空记录
+    if (!url && !poster) return false;
+    // 图片
+    if (url && /\.(jpg|jpeg|png|webp|avif)(\?|$)/i.test(url)) return false;
+    if (url && url.indexOf('/multimedia-') >= 0) return false;
+
+    // 必须是主图 gallery
+    if (sourceArea !== 'main_gallery') return false;
+
+    // 可信来源
+    var trustedSources = [
+      'visible_main_gallery_video_dom', 'visible_main_gallery_video_entry',
+      'main_gallery_click_performance',
+      'network_media_request_after_main_video_play', 'network_capture',
+      'background_persistent_webrequest',
+      'manual_mark_video_entry', 'main_gallery_video_tag',
+      'video_after_gallery_click', 'video_thumbnail', 'video_tag',
+      'react_fiber_gallery_string', 'react_fiber_gallery_object', 'dom_video'
+    ];
+    if (trustedSources.indexOf(source) < 0) return false;
+
+    return true;
+  }
+
+  // ── 获取视频被拒绝的原因 ──
+  function getVideoRejectReason(v) {
+    if (!v) return 'null_video';
+    var url = v.url || v.src || '';
+    if (!url) return 'empty_url';
+    if (isOzonRejectedVideoUrl(url)) {
+      var u = url.toLowerCase();
+      if (/\.(jpg|jpeg|png|webp|avif|gif|svg)/i.test(u)) return 'image_not_video';
+      if (u.indexOf('/multimedia-') >= 0) return 'thumbnail';
+      if (isOzonReviewVideoUrl(url)) return 'review_video';
+      return 'rejected_by_rule';
+    }
+    if (!isOzonPlayableVideoUrl(url) && !isOzonPdpMp4(url)) return 'not_playable';
+    return null;
+  }
+
+  // ── 清理产品视频列表（标记被拒绝的，但不删除） ──
+  function cleanProductVideos(list) {
+    if (!list || !list.length) return list;
+    list.forEach(function(v) {
+      var reason = getVideoRejectReason(v);
+      if (reason) {
+        v.rejected = true;
+        v.reject_reason = reason;
+      }
+    });
+    return list;
+  }
+
+  // ── 从 React Fiber 探测主图 Gallery 视频 ──
+  async function probeMainGalleryVideoFromReact() {
+    try {
+      var resp = await sendExtMessage({ action: 'probeOzonMainGalleryVideo' });
+      if (!resp || !resp.ok) return [];
+      var data = resp.data || {};
+      if (!data.ok) return [];
+      return (data.videos || []).map(function(v) {
+        return {
+          role: v.role || 'main_video',
+          url: v.url || '',
+          poster: v.poster || '',
+          duration_text: v.duration_text || '',
+          source_area: v.source_area || 'main_gallery',
+          source: v.source || 'react_fiber',
+          need_manual_check: v.need_manual_check !== undefined ? v.need_manual_check : false,
+          confidence: v.url && isOzonPdpMp4(v.url) ? 0.85 : 0.5
+        };
+      });
+    } catch(e) {
+      return [];
+    }
+  }
+
+  // ── 标记当前主图 Gallery 为视频入口 ──
+  function markCurrentMainGalleryAsVideoEntry() {
+    try {
+      var gallery = document.querySelector('[data-widget*="webGallery"]');
+      if (gallery) {
+        gallery.setAttribute('data-ozon-video-entry', 'true');
+        return true;
+      }
+    } catch(e) {}
+    return false;
+  }
+
   function extractOzonMainProductVideo() {
     var videos=[],seen={};
     var gallery=document.querySelector('[data-widget*="webGallery"],[data-widget*="gallery"]');
@@ -3574,7 +4170,11 @@ function sleep(ms) { return new Promise(function(r){setTimeout(r,ms);}); }
 
   function addImage(src, role, el) {
       if (!src || !src.startsWith('http')) return;
-      if (el && isInBadArea(el)) return;
+      if (el && isOzonBuyerReviewArea(el)) {
+        role = 'buyer_review';
+      } else if (el && isInBadArea(el)) {
+        return;
+      }
       // 图标/Logo/支付/银行过滤
       var u = src.toLowerCase();
       if (/\/icon|\/logo|\/avatar|\/favicon|\/sprite|\/badge/.test(u)) return;

@@ -444,6 +444,166 @@ def sources():
                            quality_map=quality_map)
 
 
+# ── 视频辅助函数 ────────────────────────────────────────────
+
+def _is_ozon_rejected_video_url(url):
+    """Check if a video URL matches known OZON rejected/buyer patterns."""
+    u = (url or '').lower()
+    if not u:
+        return False
+    return any(x in u for x in [
+        'ozon.st/', 'ozon.ru/st/',
+        '/review', '/comment', '/feedback',
+    ])
+
+
+def _is_ozon_review_video_url(url):
+    u = (url or '').lower()
+    if not u: return False
+    return any(x in u for x in [
+        '/s3/video-', 'ir.ozone.ru/s3/video',
+        'review', 'comment', 'feedback', 'buyer'
+    ])
+
+
+def _is_valid_product_video(v):
+    """Check if a video dict represents a valid product video.
+    Returns False for review/buyer videos first, then checks URL validity."""
+    if isinstance(v, str):
+        url = v
+        source_area = ''
+        source = ''
+    else:
+        url = v.get('src') or v.get('url') or ''
+        source_area = v.get('source_area') or ''
+        source = v.get('source') or ''
+
+    # Review/buyer video: reject first
+    if url and _is_ozon_review_video_url(url):
+        return False
+
+    # Must have a valid URL
+    if not url or not url.startswith('http'):
+        return False
+
+    # Check source_area for buyer media
+    if source_area and source_area in ('buyer_review', 'buyer_comment', 'buyer_feedback'):
+        return False
+
+    return True
+
+
+def _get_video_reject_reason(v_dict):
+    """Return a specific reject reason string for a video candidate."""
+    if isinstance(v_dict, str):
+        url = v_dict
+        source_area = ''
+        source = ''
+    else:
+        url = v_dict.get('src') or v_dict.get('url') or ''
+        source_area = v_dict.get('source_area') or ''
+        source = v_dict.get('source') or ''
+
+    if not url:
+        return 'empty_record'
+
+    # Check if it's actually an image URL
+    if any(url.lower().endswith(ext) or ('?' in url and url.split('?')[0].lower().endswith(ext))
+           for ext in ('.jpg', '.jpeg', '.png', '.webp', '.gif')):
+        return 'image_or_buyer_video'
+
+    if _is_ozon_review_video_url(url):
+        return 'review_video'
+
+    if not url.startswith('http'):
+        return 'not_playable_url'
+
+    if source_area == 'buyer_review':
+        return 'image_or_buyer_video'
+
+    if source_area not in ('main_gallery', 'pdp_video', 'product_video', '') and source not in ('network',):
+        return 'not_main_gallery'
+
+    if source and source not in ('network', 'pdp', 'dom', 'click_trigger'):
+        return 'untrusted_source'
+
+    return 'unknown'
+
+
+def _classify_video_state(v):
+    """Classify a video candidate: 'video', 'entry_only', 'image', 'rejected'."""
+    if isinstance(v, str):
+        url = v
+        poster = ''
+    else:
+        url = v.get('src') or v.get('url') or ''
+        poster = v.get('poster') or ''
+
+    if not url:
+        return 'rejected'
+
+    # Check if URL is actually an image (misclassified)
+    if any(url.lower().endswith(ext) or ('?' in url and url.split('?')[0].lower().endswith(ext))
+           for ext in ('.jpg', '.jpeg', '.png', '.webp', '.gif')):
+        return 'entry_only' if poster else 'image'
+
+    if not url.startswith('http'):
+        return 'rejected'
+
+    return 'video'
+
+
+def _ozon_video_group_key(url):
+    """Extract dedup group key from OZON video URL patterns like /vod/video-XX/."""
+    import re
+    u = url or ''
+    m = re.search(r'/vod/(video-\d+)', u)
+    if m:
+        return m.group(1)
+    m = re.search(r'/(video-\d{3,})', u)
+    if m:
+        return m.group(1)
+    # Fallback: URL base without query params
+    base = u.split('?')[0]
+    return base.rsplit('/', 1)[-1] if '/' in base else base
+
+
+def _ozon_video_score(v):
+    """Score a video candidate for dedup selection (higher = better)."""
+    if isinstance(v, str):
+        url = v
+        source = ''
+        source_area = ''
+    else:
+        url = v.get('src') or v.get('url') or ''
+        source = v.get('source') or ''
+        source_area = v.get('source_area') or ''
+
+    score = 0
+
+    # Prefer network source (actual media URL from request monitoring)
+    if source == 'network':
+        score += 10
+    elif source == 'pdp':
+        score += 8
+    elif source == 'dom':
+        score += 5
+
+    # Prefer main_gallery source_area
+    if source_area == 'main_gallery':
+        score += 6
+    elif source_area == 'pdp_video':
+        score += 4
+
+    # Prefer .mp4 URLs
+    if url and '.mp4' in url.lower():
+        score += 3
+    if url and 'video' in url.lower():
+        score += 2
+
+    return score
+
+
 # ═══ API 端点（供浏览器插件使用） ═══
 
 @ozon_bp.route('/api/sources/add', methods=['POST'])
@@ -638,11 +798,18 @@ def api_source_add():
             'collect_reason': mrec.get('collect_reason', ''),
             'linked_sku_name': mrec.get('linked_sku_name'),
         }
+        # buyer_review 角色 — 独立入库，仅用于 AI 参考
+        if mrec.get("role") == "buyer_review":
+            media_source_val = 'ozon_buyer_review'
+            compliance_val = 'needs_review'
+            review_val = 'pending'
+            reject_val = '仅用于AI参考'
         # OZON 来源图片标记为参考图
-        media_source_val = 'ozon_reference' if is_ozon_product else 'browser_extension'
-        compliance_val = 'needs_review' if is_ozon_product else mrec["comp_status"]
-        review_val = 'pending' if is_ozon_product else ('rejected' if mrec["comp_status"] == 'rejected' else ('pending' if mrec["comp_status"] == 'needs_review' else 'approved'))
-        reject_val = 'OZON参考图，发布前需替换为自有图片' if is_ozon_product else mrec["reason"]
+        else:
+            media_source_val = 'ozon_reference' if is_ozon_product else 'browser_extension'
+            compliance_val = 'needs_review' if is_ozon_product else mrec["comp_status"]
+            review_val = 'pending' if is_ozon_product else ('rejected' if mrec["comp_status"] == 'rejected' else ('pending' if mrec["comp_status"] == 'needs_review' else 'approved'))
+            reject_val = 'OZON参考图，发布前需替换为自有图片' if is_ozon_product else mrec["reason"]
 
         OzonSourceMedia.create(
             user=user,
@@ -660,29 +827,132 @@ def api_source_add():
             raw_json=json.dumps(meta_json, ensure_ascii=False),
         )
 
-    # ── 视频入库 ──
-    for vi, v in enumerate(video_candidates):
+    # ── 视频分类与过滤 ──
+    rejected_videos = []
+    clean_videos = []
+
+    for v in video_candidates:
         if isinstance(v, str):
             v_src = v
+            poster = ''
+            source_val = ''
+            source_area = ''
         else:
             v_src = v.get('src') or v.get('url') or ''
-        if isinstance(v, str):
-            v_src = v; poster = ''
-        else:
-            v_src = (v.get('src') or v.get('url') or '')
             poster = v.get('poster') or ''
-        media_url = v_src or poster
-        if media_url and media_url.startswith('http'):
-            OzonSourceMedia.create(
-                user=user, source=source,
-                media_id=f'video-{vi+1:03d}',
-                media_source='ozon_reference' if is_ozon_product else 'browser_extension',
-                role='video', source_url=v_src,
-                for_ozon=False, compliance_status='needs_review',
-                reject_reason='OZON参考视频，发布前需人工确认/替换',
-                review_status='pending',
-                raw_json=json.dumps({'video_url': v_src}, ensure_ascii=False),
-            )
+            source_val = v.get('source') or ''
+            source_area = v.get('source_area') or ''
+
+        state = _classify_video_state(v)
+
+        if not _is_valid_product_video(v):
+            reason = _get_video_reject_reason(v)
+            rejected_videos.append({
+                'url': v_src,
+                'poster': poster,
+                'source': source_val,
+                'virus_area': source_area,
+                'video_classification': state,
+                'need_manual_check': True,
+                'reason': reason,
+            })
+            continue
+
+        clean_videos.append(v)
+
+    # ── 视频去重标记（不删除，只标记 primary/duplicate）──
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for i, v in enumerate(clean_videos):
+        if isinstance(v, str):
+            url = v
+        else:
+            url = v.get('src') or v.get('url') or ''
+        key = _ozon_video_group_key(url) if url else f'empty-{i}'
+        groups[key].append((i, v))
+
+    score = _ozon_video_score
+    for key, items in groups.items():
+        if len(items) <= 1:
+            continue
+        items.sort(key=lambda x: score(x[1]), reverse=True)
+        # First is primary, rest are duplicates
+        for rank, (idx, vitem) in enumerate(items):
+            if isinstance(vitem, dict):
+                if rank == 0:
+                    vitem['duplicate_status'] = 'primary'
+                else:
+                    vitem['duplicate_status'] = 'duplicate'
+                    vitem['duplicate_group'] = key
+            # For string items, wrap in dict
+            if isinstance(vitem, str):
+                clean_videos[idx] = {
+                    'src': vitem,
+                    'duplicate_status': 'primary' if rank == 0 else 'duplicate',
+                }
+                if rank > 0:
+                    clean_videos[idx]['duplicate_group'] = key
+
+    # Move duplicates to rejected_videos (mark, don't delete)
+    for v in clean_videos:
+        if isinstance(v, dict):
+            ds = v.get('duplicate_status', '')
+            if ds == 'duplicate':
+                v_src = v.get('src') or v.get('url') or ''
+                rejected_videos.append({
+                    'url': v_src,
+                    'poster': v.get('poster') or '',
+                    'source': v.get('source') or '',
+                    'source_area': v.get('source_area') or '',
+                    'video_classification': _classify_video_state(v),
+                    'need_manual_check': False,
+                    'reason': f'duplicate of group {v.get("duplicate_group", "")}',
+                    'duplicate_status': 'duplicate',
+                    'duplicate_group': v.get('duplicate_group', ''),
+                })
+
+    # ── 视频候选排序（保留全部，去重标记后）──
+    video_candidates = sorted(clean_videos, key=score, reverse=True)
+
+    # ── 视频入库 ──
+    if source and hasattr(source, 'id') and source.id:
+        for vi, v in enumerate(video_candidates):
+            if isinstance(v, str):
+                v_src = v
+                poster = ''
+                dup_status = ''
+                dup_group = ''
+            else:
+                v_src = v.get('src') or v.get('url') or ''
+                poster = v.get('poster') or ''
+                dup_status = v.get('duplicate_status', '')
+                dup_group = v.get('duplicate_group', '')
+
+            # 仅使用 v_src（不 fallback 到 poster）
+            if v_src and v_src.startswith('http'):
+                raw_json = {
+                    'video_url': v_src,
+                    'poster': poster,
+                }
+                if dup_status:
+                    raw_json['duplicate_status'] = dup_status
+                if dup_group:
+                    raw_json['duplicate_group'] = dup_group
+
+                def_source = 'ozon_reference' if is_ozon_product else 'browser_extension'
+                OzonSourceMedia.create(
+                    user=user,
+                    source=source,
+                    media_id=f'video-{vi+1:03d}',
+                    media_source=def_source,
+                    role='video',
+                    source_url=v_src,
+                    for_ozon=False,
+                    compliance_status='needs_review',
+                    reject_reason='OZON参考视频，发布前需人工确认/替换',
+                    review_status='pending',
+                    raw_json=json.dumps(raw_json, ensure_ascii=False),
+                )
 
     for i, sku_data in enumerate(skus):
         OzonSourceSku.create(
@@ -699,15 +969,24 @@ def api_source_add():
             purchase_price_cny=sku_data.get('purchase_price_cny'),
         )
 
+    # 将视频过滤结果写入 raw_json（供适配工作台调试）
+    raw_data['rejected_video_candidates'] = rejected_videos
+    raw_data['video_candidates'] = video_candidates
+    source.raw_json = json.dumps(raw_data, ensure_ascii=False)
+
     source.status = 'parsed'
     source.sku_count = OzonSourceSku.select().where(OzonSourceSku.source == source).count()
     source.image_count = saved_img_count
     source.save()
 
     # ── 响应 ────────────────────────────────────────
+    saved_video_count = len(video_candidates)
     resp = {
         "ok": True, "id": source.id, "title": title,
         "sku_count": source.sku_count, "image_count": saved_img_count,
+        "video_received_count": len(data.get('product_videos') or data.get('video_candidates') or data.get('videos') or []),
+        "video_saved_count": saved_video_count,
+        "video_rejected_count": len(rejected_videos),
     }
     if rejected_img_count > 0:
         resp["rejected_images"] = rejected_img_count
@@ -3525,7 +3804,44 @@ def adaptation_workspace(source_id):
             'collect_reason': extra.get('collect_reason', ''),
             'linked_sku_name': extra.get('linked_sku_name'),
             'media_source': m.media_source or 'browser_extension',
+            'duplicate_status': extra.get('duplicate_status', ''),
+            'duplicate_group': extra.get('duplicate_group', ''),
         })
+
+    # ── 构造 video_media_parsed（供模板视频播放器使用）──
+    video_media_parsed = []
+    for idx, vm in enumerate(video_media):
+        vextra = {}
+        try:
+            vextra = json.loads(vm.raw_json or '{}')
+        except Exception:
+            vextra = {}
+        vurl = vextra.get('video_url') or vextra.get('url') or vm.source_url or ''
+        vposter = vextra.get('poster') or ''
+        vlower = vurl.lower()
+        if '.mp4' in vlower or '.webm' in vlower or '.mov' in vlower:
+            vstate = 'playable'
+        elif '.m3u8' in vlower or 'stream' in vlower:
+            vstate = 'streaming'
+        elif vurl and vurl.startswith('http'):
+            vstate = 'entry_only'
+        elif vposter and vposter.startswith('http'):
+            vstate = 'entry_only'
+        else:
+            vstate = 'empty'
+        video_media_parsed.append({
+            'id': vm.id,
+            'media_id': vm.media_id or f'video-{idx+1:03d}',
+            'video_url': vurl,
+            'poster': vposter,
+            'video_state': vstate,
+            'source': vextra.get('source') or vm.media_source or '',
+            'duration_text': vextra.get('duration_text') or '',
+            'duplicate_status': vextra.get('duplicate_status') or '',
+            'duplicate_group': vextra.get('duplicate_group') or '',
+        })
+
+    rejected_video_candidates = raw.get('rejected_video_candidates') or []
 
     return render_template('ozon/adaptation_workspace.html',
                            source=source, source_skus=source_skus,
@@ -3540,6 +3856,8 @@ def adaptation_workspace(source_id):
                            pricing=pricing, rich_text=rich_text,
                            source_attributes=source_attributes,
                            video_media=video_media,
+                           video_media_parsed=video_media_parsed,
+                           rejected_video_candidates=rejected_video_candidates,
                            has_vision_config=has_vision_config,
                            # 新增：类目/Type/属性/字典
                            adaptation_types=adaptation_types,
