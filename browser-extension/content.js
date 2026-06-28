@@ -265,11 +265,19 @@
         skuListHtml +
         ((data.platform === 'taobao' || data.platform === 'tmall') ? '<div style="background:#f0f0f0;color:#6c757d;padding:6px 10px;border-radius:4px;margin-bottom:8px;font-size:11px">ℹ️ 淘宝/天猫详情图请通过 1688 同款商品采集或手动上传</div>' : '') +
         ((data.quality_warnings && data.quality_warnings.length > 0) ? data.quality_warnings.map(function(w) { return '<div style="background:#fff3cd;color:#856404;padding:6px 10px;border-radius:4px;margin-bottom:6px;font-size:11px;border:1px solid #ffc107;">⚠️ ' + escHtml(w) + '</div>'; }).join('') : '') +
-        '<button class="btn-collect" id="ozon-btn-submit">📥 一键采集入库</button>' +
-        '<button class="btn-collect" id="ozon-btn-selection" style="background:#6c757d;margin-top:4px;font-size:11px">📋 采集选中文本</button>' +
-        ((detectPlatform() === 'ozon_product') ? '<button class="btn-collect" id="ozon-btn-auto-rt" style="background:#20c997;margin-top:4px;font-size:11px">📝 自动抓取富文本</button>' : '') +
-        ((detectPlatform() === 'ozon_product') ? '<button class="btn-collect" id="ozon-btn-video" style="background:#0d6efd;margin-top:4px;font-size:11px">🎬 采集主视频</button>' : '') +
-        '<div id="ozon-submit-status" style="text-align:center;margin-top:8px;font-size:13px;"></div>' +
+        ((detectPlatform() === 'ozon_product') ?
+          '<button class="btn-collect" id="ozon-btn-collect-all" style="background:linear-gradient(135deg,#198754,#20c997);font-size:14px;font-weight:700;padding:12px">⚡ 一键采集此商品</button>' +
+          '<div style="text-align:center;color:#999;font-size:10px;margin:4px 0">自动采集图片/富文本/视频/属性/价格并入库</div>' +
+          '<details style="margin-top:6px;font-size:10px">' +
+          '<summary style="color:#999;cursor:pointer">🔧 高级调试</summary>' +
+          '<div style="padding:4px 0">' +
+          '<button class="btn-collect" id="ozon-btn-auto-rt" style="background:#20c997;margin-top:3px;font-size:10px;padding:4px 8px">📝 仅采富文本</button>' +
+          '<button class="btn-collect" id="ozon-btn-video" style="background:#0d6efd;margin-top:3px;font-size:10px;padding:4px 8px">🎬 仅采视频</button>' +
+          '<button class="btn-collect" id="ozon-btn-selection" style="background:#6c757d;margin-top:3px;font-size:10px;padding:4px 8px">📋 选中文本</button>' +
+          '</div></details>' :
+          '<button class="btn-collect" id="ozon-btn-submit">📥 一键采集入库</button>'
+        ) +
+        '<div id="ozon-submit-status" style="text-align:center;margin-top:6px;font-size:12px;"></div>' +
       '</div>';
 
     document.body.appendChild(resultPanel);
@@ -278,7 +286,14 @@
     document.getElementById('ozon-panel-close').addEventListener('click', function () {
       if (resultPanel) resultPanel.remove();
     });
-    document.getElementById('ozon-btn-submit').addEventListener('click', submitCollect);
+    var mainBtn = document.getElementById('ozon-btn-submit') || document.getElementById('ozon-btn-collect-all');
+    if (mainBtn) mainBtn.addEventListener('click', function() {
+      if (detectPlatform() === 'ozon_product') {
+        collectOzonProductOneClick();
+      } else {
+        submitCollect();
+      }
+    });
     var selBtn = document.getElementById('ozon-btn-selection');
     if (selBtn) selBtn.addEventListener('click', function() {
       var rich = scrapeRichTextBySelection();
@@ -345,6 +360,163 @@
     const div = document.createElement('div');
     div.textContent = text || '';
     return div.innerHTML;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 一键采集流水线
+  // ═══════════════════════════════════════════════════════════
+
+  var _collectProgress = { steps: [], currentStep: '', totalSteps: 0 };
+
+  function updateCollectStatus(msg, color) {
+    var st = document.getElementById('ozon-submit-status');
+    if (st) st.innerHTML = '<span style="color:' + (color || '#6f42c1') + '">' + msg + '</span>';
+  }
+
+  async function prepareOzonPageForCollect() {
+    updateCollectStatus('🔄 预热页面...', '#6c757d');
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    await sleep(400);
+    // 逐段滚动触发懒加载
+    var scrollPoints = [600, 1200, 1800, 2600, 3400, 4200, 5000];
+    for (var si = 0; si < scrollPoints.length; si++) {
+      window.scrollTo({ top: scrollPoints[si], behavior: 'smooth' });
+      await sleep(500);
+    }
+    // 回到顶部采主图
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    await sleep(600);
+  }
+
+  async function collectOzonProductOneClick() {
+    var st = document.getElementById('ozon-submit-status');
+    var totalSteps = 7;
+    var step = 0;
+
+    function stepMsg(n, msg) { updateCollectStatus('⏳ [' + n + '/' + totalSteps + '] ' + msg + '...', '#6f42c1'); }
+
+    try {
+      // 1. 预热页面
+      stepMsg(++step, '预热页面触发懒加载');
+      await prepareOzonPageForCollect();
+
+      // 2. 提取商品数据（复用现有 extract()）
+      stepMsg(++step, '采集基础信息/价格/属性/SKU/图片');
+      var data = await extract();
+      if (data.error) { updateCollectStatus('❌ ' + data.message, '#dc3545'); return null; }
+      window.__ozonExtractedData = data;
+
+      // 补充属性
+      if (typeof fetchOzonSplitState === 'function') {
+        try { await fetchOzonSplitState(); } catch(e) {}
+      }
+      // 重新读数
+      if (window.__ozonExtractedData) data = window.__ozonExtractedData;
+
+      // 3. 富文本
+      stepMsg(++step, '采集富文本');
+      try {
+        autoScrapeRichText();
+      } catch(e) {}
+      if (window.__ozonExtractedData) data = window.__ozonExtractedData;
+
+      // 4. 视频
+      stepMsg(++step, '采集主图视频');
+      try {
+        var videos = await autoCaptureOzonMainVideoOneClick();
+        if (videos && videos.length && window.__ozonExtractedData) {
+          window.__ozonExtractedData.product_videos = videos;
+          window.__ozonExtractedData.video_candidates = videos;
+          window.__ozonExtractedData.videos = videos;
+        }
+      } catch(e) {}
+      if (window.__ozonExtractedData) data = window.__ozonExtractedData;
+
+      // 5. 组装 payload
+      stepMsg(++step, '组装数据');
+      var payload = buildUnifiedPayload(data);
+
+      // 6. 校验
+      stepMsg(++step, '校验数据完整性');
+      var warnings = validateCollectPayload(payload);
+      payload._warnings = warnings;
+
+      // 7. 提交入库
+      stepMsg(++step, '提交入库');
+      var result = await submitPayloadDirect(payload);
+
+      if (result && result.ok) {
+        var summary = '✅ 采集入库完成<br>';
+        summary += '<span style="font-size:10px">';
+        summary += '图片: ' + (data.images ? data.images.length : 0) + ' | ';
+        summary += 'SKU: ' + (data.skus ? data.skus.length : 0) + ' | ';
+        summary += '视频: ' + ((data.product_videos || data.videos || []).length) + ' | ';
+        summary += '富文本: ' + ((data.rich_text && data.rich_text.plain_text) ? '✓ ' + (data.rich_text.image_count || 0) + '图' : '✗') + ' | ';
+        summary += '属性: ' + ((data.specs || []).length);
+        if (warnings.length > 0) summary += '<br><span style="color:#856404">⚠️ ' + warnings.join('; ') + '</span>';
+        summary += '</span>';
+        updateCollectStatus(summary, '#198754');
+        return result;
+      } else {
+        updateCollectStatus('❌ 入库失败: ' + ((result && result.error) || '未知'), '#dc3545');
+        return null;
+      }
+    } catch(e) {
+      updateCollectStatus('❌ 采集异常: ' + (e.message || '').slice(0, 80), '#dc3545');
+      return null;
+    }
+  }
+
+  function buildUnifiedPayload(data) {
+    return {
+      platform: data.platform || 'ozon_product',
+      url: data.url || location.href,
+      item_id: data.item_id || '',
+      title: data.title,
+      category: data.category || '',
+      description: data.description || '',
+      shop_name: data.shop_name || '',
+      skus: data.skus || [],
+      images: data.images || [],
+      specs: data.specs || [],
+      pricing: data.pricing || {},
+      price_candidates: data.price_candidates || [],
+      rich_text: data.rich_text || {},
+      source_attributes: data.attribute_candidates || data.source_attributes || data.specs || [],
+      attribute_candidates: data.attribute_candidates || data.source_attributes || [],
+      videos: data.videos || [],
+      video_candidates: data.video_candidates || data.product_videos || data.videos || [],
+      product_videos: data.product_videos || data.video_candidates || data.videos || [],
+      current_variant_snapshot: data.current_variant_snapshot || {},
+      package_list: data.package_list || [],
+      detailed_variants: data.detailed_variants || [],
+      detail_missing: data.detail_missing || false
+    };
+  }
+
+  function validateCollectPayload(payload) {
+    var w = [];
+    if (!payload.title || payload.title.length < 2) w.push('标题缺失');
+    if (!payload.pricing || !payload.pricing.reference_price_rub) w.push('价格未识别');
+    if (!payload.images || payload.images.length === 0) w.push('图片为0');
+    if (!payload.rich_text || !payload.rich_text.plain_text) w.push('富文本为空');
+    if (!payload.skus || payload.skus.length === 0) w.push('SKU为0');
+    return w;
+  }
+
+  async function submitPayloadDirect(payload) {
+    if (!authToken) {
+      try { var s = await chrome.storage.local.get(['auth_token']); authToken = s.auth_token || ''; } catch(e) {}
+    }
+    try {
+      var bgResult = await chrome.runtime.sendMessage({
+        action: 'collect', apiUrl: API_URL, token: authToken, payload: payload
+      });
+      if (!bgResult || !bgResult.ok) return { ok: false, error: (bgResult && bgResult.error) || '连接失败' };
+      return bgResult.data || { ok: false, error: 'empty_response' };
+    } catch(e) {
+      return { ok: false, error: e.message || '网络错误' };
+    }
   }
 
   // ── 提交入库 ────────────────────────────────────────
