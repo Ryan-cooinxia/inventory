@@ -3759,12 +3759,22 @@ function scrapeRichTextBySelection() {
     }
 
     function isTaxOrShipping(text) {
-      return /пошлин|тамож|налог|tax|сбор|доставк|dostavk|рассроч|балл|bonus|дешевл/i.test(text||'');
+      return /пошлин|тамож|налог|tax|сбор|доставк|dostavk|рассроч|балл|bonus|дешевл|от\s+\d|други.|предложени/i.test(text||'');
     }
 
-    // 优先右侧购买区
-    var buyArea = document.querySelector('[data-widget*="webPrice"], [data-widget*="webSaleBlock"], [data-widget*="webStickyProducts"]');
-    var roots = buyArea ? [buyArea, document.body] : [document.body];
+    // 优先右侧购买区（找到就只扫买区，不扫全页避免其他卖家价格混入）
+    var buyArea = document.querySelector('[data-widget*="webPrice"], [data-widget*="webSaleBlock"], [data-widget*="webStickyProducts"], [data-widget*="webAddToCart"]');
+    // 如果没找到 widget，找包含"В корзину"按钮的祖先作为买区
+    if (!buyArea) {
+      var cartBtns = document.querySelectorAll('button, a');
+      for (var bi = 0; bi < cartBtns.length; bi++) {
+        if (/В корзину|корзин/i.test(cartBtns[bi].textContent||'')) {
+          buyArea = cartBtns[bi].closest('div[class*="container"], div[class*="wrapper"], div[class*="sticky"], section, aside') || cartBtns[bi].parentElement;
+          break;
+        }
+      }
+    }
+    var roots = buyArea ? [buyArea] : [document.body];
     var allCands = [];
 
     for (var ri = 0; ri < roots.length; ri++) {
@@ -3787,6 +3797,22 @@ function scrapeRichTextBySelection() {
           isGr = /rgb\(0,\s*(1[2-9]\d|[2-9]\d{2})/.test(cc) || cc.indexOf('#2d') >= 0 || cc.indexOf('green') >= 0;
         } catch(e) {}
         allCands.push({ price: p, left: rect.left, isRight: rect.left > window.innerWidth * 0.45, isLineThrough: isLT, isGreen: isGr, fontSize: fs });
+      }
+    }
+
+    // 买区无结果 → 兜底全页扫描
+    if (!allCands.length) {
+      var bodyNodes = document.body.querySelectorAll('span,div,a,p,b,strong');
+      for (var i2 = 0; i2 < bodyNodes.length && allCands.length < 30; i2++) {
+        var el2 = bodyNodes[i2];
+        if (el2.children && el2.children.length > 0) continue;
+        var t2 = (el2.textContent||'').trim();
+        if (t2.length > 50) continue;
+        if (!new RegExp(RUB).test(t2) && !/руб/i.test(t2) && !/RUB/i.test(t2)) continue;
+        var p2 = cleanPrice(t2);
+        if (!p2 || isTaxOrShipping(t2)) continue;
+        var rect2 = el2.getBoundingClientRect ? el2.getBoundingClientRect() : {};
+        allCands.push({ price: p2, left: rect2.left, isRight: rect2.left > window.innerWidth * 0.45, isLineThrough: false, isGreen: false, fontSize: 14 });
       }
     }
 
