@@ -2188,6 +2188,7 @@ def api_reject_source_media(media_id):
 
 
 @ozon_bp.route('/api/source/<int:source_id>/reference-price', methods=['POST'])
+@ozon_bp.route('/api/source/<int:source_id>/pricing', methods=['POST'])
 @login_required
 def api_update_reference_price(source_id):
     """更新 OZON 参考售价"""
@@ -2215,7 +2216,13 @@ def api_update_reference_price(source_id):
     pricing['currency'] = 'RUB'
     pricing['source'] = data.get('source') or 'manual'
     pricing['confirmed'] = True
+    pricing['updated_at'] = datetime.datetime.now().isoformat()
     raw['pricing'] = pricing
+    # 同步 SKU 价格字段
+    for sku in raw.get('skus', []):
+        sku['reference_price_rub'] = ref_price
+        sku['current_price_rub'] = cur_price or ref_price
+        sku['source_price_currency'] = 'RUB'
     source.raw_json = json.dumps(raw, ensure_ascii=False)
     source.save()
 

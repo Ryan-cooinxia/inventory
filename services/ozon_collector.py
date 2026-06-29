@@ -1014,15 +1014,18 @@ def collect_quality_check(data: dict, source_url: str) -> dict:
     # ── 价格检查 ──────────────────────────────────
     has_confirmed_price = any(sku.get("purchase_price_cny") for sku in skus)
     has_confirmed_price = has_confirmed_price or bool(pricing.get("source_price_cny"))
+    # OZON 商品：有 reference_price_rub 也算价格已识别（参考售价 ≠ 采购价）
+    has_ozon_ref_price = bool(pricing.get("reference_price_rub"))
     price_candidates = data.get("price_candidates", [])
     has_candidate = bool(price_candidates) or any(sku.get("candidate_price_cny") for sku in skus)
     has_candidate = has_candidate or bool(pricing.get("candidate_price_cny"))
-    pricing_complete = data.get("pricing_complete", has_confirmed_price)
+    has_candidate = has_candidate or has_ozon_ref_price
+    pricing_complete = data.get("pricing_complete", has_confirmed_price or has_ozon_ref_price)
 
-    price_unconfirmed = not has_confirmed_price
+    price_unconfirmed = not has_confirmed_price and not has_ozon_ref_price
     if not has_confirmed_price and not has_candidate:
         warnings.append("未识别到采购价，请手动填写")
-    elif not has_confirmed_price and has_candidate:
+    elif not has_confirmed_price and has_candidate and not has_ozon_ref_price:
         warnings.append("仅有候选价格（非确认价），需人工确认后填入")
 
     # ── 详情检查 ──────────────────────────────────
