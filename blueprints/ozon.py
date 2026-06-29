@@ -3831,7 +3831,7 @@ def adaptation_workspace(source_id):
             .limit(200))
 
         # 如果已绑定 type，加载属性 Schema
-        if adaptation.type_id:
+        if adaptation and adaptation.type_id:
             adaptation_attr_schema = list(OzonCategoryAttribute
                 .select()
                 .where((OzonCategoryAttribute.user == current_user) &
@@ -3854,7 +3854,7 @@ def adaptation_workspace(source_id):
                     })
 
         # 解析已保存的属性值
-        if adaptation.attribute_mapping_json:
+        if adaptation and adaptation.attribute_mapping_json:
             try:
                 attr_data = json.loads(adaptation.attribute_mapping_json)
                 adaptation_saved_attrs = attr_data.get('attributes', {}) if isinstance(attr_data, dict) else {}
