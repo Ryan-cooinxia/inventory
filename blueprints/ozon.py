@@ -3857,16 +3857,43 @@ def adaptation_workspace(source_id):
             if mapped:
                 did_update = False
                 field_map = {
-                    'weight': 'weight', 'material': 'material',
-                    'dimensions': 'dimensions', 'color': 'color',
-                    'model': 'model', 'brand': 'brand_name',
-                    'warranty': 'warranty', 'origin': 'origin',
+                    'product_type': 'product_type', 'brand_name': 'brand_name',
+                    'model': 'model', 'material': 'material',
+                    'color': 'color', 'weight': 'weight', 'weight_json': 'weight_json',
+                    'dimensions': 'dimensions', 'dimensions_json': 'dimensions_json',
+                    'origin': 'origin', 'warranty': 'warranty',
                     'battery_capacity': 'battery_capacity', 'power': 'power',
                     'wireless_range': 'wireless_range',
+                    'compatibility': 'compatibility_json',
+                    'usage': 'usage_scenarios_json',
+                    'features': 'functions_json',
+                    'package_contents': 'package_contents_json',
+                    'stabilization': 'stabilization',
+                    'waterproof': 'waterproof',
                 }
+                # 自动提取品牌/型号（从标题中）
+                title = source.title_cn or ''
+                if not mapped.get('brand_name') and not fact.brand_name:
+                    # 标题第一个词通常是品牌
+                    words = title.split()
+                    if words and len(words[0]) <= 20 and words[0].isascii():
+                        fact.brand_name = words[0]
+                        did_update = True
+                if not mapped.get('model') and not fact.model:
+                    # 标题后面的词可能是型号
+                    for w in title.split():
+                        if w[0].isupper() and len(w) >= 2 and w not in ('DJI', 'Экшн-камера', 'Для'):
+                            if not fact.model: fact.model = w
+
+                json_fields = {'compatibility_json', 'usage_scenarios_json',
+                               'functions_json', 'package_contents_json',
+                               'dimensions_json', 'weight_json'}
                 for en_key, fact_field in field_map.items():
                     if mapped.get(en_key) and not getattr(fact, fact_field, None):
-                        setattr(fact, fact_field, str(mapped[en_key])[:500])
+                        val = str(mapped[en_key])[:500]
+                        if fact_field in json_fields:
+                            val = json.dumps([val], ensure_ascii=False)
+                        setattr(fact, fact_field, val)
                         did_update = True
                 existing_unknown = []
                 if fact.unknown_fields_json:

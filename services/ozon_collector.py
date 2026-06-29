@@ -932,27 +932,39 @@ def extract_candidate_price_from_url(source_url: str) -> dict:
 
 # ── OZON 属性名 俄→英 映射表 ──
 OZON_ATTR_RU_TO_EN = {
-    'артикул': 'article', 'тип': 'type', 'бренд': 'brand',
+    # 基础标识
+    'артикул': 'article', 'тип': 'product_type', 'бренд': 'brand_name',
+    'модель': 'model', 'производитель': 'manufacturer', 'серия': 'series',
+    # 物理属性
     'вес': 'weight', 'вес товара': 'weight', 'вес товара, г': 'weight',
     'материал': 'material', 'цвет': 'color',
     'размер': 'size', 'размеры': 'dimensions', 'размеры, мм': 'dimensions',
+    'длина': 'length', 'ширина': 'width', 'высота': 'height',
+    # 保修/产地
     'гарантия': 'warranty', 'страна': 'origin', 'страна-изготовитель': 'origin',
+    # 电池/电源
     'емкость': 'battery_capacity', 'емкость аккумулятора': 'battery_capacity',
     'аккумулятор': 'battery_capacity', 'батарея': 'battery_capacity',
     'питание': 'power', 'мощность': 'power',
-    'совместимость': 'compatibility',
-    'назначение': 'usage', 'комплектация': 'package_contents',
-    'особенности': 'features', 'модель': 'model',
-    'производитель': 'manufacturer', 'серия': 'series',
-    'частота': 'frequency', 'чувствительность': 'sensitivity',
-    'битрейт': 'bitrate', 'дисплей': 'display', 'экран': 'screen',
-    'водонепроницаемость': 'waterproof', 'защита': 'protection',
-    'подключение': 'connectivity', 'интерфейс': 'interface',
-    'формат': 'format', 'разрешение': 'resolution',
-    'стабилизация': 'stabilization', 'угол обзора': 'viewing_angle',
-    'рабочая температура': 'operating_temperature',
     'время работы': 'battery_life', 'время зарядки': 'charging_time',
+    # 兼容性
+    'совместимость': 'compatibility', 'совместимость с фотокамерами': 'compatibility',
+    'назначение': 'usage', 'комплектация': 'package_contents',
+    # 功能特性
+    'особенности': 'features', 'функции': 'functions',
+    'стабилизация': 'stabilization', 'защита': 'protection',
+    'водонепроницаемость': 'waterproof',
+    # 音频/视频
+    'частота': 'frequency', 'чувствительность': 'sensitivity',
+    'битрейт': 'bitrate', 'разрешение': 'resolution',
+    'формат': 'format', 'дисплей': 'display', 'экран': 'screen',
+    'угол обзора': 'viewing_angle',
+    # 连接
+    'подключение': 'connectivity', 'интерфейс': 'interface',
     'дальность': 'wireless_range', 'радиус действия': 'wireless_range',
+    # 环境
+    'рабочая температура': 'operating_temperature',
+    # 数量
     'количество': 'quantity', 'шт': 'quantity',
 }
 
