@@ -4286,21 +4286,45 @@ def api_recommend_category(group_id):
     title = (fact.standard_name_cn if fact else '') or ''
     ptype = (fact.product_type if fact else '') or ''
     search = (ptype + ' ' + title).lower()
-    # 方案1：从已缓存的类目树中匹配
-    cats = list(OzonCategory.select().where(
-        (OzonCategory.user == current_user) & (OzonCategory.is_leaf == True)
-    ).order_by(OzonCategory.id).limit(200))
+    # 方案1：从已同步的 OzonCategoryType 中匹配（用户已同步的类型数据）
+    types = list(OzonCategoryType.select().where(
+        (OzonCategoryType.user == current_user)
+    ).order_by(OzonCategoryType.last_synced_at.desc()).limit(200))
     matches = []
-    if cats:
-        for c in cats:
-            name = (c.name or '').lower()
+    seen = set()
+    if types:
+        for t in types:
+            name = (t.type_name or '').lower()
             score = 0
             for w in search.split():
                 if w in name: score += 1
-            if score > 0: matches.append({'category_id': c.ozon_category_id, 'name_ru': c.name or '', 'confidence': min(score / max(len(search.split()), 1), 0.95)})
-        matches.sort(key=lambda x: -x['confidence'])
+            if score > 0 and name not in seen:
+                seen.add(name)
+                matches.append({
+                    'category_id': t.description_category_id,
+                    'type_id': t.type_id,
+                    'name_ru': t.type_name or '',
+                    'name_cn': t.type_name_cn or '',
+                    'path': t.path or '',
+                    'confidence': min(score / max(len(search.split()), 1), 0.95),
+                    'source': 'category_type'
+                })
 
-    # 方案2：类目树为空时，从商品属性推断类目
+    # 方案2：从 OzonCategory 类目树匹配
+    if not matches:
+        cats = list(OzonCategory.select().where(
+            (OzonCategory.user == current_user) & (OzonCategory.is_leaf == True)
+        ).order_by(OzonCategory.id).limit(200))
+        if cats:
+            for c in cats:
+                name = (c.name or '').lower()
+                score = 0
+                for w in search.split():
+                    if w in name: score += 1
+                if score > 0:
+                    matches.append({'category_id': c.ozon_category_id, 'name_ru': c.name or '', 'confidence': min(score / max(len(search.split()), 1), 0.95), 'source': 'category_tree'})
+
+    # 方案3：属性关键词推断兜底
     if not matches:
         attr_map = {
             'видеокамера': ('Фото и видеокамеры', 'Электроника > Фото и видеокамеры > Экшн-камеры'),
@@ -4313,7 +4337,9 @@ def api_recommend_category(group_id):
         for kw, (name, path) in attr_map.items():
             if kw in search:
                 matches.append({'category_id': kw, 'name_ru': name, 'path': path, 'confidence': 0.7, 'source': 'attribute_inference'})
-    return jsonify({"ok": True, "categories": matches[:5], "count": len(matches), "from_cache": bool(cats)})
+
+    matches.sort(key=lambda x: -x['confidence'])
+    return jsonify({"ok": True, "categories": matches[:5], "count": len(matches)})
 
 
 @ozon_bp.route('/api/adaptation/<int:group_id>/relation', methods=['POST'])
