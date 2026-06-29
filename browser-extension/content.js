@@ -308,47 +308,71 @@
       }
     });
 
-    // 💰 重新识别价格按钮（自动扫描 → 失败才弹手动输入）
+    // 💰 重新识别价格按钮（已入库商品直写后端，未入库商品存 window 等提交）
     var priceBtn = document.getElementById('ozon-btn-price');
-    if (priceBtn) priceBtn.addEventListener('click', function() {
+    if (priceBtn) priceBtn.addEventListener('click', async function() {
       var st = document.getElementById('ozon-submit-status');
       if (st) st.innerHTML = '<span style="color:#ffc107;">🔍 正在重新扫描价格...</span>';
       var pricing = null;
       try {
-        // 先滚动到价格区域
         var priceEls = document.querySelectorAll('[data-widget*="webPrice"], [data-widget*="webSaleBlock"], [data-widget*="webStickyProducts"]');
         if (priceEls.length > 0) {
           try { priceEls[0].scrollIntoView({ behavior: 'instant', block: 'center' }); } catch(e) {}
         }
-        // 等 500ms 让懒加载完成
         pricing = extractOzonPricing(null);
       } catch(e) {}
-      // 自动识别成功
-      if (pricing && pricing.reference_price_rub) {
-        if (!window.__ozonExtractedData) window.__ozonExtractedData = {};
-        window.__ozonExtractedData.pricing = pricing;
-        var ref = pricing.reference_price_rub;
-        var cur = pricing.current_price_rub;
-        var msg = '✅ 参考价: ' + ref + ' RUB';
-        if (cur && cur !== ref) msg += ' | 促销价: ' + cur + ' RUB';
-        if (st) st.innerHTML = '<span style="color:#198754;">' + msg + '（点击"一键采集"提交入库）</span>';
+
+      if (!pricing || !pricing.reference_price_rub) {
+        // 自动失败 → 手动输入兜底
+        var input = prompt('未能自动识别价格。请手动输入 OZON 页面卢布售价（数字即可），例如 35557：');
+        if (!input) return;
+        var clean = input.replace(/[\s]/g, '');
+        var m2 = clean.match(/(\d{3,})/);
+        if (!m2) { alert('无法识别有效数字'); return; }
+        var mp = parseInt(m2[1], 10);
+        if (!mp || mp < 100) { alert('价格无效'); return; }
+        pricing = { reference_price_rub: mp, current_price_rub: mp, currency: 'RUB', source: 'manual_input', confidence: 'high' };
+      }
+
+      var ref = pricing.reference_price_rub;
+      var cur = pricing.current_price_rub;
+      var sourceId = window.__ozonLastSourceId;
+
+      // 已入库 → 直写后端
+      if (sourceId) {
+        if (st) st.innerHTML = '<span style="color:#ffc107;">💾 正在保存价格到后台...</span>';
+        try {
+          var bgResult = await chrome.runtime.sendMessage({
+            action: 'collect', apiUrl: 'http://127.0.0.1:5000/ozon/api/source/' + sourceId + '/reference-price',
+            token: authToken,
+            payload: {
+              reference_price_rub: ref,
+              current_price_rub: cur || ref,
+              currency: 'RUB',
+              source: 'ozon_price_redetect',
+              confirmed: true
+            }
+          });
+          var resp = bgResult && bgResult.data;
+          if (resp && resp.ok) {
+            var msg2 = '✅ 价格已直写后台: 参考价 ' + ref + ' RUB';
+            if (cur && cur !== ref) msg2 += ' | 促销价 ' + cur + ' RUB';
+            if (st) st.innerHTML = '<span style="color:#198754;">' + msg2 + '</span>';
+          } else {
+            if (st) st.innerHTML = '<span style="color:#dc3545;">❌ 保存失败: ' + ((resp && resp.error) || '未知') + '</span>';
+          }
+        } catch(e) {
+          if (st) st.innerHTML = '<span style="color:#dc3545;">❌ 网络错误: ' + (e.message||'').slice(0,60) + '</span>';
+        }
         return;
       }
-      // 自动失败 → 手动输入兜底
-      var input = prompt('未能自动识别价格。请手动输入 OZON 页面卢布售价（数字即可），例如 32083：');
-      if (!input) return;
-      var clean = input.replace(/[\s   ₽рубRUB]/gi, '');
-      var m = clean.match(/(\d{3,})/);
-      if (!m) { alert('无法识别有效数字'); return; }
-      var price = parseInt(m[1], 10);
-      if (!price || price < 100) { alert('价格无效'); return; }
+
+      // 未入库 → 存 window 等提交
       if (!window.__ozonExtractedData) window.__ozonExtractedData = {};
-      window.__ozonExtractedData.pricing = window.__ozonExtractedData.pricing || {};
-      window.__ozonExtractedData.pricing.reference_price_rub = price;
-      window.__ozonExtractedData.pricing.currency = 'RUB';
-      window.__ozonExtractedData.pricing.source = 'manual_input';
-      window.__ozonExtractedData.pricing.confidence = 'high';
-      if (st) st.innerHTML = '<span style="color:#198754;">✅ 已手动补录: ' + price + ' RUB（点击"一键采集"提交入库）</span>';
+      window.__ozonExtractedData.pricing = pricing;
+      var msg = '✅ 参考价: ' + ref + ' RUB';
+      if (cur && cur !== ref) msg += ' | 促销价: ' + cur + ' RUB';
+      if (st) st.innerHTML = '<span style="color:#198754;">' + msg + '（点击"一键采集"提交入库）</span>';
     });
 
     // 📝 自动抓取富文本按钮
@@ -677,6 +701,8 @@
           successParts.push('<span style="font-size:10px;color:#6c757d">' + vd + '</span>');
         }
 
+        // 保存 source_id 供"重新识别价格"直写后端
+        if (apiResult.id) window.__ozonLastSourceId = apiResult.id;
         status.innerHTML = '<span style="color:#198754;">' + successParts.join('<br>') + '</span>';
         btn.innerHTML = '✅ 已入库';
         showToast(toastMsg, 'success');
