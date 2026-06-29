@@ -4654,8 +4654,9 @@ def api_recommend_category(group_id):
         rule = CATEGORY_RULES.get(pk, {})
         tkw, confs = rule.get('target_kw',[]), rule.get('conflicts',[])
         skw = rule.get('strong_kw', tkw)
-        ACCESSORY_WORDS = ['аксессуар','кнопка','видоискатель','картридж','объектив','адаптер','переходник','чехол','крепление','защит','пленк','фильтр','держател','кронштейн','штатив','крышка','заглушка','ремень','сумка','кейс','насадк','переходн','адаптер','пульт','аккумулятор отдел','зарядн устройств','блок питан','кабель','провод','переходник','вспышк','диффузор','отражатель','софтбокс','направляющ','салазк','площадк','креплени','рукоятк','крышк','линз','фильтр','блютус','bluetooth','пульт','спуск']
-        all_confs = list(set(confs + ACCESSORY_WORDS))
+        # HARD_CONFLICTS: only truly wrong categories, accessories allowed in fallback
+        HARD_CONFLICTS = ['микрофон','microphon','麦克风','话筒','наушник','headphon','耳机','вспышк','flash','闪光','синхронизатор','同步器','adult','成人']
+        all_confs = list(set(HARD_CONFLICTS))
 
         # 本地类目树路径映射：识别结果→从哪里找type
         TREE_PATH_MAP = {
@@ -4752,8 +4753,9 @@ def api_recommend_category(group_id):
         skw = rule.get('strong_kw', tkw)
 
         # 新增配件冲突词 — 运动相机绝不推荐相机配件
-        ACCESSORY_WORDS = ['аксессуар','кнопка','видоискатель','картридж','объектив','адаптер','переходник','чехол','крепление','защит','пленк','фильтр','держател','кронштейн','штатив','крышка','заглушка','ремень','сумка','кейс','насадк','переходн','адаптер','пульт','аккумулятор отдел','зарядн устройств','блок питан','кабель','провод','переходник','вспышк','диффузор','отражатель','софтбокс','направляющ','салазк','площадк','креплени','рукоятк','крышк','линз','фильтр','блютус','bluetooth','пульт','спуск']
-        all_confs = list(set(confs + ACCESSORY_WORDS))
+        # HARD_CONFLICTS: only truly wrong categories, accessories allowed in fallback
+        HARD_CONFLICTS = ['микрофон','microphon','麦克风','话筒','наушник','headphon','耳机','вспышк','flash','闪光','синхронизатор','同步器','adult','成人']
+        all_confs = list(set(HARD_CONFLICTS))
 
         # 1. 先在类目树中找匹配路径（Peewee用 ** 或 % 做LIKE）
         cat_candidates = []
@@ -4855,11 +4857,19 @@ def api_recommend_category(group_id):
             score = sum(1 for w in words if len(w)>2 and w in tn)
             if score > 0: seen.add(tn); recommendations.append(_make_rec(t.description_category_id,t.type_id,t.type_name or '',t.type_name_cn or '',t.path or '',min(score/max(len(words),1),0.4),'keyword_fallback','关键词兜底,建议确认'))
 
-    # 过滤低置信度(<0.6不推荐)
-    recommendations = [r for r in recommendations if r['confidence'] >= 0.6]
     recommendations.sort(key=lambda x: -x['confidence'])
-    if not recommendations and pk:
-        diagnostics.append(f'识别为{pk}({product_info.get("kind_cn","")}),无高置信度匹配(≥60%),请从类目树手动选择')
+    # 强制兜底: 少于3个推荐时从匹配路径补足
+    if len(recommendations) < 3 and cat_dcids:
+        existing_tids = {r['type_id'] for r in recommendations if r.get('type_id')}
+        for t in types:
+            if t.type_id in existing_tids: continue
+            tn = _norm((t.type_name_cn or '') + ' ' + (t.type_name or ''))
+            if any(kw in tn for kw in HARD_CONFLICTS): continue
+            rec_name = t.type_name_cn or t.type_name
+            path = t.path or matched_path or ''
+            recommendations.append(_make_rec(t.description_category_id,t.type_id,t.type_name or '',t.type_name_cn or '',path,0.35,'path_fallback',f'兜底推荐(本地无精确类目): {rec_name}'))
+            existing_tids.add(t.type_id)
+            if len(recommendations) >= 3: break
     return jsonify({"ok":True,"categories":recommendations[:5],"count":len(recommendations),"diagnostics":diagnostics,"product_info":product_info})
 
 
