@@ -521,8 +521,11 @@
       }
       if (window.__ozonExtractedData) data = window.__ozonExtractedData;
 
-      // 5. 组装 payload
+      // 5. 组装 payload（含价格空不覆盖合并）
       stepMsg(++step, '组装数据');
+      if (detectPlatform() === 'ozon_product' && typeof extractOzonPricing === 'function') {
+        try { data.pricing = mergeOzonPricing(data.pricing, extractOzonPricing(null)); } catch(e) {}
+      }
       var payload = buildUnifiedPayload(data);
 
       // 6. 校验
@@ -3620,7 +3623,7 @@ function scrapeRichTextBySelection() {
 
   
   // ── OZON 价格提取（双价：current_price_rub绿色现价 + reference_price_rub灰色参考价）──
-  function extractOzonPricing(stateData) {
+  function extractOzonPricing_oldx(stateData) {
     var RUB = '₽';
     var result = { reference_price_rub: null, current_price_rub: null, currency: 'RUB', source: '', confidence: 'low', price_candidates: [] };
     var seen = {};
@@ -3741,6 +3744,89 @@ function scrapeRichTextBySelection() {
     return result;
   }
 
+
+  // ── 最终版：双价识别+空不覆盖合并 ──
+  function extractOzonPricing(stateData) {
+    var result = { current_price_rub: null, reference_price_rub: null, currency: 'RUB', source: 'ozon_dom', confidence: 'low', candidates: [] };
+    var RUB = '₽';
+
+    function cleanPrice(text) {
+      if (!text) return null;
+      var c = text.replace(/[\s]/g, '');
+      var m = c.match(/(\d{4,})/);
+      if (m) { var v = parseInt(m[1], 10); if (v > 100 && v < 10000000) return v; }
+      return null;
+    }
+
+    function isTaxOrShipping(text) {
+      return /пошлин|тамож|налог|tax|сбор|доставк|dostavk|рассроч|балл|bonus|дешевл/i.test(text||'');
+    }
+
+    // 优先右侧购买区
+    var buyArea = document.querySelector('[data-widget*="webPrice"], [data-widget*="webSaleBlock"], [data-widget*="webStickyProducts"]');
+    var roots = buyArea ? [buyArea, document.body] : [document.body];
+    var allCands = [];
+
+    for (var ri = 0; ri < roots.length; ri++) {
+      var nodes = roots[ri].querySelectorAll('span,div,a,p,b,strong');
+      for (var i = 0; i < nodes.length; i++) {
+        var el = nodes[i];
+        if (el.children && el.children.length > 0) continue;
+        var t = (el.textContent||'').trim();
+        if (t.length > 50) continue;
+        if (!new RegExp(RUB).test(t) && !/руб/i.test(t) && !/RUB/i.test(t)) continue;
+        var p = cleanPrice(t);
+        if (!p || isTaxOrShipping(t)) continue;
+        var rect = el.getBoundingClientRect ? el.getBoundingClientRect() : {};
+        var isLT = false, isGr = false, fs = 16;
+        try {
+          var sty = window.getComputedStyle(el);
+          fs = parseFloat(sty.fontSize) || 16;
+          isLT = (sty.textDecoration||'').indexOf('line-through') >= 0;
+          var cc = (sty.color||'').toLowerCase();
+          isGr = /rgb\(0,\s*(1[2-9]\d|[2-9]\d{2})/.test(cc) || cc.indexOf('#2d') >= 0 || cc.indexOf('green') >= 0;
+        } catch(e) {}
+        allCands.push({ price: p, left: rect.left, isRight: rect.left > window.innerWidth * 0.45, isLineThrough: isLT, isGreen: isGr, fontSize: fs });
+      }
+    }
+
+    // 去重
+    var seen = {}, uniq = [];
+    allCands.forEach(function(c) { if (!seen[c.price]) { seen[c.price] = true; uniq.push(c); } });
+    result.candidates = uniq;
+
+    // current = 绿色大号右侧价
+    var gc = uniq.filter(function(c) { return c.isGreen && c.isRight; });
+    gc.sort(function(a,b) { return b.fontSize - a.fontSize || a.price - b.price; });
+    result.current_price_rub = gc.length ? gc[0].price : null;
+    if (!result.current_price_rub) {
+      var rc = uniq.filter(function(c) { return c.isRight; });
+      rc.sort(function(a,b) { return b.fontSize - a.fontSize || a.price - b.price; });
+      result.current_price_rub = rc.length ? rc[0].price : (uniq.length ? uniq[0].price : null);
+    }
+
+    // reference = 灰色划线价 > current 且 ratio <= 2
+    if (result.current_price_rub) {
+      var refc = uniq.filter(function(c) { return c.isLineThrough && c.price > result.current_price_rub && c.price / result.current_price_rub <= 2; });
+      refc.sort(function(a,b) { return a.price - b.price; });
+      result.reference_price_rub = refc.length ? refc[0].price : result.current_price_rub;
+    }
+
+    if (result.current_price_rub || result.reference_price_rub) result.confidence = 'high';
+    return result;
+  }
+
+  function mergeOzonPricing(oldP, newP) {
+    oldP = oldP || {}; newP = newP || {};
+    return {
+      currency: newP.currency || oldP.currency || 'RUB',
+      current_price_rub: newP.current_price_rub || oldP.current_price_rub || null,
+      reference_price_rub: newP.reference_price_rub || oldP.reference_price_rub || null,
+      source: newP.source || oldP.source || 'unknown',
+      confidence: newP.confidence || oldP.confidence || 'low',
+      price_candidates: newP.candidates || oldP.price_candidates || []
+    };
+  }
 
   function extractOzonSkus(stateData, productInfo, pricing) {
     var name = productInfo.title || '默认规格';
