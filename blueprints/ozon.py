@@ -3816,12 +3816,19 @@ def adaptation_workspace(source_id):
     adaptation_saved_attrs = {}
 
     if adaptation and adaptation.ozon_category_id:
-        # 加载该类目的 Type 列表
+        # 已选类目 → 加载该类目下的 Type
         adaptation_types = list(OzonCategoryType
             .select()
             .where((OzonCategoryType.user == current_user) &
                    (OzonCategoryType.description_category_id == adaptation.ozon_category_id))
             .order_by(OzonCategoryType.type_name))
+    else:
+        # 未选类目 → 加载所有已同步的 Type（供下拉框选择）
+        adaptation_types = list(OzonCategoryType
+            .select()
+            .where(OzonCategoryType.user == current_user)
+            .order_by(OzonCategoryType.type_name)
+            .limit(200))
 
         # 如果已绑定 type，加载属性 Schema
         if adaptation.type_id:
