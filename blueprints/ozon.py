@@ -4286,19 +4286,34 @@ def api_recommend_category(group_id):
     title = (fact.standard_name_cn if fact else '') or ''
     ptype = (fact.product_type if fact else '') or ''
     search = (ptype + ' ' + title).lower()
-    # 从已缓存的类目中匹配
+    # 方案1：从已缓存的类目树中匹配
     cats = list(OzonCategory.select().where(
         (OzonCategory.user == current_user) & (OzonCategory.is_leaf == True)
-    ).order_by(OzonCategory.id).limit(100))
+    ).order_by(OzonCategory.id).limit(200))
     matches = []
-    for c in cats:
-        name = (c.name or '').lower()
-        score = 0
-        for w in search.split():
-            if w in name: score += 1
-        if score > 0: matches.append({'category_id': c.ozon_category_id, 'name_ru': c.name or '', 'confidence': min(score / max(len(search.split()), 1), 0.95)})
-    matches.sort(key=lambda x: -x['confidence'])
-    return jsonify({"ok": True, "categories": matches[:5], "count": len(matches)})
+    if cats:
+        for c in cats:
+            name = (c.name or '').lower()
+            score = 0
+            for w in search.split():
+                if w in name: score += 1
+            if score > 0: matches.append({'category_id': c.ozon_category_id, 'name_ru': c.name or '', 'confidence': min(score / max(len(search.split()), 1), 0.95)})
+        matches.sort(key=lambda x: -x['confidence'])
+
+    # 方案2：类目树为空时，从商品属性推断类目
+    if not matches:
+        attr_map = {
+            'видеокамера': ('Фото и видеокамеры', 'Электроника > Фото и видеокамеры > Экшн-камеры'),
+            'экшн-камера': ('Экшн-камеры', 'Электроника > Фото и видеокамеры > Экшн-камеры'),
+            'микрофон': ('Микрофоны', 'Электроника > Аудиотехника > Микрофоны'),
+            'видеоскопатель': ('Аксессуары для камер', 'Электроника > Фото и видеокамеры > Аксессуары'),
+            'наушники': ('Наушники', 'Электроника > Аудиотехника > Наушники'),
+            'аксессуар': ('Аксессуары', 'Электроника > Аксессуары'),
+        }
+        for kw, (name, path) in attr_map.items():
+            if kw in search:
+                matches.append({'category_id': kw, 'name_ru': name, 'path': path, 'confidence': 0.7, 'source': 'attribute_inference'})
+    return jsonify({"ok": True, "categories": matches[:5], "count": len(matches), "from_cache": bool(cats)})
 
 
 @ozon_bp.route('/api/adaptation/<int:group_id>/relation', methods=['POST'])

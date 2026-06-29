@@ -537,8 +537,10 @@ function recommendCategory() {
       if (!cats.length) { alert('未找到匹配类目，请手动选择'); return; }
       // 显示第一个推荐
       var c = cats[0];
-      alert('✅ 推荐类目: ' + (c.name_ru || c.category_name || '') + '\n类目ID: ' + (c.category_id || '') + '\n置信度: ' + Math.round((c.confidence || 0) * 100) + '%');
-      location.reload();
+      var msg = '✅ 推荐类目: ' + (c.name_ru || c.category_name || '') + '\n置信度: ' + Math.round((c.confidence || 0) * 100) + '%';
+      if (c.path) msg += '\n路径: ' + c.path;
+      if (c.source) msg += '\n来源: ' + (c.source === 'attribute_inference' ? '属性推断(类目树未同步)' : c.source);
+      alert(msg); location.reload();
     })
     .catch(function(e) { alert('类目推荐失败：' + e.message); })
     .finally(function() { btn.disabled = false; btn.textContent = '🤖 推荐类目'; });
