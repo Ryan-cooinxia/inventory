@@ -203,9 +203,14 @@
         <div class="mb-2"><strong style="font-size:12px">📂 OZON 类目与类型</strong></div>
 
         <div class="d-flex gap-1 mb-2">
-          <button class="btn btn-outline-primary btn-sm flex-grow-1" id="btnSelectCategory" onclick="openCategoryForAdaptation()">
-            📂 选择 OZON 类目/类型
-          </button>
+          <select class="form-select form-select-sm flex-grow-1" id="ozonCategorySelect" onchange="onOzonCategoryChange()" style="font-size:11px">
+            <option value="">📂 选择 OZON 类目/类型...</option>
+            {% for t in adaptation_types %}
+            <option value="{{ t.type_id }}" data-cat-id="{{ t.description_category_id }}" data-name="{{ t.type_name_cn or t.type_name }}">
+              {{ t.type_name_cn or t.type_name }} ({{ t.type_id }})
+            </option>
+            {% endfor %}
+          </select>
           <button class="btn btn-outline-success btn-sm" style="font-size:10px" id="btnRecommendCat" onclick="recommendCategory()" title="根据商品事实自动推荐匹配的 OZON 类目和 Type">
             🤖 推荐类目
           </button>
@@ -524,7 +529,28 @@ function aiSuggest() {
     .finally(function() { btn.disabled = false; btn.textContent = '🤖 AI智能填充'; });
 }
 
-// 推荐类目
+// 类目选择变更
+function onOzonCategoryChange() {
+  var sel = document.getElementById('ozonCategorySelect');
+  var typeId = sel.value;
+  if (!typeId) return;
+  var opt = sel.options[sel.selectedIndex];
+  var catId = opt.getAttribute('data-cat-id');
+  var name = opt.getAttribute('data-name');
+  // 显示在已选信息区
+  document.getElementById('selectedCategoryInfo').classList.remove('d-none');
+  document.getElementById('catPathDisplay').textContent = name;
+  document.getElementById('catIdDisplay').textContent = 'type_id=' + typeId;
+  // 自动保存类目选择
+  fetch('/ozon/api/adaptation/{{ group.id }}/save-category-type', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({category_id: catId, type_id: typeId, type_name: name})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (d.ok) location.reload();
+  });
+}
+
+// 推荐类目（自动匹配并选中下拉框）
 function recommendCategory() {
   var btn = document.getElementById('btnRecommendCat');
   if (!btn || btn.disabled) return;
@@ -537,13 +563,23 @@ function recommendCategory() {
       if (!cats.length) { alert('未找到匹配类目，请手动选择'); return; }
       // 显示第一个推荐
       var c = cats[0];
-      var msg = '✅ 推荐类目: ' + (c.name_ru || c.name || '');
-      if (c.name_cn) msg += ' (' + c.name_cn + ')';
+      // 自动选中推荐项
+      if (c.type_id) {
+        var sel = document.getElementById('ozonCategorySelect');
+        for (var i = 0; i < sel.options.length; i++) {
+          if (sel.options[i].value === c.type_id) { sel.selectedIndex = i; onOzonCategoryChange(); break; }
+        }
+      }
+      var msg = '✅ 推荐: ' + (c.name_ru || c.name || '') + (c.name_cn ? ' (' + c.name_cn + ')' : '');
       if (c.type_id) msg += '\ntype_id: ' + c.type_id;
       msg += '\n置信度: ' + Math.round((c.confidence || 0) * 100) + '%';
-      if (c.path) msg += '\n路径: ' + c.path;
-      if (c.source) msg += '\n来源: ' + (c.source === 'category_type' ? '已同步类型数据' : c.source === 'category_tree' ? '类目树' : c.source === 'attribute_inference' ? '属性推断' : c.source);
-      alert(msg); location.reload();
+      if (c.source) {
+        var srcLabel = c.source === 'category_type' ? '已同步类型' : c.source === 'category_tree' ? '类目树' : c.source === 'attribute_inference' ? '属性推断' : c.source;
+        msg += '\n来源: ' + srcLabel;
+      }
+      alert(msg);
+      if (c.type_id) return; // 已自动选中，不刷新
+      location.reload();
     })
     .catch(function(e) { alert('类目推荐失败：' + e.message); })
     .finally(function() { btn.disabled = false; btn.textContent = '🤖 推荐类目'; });
