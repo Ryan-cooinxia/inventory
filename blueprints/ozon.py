@@ -4614,7 +4614,7 @@ def api_recommend_category(group_id):
     def _norm(s): return _re.sub(r'\s+',' ',str(s or '').lower().replace('ё','е').replace('-',' ')).strip()
 
     CATEGORY_RULES = {
-        'action_camera': {'label_cn':'运动相机','signals':['экшн камер','action camera','osmo action','dji action','运动相机','运动摄像','гоупро','gopro'],'target_kw':['экшн','action camera','运动相机','运动摄像','спортивн камер'],'conflicts':['микрофон','наушник','штатив','вспышк']},
+        'action_camera': {'label_cn':'运动相机','signals':['экшн камер','action camera','osmo action','dji action','运动相机','运动摄像','гоупро','gopro'],'target_kw':['экшн','action camera','运动相机','运动摄像','спортивн камер'],'strong_kw':['экшн камер','action camera','运动相机'],'conflicts':['микрофон','наушник','штатив','вспышк','объектив','адаптер','переходник','кольцо','линз','lens','adapter','镜头','转接','转接环','配件','креплен','защит','чехол','держател','кронштейн','пленк','фильтр']},
         'microphone': {'label_cn':'麦克风','signals':['микрофон','microphone','mic','麦克风','话筒','dji mic'],'target_kw':['микрофон','microphon','麦克风','аудио'],'conflicts':['вспышк','синхронизатор','штатив','наушник','экшн камер']},
         'camera': {'label_cn':'相机/摄像机','signals':['камера','видеокамера','видеоскопател','相机','摄像机','видеорегистратор'],'target_kw':['камер','видеокамер','相机','摄像'],'conflicts':['микрофон','наушник']},
         'headphones': {'label_cn':'耳机','signals':['наушник','headphon','耳机','гарнитур','earbud'],'target_kw':['наушник','headphon','耳机'],'conflicts':['микрофон','камер','вспышк']},
@@ -4660,12 +4660,18 @@ def api_recommend_category(group_id):
             if any(kw in tn for kw in confs): continue
             score = sum(1 for kw in tkw if _norm(kw) in tn)
             if score > 0: matched.append((t, score))
-        matched.sort(key=lambda x: (-x[1], -(x[0].last_synced_at.timestamp() if x[0].last_synced_at else 0)))
-        if matched:
-            for t, s in matched[:5]:
-                rec_name = t.type_name_cn or t.type_name
-                recommendations.append(_make_rec(t.description_category_id,t.type_id,t.type_name or '',t.type_name_cn or '',t.path or '',min(0.7+s*0.1,0.95),'system_inference',f'系统识别为{product_info["kind_cn"]},匹配OZON type: {rec_name}', product_info.get('evidence',[])))
-        else: diagnostics.append(f'识别为{pk}({product_info.get("kind_cn","")}),但本地OZON type无匹配(需同步类目type)')
+        # strong_kw: 必须命中才算高置信推荐
+        skw = rule.get('strong_kw', tkw)
+        strong_matched = [(t,s) for t,s in matched if any(_norm(k) in _norm((t.type_name_cn or '') + ' ' + (t.type_name or '')) for k in skw)]
+        candidates = strong_matched if strong_matched else matched[:3]
+        for t, s in candidates[:5]:
+            is_strong = (t,s) in (strong_matched if strong_matched else [])
+            conf = 0.9 if is_strong else 0.6
+            rec_name = t.type_name_cn or t.type_name
+            reason = f'系统识别为{product_info["kind_cn"]},匹配OZON type: {rec_name}'
+            if not is_strong: reason = f'弱匹配(非{product_info["kind_cn"]}强关键词),建议确认: {rec_name}'
+            recommendations.append(_make_rec(t.description_category_id,t.type_id,t.type_name or '',t.type_name_cn or '',t.path or '',conf,'system_inference' if is_strong else 'weak_match',reason,product_info.get('evidence',[])))
+        if not matched: diagnostics.append(f'识别为{pk}({product_info.get("kind_cn","")}),但本地OZON type无匹配(需同步类目type)')
 
     # P2: 当前已选不参与推荐（避免错误强化）
 

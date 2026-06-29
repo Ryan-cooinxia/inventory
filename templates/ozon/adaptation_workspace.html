@@ -477,10 +477,17 @@ function applyCategoryTypeSelection(sel) {
 }
 
 function renderSelectedCategory(d, sel) {
+  var dcid = d.ozon_category_id||sel.description_category_id||'';
+  var tid = d.type_id||sel.type_id||'';
+  var nameCn = d.type_name_cn||sel.type_name_cn||sel.name_cn||sel.type_name||'';
+  window.__adaptationDcid = dcid;
+  window.__adaptationTypeId = tid;
   var info = document.getElementById('selectedCategoryInfo');
   info.classList.remove('d-none');
-  document.getElementById('catPathDisplay').textContent = sel.type_name || d.type_name_cn || '';
-  document.getElementById('catIdDisplay').textContent = 'dcid='+(d.ozon_category_id||sel.description_category_id)+' type_id='+(d.type_id||sel.type_id);
+  document.getElementById('catPathDisplay').textContent = nameCn;
+  document.getElementById('catIdDisplay').textContent = 'dcid='+dcid+' type_id='+tid;
+  var sti = document.getElementById('selectedTypeInfo');
+  if(sti) sti.innerHTML = '已选: '+escapeHtml(nameCn)+' <code>'+tid+'</code>';
 }
 
 function loadAttributeForm(dcid, typeId, savedAttrs) {
@@ -532,12 +539,26 @@ function recommendCategory(){
   fetch('/ozon/api/adaptation/{{ group.id }}/recommend-category',{method:'POST',headers:{'Accept':'application/json'}})
   .then(r=>r.json()).then(d=>{
     if(!d.ok||!d.categories||!d.categories.length){ alert('未找到匹配类目'); return; }
-    var c=d.categories[0];
-    applyCategoryTypeSelection({
-      description_category_id: c.description_category_id||c.category_id||'',
-      type_id: c.type_id, type_name: c.type_name_cn||c.type_name||c.name_ru||'',
-      path: c.path||'', source: c.source||'recommend'
+    var cats=d.categories, h='';
+    cats.forEach(function(c,i){
+      var name = c.type_name_cn||c.name_ru||c.name||'';
+      var conf = Math.round((c.confidence||0)*100);
+      var reason = c.reason||'';
+      var auto = c.confidence>=0.95 && c.source==='source_collected';
+      h += '<div class="border rounded p-1 mb-1" style="font-size:10px">';
+      h += '<b>'+(i+1)+'. '+escapeHtml(name)+'</b> <span class="badge bg-'+(auto?'success':(conf>70?'info':'warning'))+'">'+conf+'%</span><br>';
+      h += '<small class="text-muted">'+escapeHtml(reason)+'</small><br>';
+      h += '<small>dcid='+(c.description_category_id||'')+' type_id='+(c.type_id||'')+'</small> ';
+      h += '<button class="btn btn-sm btn-outline-primary" style="font-size:9px;padding:1px 4px" onclick="applyRecommend('+i+')">选择此项</button>';
+      h += '</div>';
     });
+    window.__recommendList = cats;
+    showModal('推荐类目 ('+cats.length+'个)', h+'<button class="btn btn-sm btn-secondary mt-1" onclick="closeAutoFillModal()">取消</button>');
+  }
+  function applyRecommend(idx){
+    var c = window.__recommendList[idx];
+    applyCategoryTypeSelection({description_category_id:c.description_category_id||c.category_id||'',type_id:c.type_id,type_name:c.type_name_cn||c.type_name||c.name_ru||'',path:c.path||'',source:c.source||'recommend'});
+    closeAutoFillModal();
   }).catch(e=>alert('推荐失败: '+e.message))
   .finally(function(){btn.disabled=false;btn.textContent='🤖 推荐类目';});
 }
