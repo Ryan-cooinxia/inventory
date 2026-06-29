@@ -325,10 +325,13 @@
       } catch(e) {}
       // 自动识别成功
       if (pricing && pricing.reference_price_rub) {
-        var p = pricing.reference_price_rub;
         if (!window.__ozonExtractedData) window.__ozonExtractedData = {};
         window.__ozonExtractedData.pricing = pricing;
-        if (st) st.innerHTML = '<span style="color:#198754;">✅ 价格已识别: ' + p + ' RUB（点击"一键采集"提交入库）</span>';
+        var ref = pricing.reference_price_rub;
+        var cur = pricing.current_price_rub;
+        var msg = '✅ 参考价: ' + ref + ' RUB';
+        if (cur && cur !== ref) msg += ' | 促销价: ' + cur + ' RUB';
+        if (st) st.innerHTML = '<span style="color:#198754;">' + msg + '（点击"一键采集"提交入库）</span>';
         return;
       }
       // 自动失败 → 手动输入兜底
@@ -3590,22 +3593,61 @@ function scrapeRichTextBySelection() {
   }
 
   
-  // ── OZON 价格提取（最终版：Unicode安全 + 全页面扫描）──
+  // ── OZON 价格提取（双价：current_price_rub绿色现价 + reference_price_rub灰色参考价）──
   function extractOzonPricing(stateData) {
     var RUB = '₽';
-    var result = { reference_price_rub: null, currency: 'RUB', source: '', confidence: 'low', price_candidates: [] };
+    var result = { reference_price_rub: null, current_price_rub: null, currency: 'RUB', source: '', confidence: 'low', price_candidates: [] };
     var seen = {};
 
-    function add(p, src, conf, text) {
-      if (!p || !isFinite(p) || p < 100 || seen[p]) return;
+    // 每个候选带元数据
+    function add(p, src, text, meta) {
+      if (!p || !isFinite(p) || p < 100 || p > 10000000 || seen[p]) return;
       seen[p] = true;
-      result.price_candidates.push({ price: p, currency: 'RUB', source: src, confidence: conf || 'low', text: (text||'').slice(0,200) });
+      meta = meta || {};
+      result.price_candidates.push({
+        price: p, currency: 'RUB', source: src,
+        text: (text||'').slice(0,200),
+        isRight: meta.isRight || false,
+        isLarge: meta.isLarge || false,
+        isGreen: meta.isGreen || false,
+        isLineThrough: meta.isLineThrough || false,
+        hasTax: meta.hasTax || false,
+        hasFrom: meta.hasFrom || false,
+        parentText: (meta.parentText || '').slice(0,300)
+      });
     }
 
-    function pickBest() {
-      result.price_candidates.sort(function(a,b){ return (b.confidence==='high'?1:0) - (a.confidence==='high'?1:0) || b.price - a.price; });
-      var best = result.price_candidates[0];
-      if (best) { result.reference_price_rub = best.price; result.source = best.source; result.confidence = best.confidence; }
+    function pickTwo() {
+      var cands = result.price_candidates.filter(function(c) {
+        return !c.hasTax && !c.hasFrom; // 排除关税/运费/от
+      });
+
+      // 右侧大号优先
+      var main = cands.filter(function(c) { return c.isRight && c.isLarge; });
+      if (!main.length) main = cands.filter(function(c) { return c.isRight; });
+      if (!main.length) main = cands;
+
+      // 按位置/字号排序
+      main.sort(function(a,b) { return (b.isLarge?1:0)-(a.isLarge?1:0) || (b.isRight?1:0)-(a.isRight?1:0); });
+      var primary = main[0];
+      if (!primary) return;
+
+      // current_price_rub = 绿色价（通常较低）
+      // reference_price_rub = 灰色/划线价（通常较高，卖家原价）
+      var greenCands = main.filter(function(c) { return c.isGreen; });
+      greenCands.sort(function(a,b) { return a.price - b.price; });
+
+      var currentP = greenCands.length > 0 ? greenCands[0] : primary;
+      result.current_price_rub = currentP.price;
+
+      // 参考价：同一区域内比当前价高的最近价格
+      var refCands = main.filter(function(c) {
+        return c.price > currentP.price && c.price / currentP.price < 3;
+      });
+      refCands.sort(function(a,b) { return a.price - b.price; });
+      result.reference_price_rub = refCands.length > 0 ? refCands[0].price : currentP.price;
+      result.source = 'ozon_price_card';
+      result.confidence = main.length >= 2 ? 'high' : 'medium';
     }
 
     // ★ 扫描所有含 RUB 的文本节点
@@ -3614,12 +3656,10 @@ function scrapeRichTextBySelection() {
       var el = allNodes[i];
       if (el.children && el.children.length > 0) continue;
       var t = (el.textContent||'').trim();
-      if (t.length > 45) continue;
+      if (t.length > 50) continue;
       if (!new RegExp(RUB).test(t) && !/руб/i.test(t) && !/RUB/i.test(t)) continue;
 
-      // 清洗：统一所有特殊空白为普通空格
       var clean = t.replace(/[\s    -‏]/g, ' ').replace(/\s+/g,' ').trim();
-      // 提取所有4+位数字
       var nums = [];
       var m, rx = /(\d[\d\s]*\d)/g;
       while ((m = rx.exec(clean)) !== null) {
@@ -3627,24 +3667,24 @@ function scrapeRichTextBySelection() {
         var v = parseInt(raw, 10);
         if (v > 100 && v < 10000000) nums.push(v);
       }
-
       if (!nums.length) continue;
 
-      // 确定置信度
       var rect = el.getBoundingClientRect ? el.getBoundingClientRect() : {};
-      var conf = 'medium';
-      var bestNum = nums[nums.length - 1]; // 最后一个数字通常是主要价格
+      var meta = { isRight: rect.left > window.innerWidth * 0.45, isLarge: false, isGreen: false, isLineThrough: false, hasTax: false, hasFrom: false };
+      var ptext = el.parentElement ? (el.parentElement.textContent||'') : '';
 
-      // 右侧价格 widget 区 -> high
-      if (rect.left > window.innerWidth * 0.45 && rect.top < window.innerHeight * 0.7) conf = 'high';
-      // 大字号 -> high
-      try { var fs = parseFloat(window.getComputedStyle(el).fontSize); if (fs > 22) conf = 'high'; } catch(e) {}
+      try {
+        var sty = window.getComputedStyle(el);
+        meta.isLarge = parseFloat(sty.fontSize) > 22;
+        var c = sty.color || '';
+        meta.isGreen = /rgb\(\s*(0|4[5-9]|[5-9]\d|1\d{2}),\s*(1[2-9]\d|[2-9]\d{2})/.test(c) || c.indexOf('rgb(0,') >= 0;
+        meta.isLineThrough = (sty.textDecoration||'').indexOf('line-through') >= 0;
+      } catch(e) {}
+      meta.hasTax = /пошлин|налог|доставк|сбор/i.test(ptext);
+      meta.hasFrom = /от\s+\d/i.test(ptext);
 
-      add(bestNum, 'dom_rub_scan', conf, clean);
-
-      // 如果有多个价格（如原价+折扣价），都记录
       for (var ni = 0; ni < nums.length; ni++) {
-        if (nums[ni] !== bestNum) add(nums[ni], 'dom_rub_extra', 'low', clean);
+        add(nums[ni], 'dom_rub_scan', clean, meta);
       }
     }
 
@@ -3654,7 +3694,7 @@ function scrapeRichTextBySelection() {
       var brx = new RegExp('(\\d[\\d\\s]{2,})\\s*[' + RUB + ']', 'g'), bm;
       while ((bm = brx.exec(body)) !== null) {
         var bv = parseInt(bm[1].replace(/\s/g, ''), 10);
-        if (bv > 100) add(bv, 'body_fallback', 'low', bm[0]);
+        if (bv > 100) add(bv, 'body_fallback', bm[0], {});
       }
     }
 
@@ -3671,7 +3711,7 @@ function scrapeRichTextBySelection() {
       });
     }
 
-    pickBest();
+    pickTwo();
     return result;
   }
 

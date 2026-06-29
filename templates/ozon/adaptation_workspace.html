@@ -45,8 +45,10 @@
         <div class="mb-2">
           <span class="text-muted">OZON参考售价：</span>
           {% if pricing and pricing.reference_price_rub %}
-          <span class="text-danger">₽{{ '{:,.0f}'.format(pricing.reference_price_rub) }}</span>
-          <small class="text-muted">（非采购价）</small>
+          <span class="text-danger fw-bold">₽{{ '{:,.0f}'.format(pricing.reference_price_rub) }}</span>
+          {% if pricing.current_price_rub and pricing.current_price_rub != pricing.reference_price_rub %}
+          <small class="text-muted ms-1">（促销价 ₽{{ '{:,.0f}'.format(pricing.current_price_rub) }}）</small>
+          {% endif %}
           <button class="btn btn-sm btn-outline-warning" style="font-size:9px;padding:1px 4px;margin-left:4px" onclick="editReferencePrice({{ source.id }})" title="修改参考售价">✏️ 修改</button>
           {% else %}
           <span class="text-warning">未识别</span>

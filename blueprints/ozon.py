@@ -2196,26 +2196,30 @@ def api_update_reference_price(source_id):
         return jsonify({'ok': False, 'error': '来源不存在'}), 404
 
     data = request.get_json(silent=True) or {}
-    price = data.get('reference_price_rub')
-    try: price = int(price)
-    except: return jsonify({'ok': False, 'error': '无效价格'}), 400
-    if price < 100 or price > 10000000:
-        return jsonify({'ok': False, 'error': '价格超出范围'}), 400
+    ref_price = data.get('reference_price_rub')
+    cur_price = data.get('current_price_rub')
+    try: ref_price = int(ref_price) if ref_price else None
+    except: return jsonify({'ok': False, 'error': '无效参考售价'}), 400
+    try: cur_price = int(cur_price) if cur_price else None
+    except: cur_price = None
+    if not ref_price or ref_price < 100 or ref_price > 10000000:
+        return jsonify({'ok': False, 'error': '参考售价超出范围'}), 400
 
     raw = {}
     try: raw = json.loads(source.raw_json or '{}')
     except: raw = {}
 
     pricing = raw.get('pricing') or {}
-    pricing['reference_price_rub'] = price
+    pricing['reference_price_rub'] = ref_price
+    pricing['current_price_rub'] = cur_price or ref_price
     pricing['currency'] = 'RUB'
-    pricing['source'] = 'manual'
+    pricing['source'] = data.get('source') or 'manual'
     pricing['confirmed'] = True
     raw['pricing'] = pricing
     source.raw_json = json.dumps(raw, ensure_ascii=False)
     source.save()
 
-    return jsonify({'ok': True, 'reference_price_rub': price, 'message': '参考售价已更新'})
+    return jsonify({'ok': True, 'reference_price_rub': ref_price, 'current_price_rub': cur_price, 'message': '参考售价已更新'})
 
 
 @ozon_bp.route('/api/source-media/<int:source_id>/upload', methods=['POST'])
