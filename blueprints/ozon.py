@@ -4659,30 +4659,31 @@ def api_recommend_category(group_id):
         ACCESSORY_WORDS = ['аксессуар','кнопка','видоискатель','картридж','объектив','адаптер','переходник','чехол','крепление','защит','пленк','фильтр','держател','кронштейн','штатив','крышка','заглушка','ремень','сумка','кейс','насадк','переходн','адаптер','пульт','аккумулятор отдел','зарядн устройств','блок питан','кабель','провод','переходник','вспышк','диффузор','отражатель','софтбокс','направляющ','салазк','площадк','креплени','рукоятк','крышк','линз','фильтр','блютус','bluetooth','пульт','спуск']
         all_confs = list(set(confs + ACCESSORY_WORDS))
 
-        # 1. 先在类目树中找匹配路径
-        cat_candidates = list(OzonCategory.select().where(
-            (OzonCategory.user == current_user) &
-            ((OzonCategory.name_cn.contains(tkw[0])) if tkw else False) |
-            ((OzonCategory.name.contains(tkw[0])) if tkw else False) |
-            ((OzonCategory.path.contains(tkw[0])) if tkw else False)
-        ).limit(30))
-        # 如果第一个keyword没结果，尝试其他
-        if not cat_candidates and len(tkw) > 1:
-            for kw in tkw[1:]:
-                cat_candidates = list(OzonCategory.select().where(
-                    (OzonCategory.user == current_user) &
-                    ((OzonCategory.name_cn.contains(kw)) | (OzonCategory.name.contains(kw)) | (OzonCategory.path.contains(kw)))
-                ).limit(30))
-                if cat_candidates: break
+        # 1. 先在类目树中找匹配路径（Peewee用 ** 或 % 做LIKE）
+        cat_candidates = []
+        for kw in tkw[:5]:
+            if not kw: continue
+            pattern = '%' + kw + '%'
+            cats = list(OzonCategory.select().where(
+                (OzonCategory.user == current_user) &
+                ((OzonCategory.name_cn ** pattern) | (OzonCategory.name ** pattern) | (OzonCategory.path ** pattern))
+            ).limit(30))
+            for c in cats:
+                if c not in cat_candidates: cat_candidates.append(c)
+            if len(cat_candidates) >= 5: break
 
-        # 2. 优先在匹配类目下找type
+        # 2. 优先在匹配类目下找type；找不到类目→不推荐(不fallback全局搜索)
         cat_dcids = [c.ozon_category_id for c in cat_candidates if c.ozon_category_id]
-        type_query = OzonCategoryType.select().where(OzonCategoryType.user == current_user)
         if cat_dcids:
-            type_query = type_query.where(OzonCategoryType.description_category_id.in_(cat_dcids[:50]))
+            types = list(OzonCategoryType.select().where(
+                (OzonCategoryType.user == current_user) &
+                (OzonCategoryType.description_category_id.in_(cat_dcids[:50]))
+            ).order_by(OzonCategoryType.last_synced_at.desc()))
         else:
-            type_query = type_query.limit(500)  # fallback: all types
-        types = list(type_query.order_by(OzonCategoryType.last_synced_at.desc()))
+            # 无匹配类目树→不推荐(让用户手动选择或同步类目)
+            types = []
+            if not recommendations:
+                diagnostics.append(f'识别为{pk}({product_info.get("kind_cn","")}),本地类目树无匹配节点(请先同步对应类目树)')
 
         # 3. 匹配+冲突过滤
         matched = []
@@ -4758,7 +4759,11 @@ def api_recommend_category(group_id):
             score = sum(1 for w in words if len(w)>2 and w in tn)
             if score > 0: seen.add(tn); recommendations.append(_make_rec(t.description_category_id,t.type_id,t.type_name or '',t.type_name_cn or '',t.path or '',min(score/max(len(words),1),0.4),'keyword_fallback','关键词兜底,建议确认'))
 
+    # 过滤低置信度(<0.6不推荐)
+    recommendations = [r for r in recommendations if r['confidence'] >= 0.6]
     recommendations.sort(key=lambda x: -x['confidence'])
+    if not recommendations and pk:
+        diagnostics.append(f'识别为{pk}({product_info.get("kind_cn","")}),无高置信度匹配(≥60%),请从类目树手动选择')
     return jsonify({"ok":True,"categories":recommendations[:5],"count":len(recommendations),"diagnostics":diagnostics,"product_info":product_info})
 
 
