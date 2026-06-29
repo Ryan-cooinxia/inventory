@@ -4654,12 +4654,40 @@ def api_recommend_category(group_id):
         rule = CATEGORY_RULES.get(pk, {})
         tkw, confs = rule.get('target_kw',[]), rule.get('conflicts',[])
         skw = rule.get('strong_kw', tkw)
-        # HARD_CONFLICTS: only truly wrong categories, accessories allowed in fallback
-        HARD_CONFLICTS = ['микрофон','microphon','麦克风','话筒','наушник','headphon','耳机','вспышк','flash','闪光','синхронизатор','同步器','adult','成人']
-        all_confs = list(set(HARD_CONFLICTS))
+        # 按产品类型动态冲突词：当前品类自己不能是冲突词
+        CONFLICTS_BY_KIND = {
+            'action_camera': ['микрофон','microphon','麦克风','话筒','наушник','耳机','вспышк','闪光','синхронизатор','同步器'],
+            'microphone': ['экшн камер','action camera','运动相机','вспышк','闪光','синхронизатор','объектив','镜头','адаптер','наушник','耳机'],
+            'camera': ['микрофон','麦克风','наушник','耳机'],
+            'headphones': ['экшн камер','运动相机','микрофон','麦克风','вспышк','闪光'],
+            'drone': ['микрофон','麦克风','наушник','耳机'],
+        }
+        all_confs = list(set(CONFLICTS_BY_KIND.get(pk, []) + ['adult','成人']))
 
-        # 本地类目树路径映射：识别结果→从哪里找type
-        TREE_PATH_MAP = {
+        # ★ P1.1: 精确type匹配（品类自带的关键词直接找type）
+        EXACT_KW = {'microphone': ['микрофон','микрофоны','microphon','麦克风','话筒'],
+                    'action_camera': ['экшн камер','экшн-камер','action camera','运动相机','运动摄像'],
+                    'headphones': ['наушник','headphon','耳机'],
+                    'camera': ['камера','видеокамера','相机'],'drone': ['квадрокоптер','дрон','drone','无人机']}
+        exact_kws = EXACT_KW.get(pk, tkw[:3])
+        exact_matched = []
+        all_types = list(OzonCategoryType.select().where(OzonCategoryType.user == current_user).order_by(OzonCategoryType.last_synced_at.desc()).limit(500))
+        for t in all_types:
+            tn = _norm((t.type_name_cn or '') + ' ' + (t.type_name or ''))
+            if any(kw in tn for kw in all_confs): continue
+            score = sum(1 for k in exact_kws if _norm(k) in tn)
+            if score > 0: exact_matched.append((t, score))
+        exact_matched.sort(key=lambda x: -x[1])
+        for t, s in exact_matched[:3]:
+            rec_name = t.type_name_cn or t.type_name
+            path = t.path or ''
+            cat_node = OzonCategory.get_or_none((OzonCategory.user == current_user) & (OzonCategory.ozon_category_id == t.description_category_id))
+            if cat_node and cat_node.path: path = cat_node.path + ' > ' + rec_name
+            recommendations.append(_make_rec(t.description_category_id,t.type_id,t.type_name or '',t.type_name_cn or '',path,0.95,'exact_type_match',f'系统识别为{product_info["kind_cn"]},精确匹配type: {rec_name}',product_info.get('evidence',[])))
+
+        # 本地类目树路径映射：识别结果→从哪里找type（精确匹配没结果时用）
+        if not recommendations:
+            TREE_PATH_MAP = {
             'action_camera': {
                 'preferred_paths': [['электроник','фото','видео'],['электроник','камер'],['электроник','фотоаппарат'],['фото','видео'],['камер','аксессуар']],
                 'fallback_note': '本地无运动相机类目,按最接近的摄影摄像配件路径推荐'
@@ -4753,9 +4781,15 @@ def api_recommend_category(group_id):
         skw = rule.get('strong_kw', tkw)
 
         # 新增配件冲突词 — 运动相机绝不推荐相机配件
-        # HARD_CONFLICTS: only truly wrong categories, accessories allowed in fallback
-        HARD_CONFLICTS = ['микрофон','microphon','麦克风','话筒','наушник','headphon','耳机','вспышк','flash','闪光','синхронизатор','同步器','adult','成人']
-        all_confs = list(set(HARD_CONFLICTS))
+        # 按产品类型动态冲突词：当前品类自己不能是冲突词
+        CONFLICTS_BY_KIND = {
+            'action_camera': ['микрофон','microphon','麦克风','话筒','наушник','耳机','вспышк','闪光','синхронизатор','同步器'],
+            'microphone': ['экшн камер','action camera','运动相机','вспышк','闪光','синхронизатор','объектив','镜头','адаптер','наушник','耳机'],
+            'camera': ['микрофон','麦克风','наушник','耳机'],
+            'headphones': ['экшн камер','运动相机','микрофон','麦克风','вспышк','闪光'],
+            'drone': ['микрофон','麦克风','наушник','耳机'],
+        }
+        all_confs = list(set(CONFLICTS_BY_KIND.get(pk, []) + ['adult','成人']))
 
         # 1. 先在类目树中找匹配路径（Peewee用 ** 或 % 做LIKE）
         cat_candidates = []
