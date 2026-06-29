@@ -4599,67 +4599,86 @@ def api_adaptation_auto_fill_apply(group_id):
 @ozon_bp.route("/api/adaptation/<int:group_id>/recommend-category", methods=["POST"])
 @login_required
 def api_recommend_category(group_id):
-    """推荐 OZON 类目（从标题/属性匹配已缓存的类目树）"""
+    """推荐 OZON 类目（P0:源采集类目 > P1:当前已选 > P2:源属性 > P3:关键词兜底）"""
     group = SourceProductGroup.get_or_none((SourceProductGroup.id == group_id) & (SourceProductGroup.user == current_user))
     if not group: return jsonify({"ok": False, "error": "任务组不存在"}), 404
     fact = ProductFact.get_or_none((ProductFact.user == current_user) & (ProductFact.group == group))
-    title = (fact.standard_name_cn if fact else '') or ''
-    ptype = (fact.product_type if fact else '') or ''
-    search = (ptype + ' ' + title).lower()
-    # 方案1：从已同步的 OzonCategoryType 中匹配（用户已同步的类型数据）
-    types = list(OzonCategoryType.select().where(
-        (OzonCategoryType.user == current_user)
-    ).order_by(OzonCategoryType.last_synced_at.desc()).limit(200))
-    matches = []
-    seen = set()
-    if types:
+    item = SourceProductGroupItem.get_or_none((SourceProductGroupItem.user == current_user) & (SourceProductGroupItem.group == group))
+    source = item.source if item else None
+    raw = {}
+    if source:
+        try: raw = json.loads(source.raw_json or '{}')
+        except: raw = {}
+
+    recommendations = []
+    MIC_KEYWORDS = ['микрофон','microphone','mic','麦克风','话筒']
+
+    def _make_rec(dcid, tid, tname_ru, tname_cn, path, conf, src, reason, evidence=None):
+        return {'description_category_id': dcid, 'type_id': tid, 'type_name_ru': tname_ru, 'type_name_cn': tname_cn, 'path': path or '', 'confidence': conf, 'source': src, 'reason': reason, 'evidence': evidence or []}
+
+    # ★ P0: 源采集类目
+    src_dcid = raw.get('description_category_id') or raw.get('ozon_category_id') or raw.get('category_id') or ''
+    src_tid = raw.get('type_id') or ''
+    if src_dcid and src_tid:
+        trec = OzonCategoryType.get_or_none((OzonCategoryType.user == current_user) & (OzonCategoryType.description_category_id == src_dcid) & (OzonCategoryType.type_id == src_tid))
+        if trec:
+            recommendations.append(_make_rec(src_dcid, src_tid, trec.type_name or '', trec.type_name_cn or '', trec.path or '', 1.0, 'source_collected_category', '优先采用源商品采集时的OZON类目/type', ['源商品来自OZON平台,采集时已包含类目信息']))
+
+    # ★ P1: 当前已选
+    adaptation = ListingAdaptation.get_or_none((ListingAdaptation.user == current_user) & (ListingAdaptation.fact == fact)) if fact else None
+    if adaptation and adaptation.type_id and not recommendations:
+        trec = OzonCategoryType.get_or_none((OzonCategoryType.user == current_user) & (OzonCategoryType.description_category_id == adaptation.ozon_category_id) & (OzonCategoryType.type_id == adaptation.type_id))
+        if trec:
+            src = 'manual' if adaptation.attribute_mapping_json else 'existing_selection'
+            recommendations.append(_make_rec(adaptation.ozon_category_id, adaptation.type_id, trec.type_name or '', trec.type_name_cn or '', trec.path or '', 0.95, src, '当前已选择的类目/type'))
+
+    # ★ P2: 源属性 + 标题关键词 → 找出产品类别
+    src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
+    product_cat = ''
+    for sa in src_attrs:
+        n = (sa.get('name') or sa.get('key') or '').lower()
+        v = str(sa.get('value') or sa.get('text') or '').lower()
+        for kw in MIC_KEYWORDS:
+            if kw in n or kw in v: product_cat = 'microphone'; break
+        if product_cat: break
+    if not product_cat and fact:
+        search = ((fact.product_type or '') + ' ' + (fact.standard_name_cn or '') + ' ' + (source.title_cn if source else '')).lower()
+        for kw in MIC_KEYWORDS:
+            if kw in search: product_cat = 'microphone'; break
+
+    # ★ P3: 关键词兜底
+    if not recommendations and product_cat:
+        search = 'микрофон'
+        types = list(OzonCategoryType.select().where(OzonCategoryType.user == current_user).order_by(OzonCategoryType.last_synced_at.desc()).limit(500))
+        best = None
         for t in types:
-            name = (t.type_name or '').lower()
-            score = 0
-            for w in search.split():
-                if w in name: score += 1
-            if score > 0 and name not in seen:
-                seen.add(name)
-                matches.append({
-                    'category_id': t.description_category_id,
-                    'type_id': t.type_id,
-                    'name_ru': t.type_name or '',
-                    'name_cn': t.type_name_cn or '',
-                    'path': t.path or '',
-                    'confidence': min(score / max(len(search.split()), 1), 0.95),
-                    'source': 'category_type'
-                })
+            n = (t.type_name_cn or t.type_name or '').lower()
+            if any(kw in n for kw in MIC_KEYWORDS):
+                if not best or t.last_synced_at > (best.last_synced_at if best else None):
+                    best = t
+        if best:
+            evidence = []
+            for sa in src_attrs[:5]:
+                n = (sa.get('name') or sa.get('key') or '')
+                v = sa.get('value') or sa.get('text') or ''
+                if any(kw in str(n).lower() for kw in MIC_KEYWORDS):
+                    evidence.append(f'源属性: {n}={v}')
+            recommendations.append(_make_rec(best.description_category_id, best.type_id, best.type_name or '', best.type_name_cn or '', best.path or '', 0.85, 'keyword_match_filtered', '源属性+标题均指向麦克风,优先匹配麦克风类目', evidence))
 
-    # 方案2：从 OzonCategory 类目树匹配
-    if not matches:
-        cats = list(OzonCategory.select().where(
-            (OzonCategory.user == current_user) & (OzonCategory.is_leaf == True)
-        ).order_by(OzonCategory.id).limit(200))
-        if cats:
-            for c in cats:
-                name = (c.name or '').lower()
-                score = 0
-                for w in search.split():
-                    if w in name: score += 1
-                if score > 0:
-                    matches.append({'category_id': c.ozon_category_id, 'name_ru': c.name or '', 'confidence': min(score / max(len(search.split()), 1), 0.95), 'source': 'category_tree'})
+    # ★ P4: 通用关键词兜底（去重+低置信）
+    if not recommendations:
+        search = ((fact.product_type if fact else '') + ' ' + (fact.standard_name_cn if fact else '') + ' ' + (source.title_cn if source else '')).lower()
+        types = list(OzonCategoryType.select().where(OzonCategoryType.user == current_user).order_by(OzonCategoryType.last_synced_at.desc()).limit(300))
+        seen = set()
+        for t in types:
+            n = (t.type_name_cn or t.type_name or '').lower()
+            score = sum(1 for w in search.split() if w in n)
+            if score > 0 and n not in seen:
+                seen.add(n)
+                recommendations.append(_make_rec(t.description_category_id, t.type_id, t.type_name or '', t.type_name_cn or '', t.path or '', min(score/max(len(search.split()),1),0.6), 'keyword_match', '关键词匹配兜底'))
 
-    # 方案3：属性关键词推断兜底
-    if not matches:
-        attr_map = {
-            'видеокамера': ('Фото и видеокамеры', 'Электроника > Фото и видеокамеры > Экшн-камеры'),
-            'экшн-камера': ('Экшн-камеры', 'Электроника > Фото и видеокамеры > Экшн-камеры'),
-            'микрофон': ('Микрофоны', 'Электроника > Аудиотехника > Микрофоны'),
-            'видеоскопатель': ('Аксессуары для камер', 'Электроника > Фото и видеокамеры > Аксессуары'),
-            'наушники': ('Наушники', 'Электроника > Аудиотехника > Наушники'),
-            'аксессуар': ('Аксессуары', 'Электроника > Аксессуары'),
-        }
-        for kw, (name, path) in attr_map.items():
-            if kw in search:
-                matches.append({'category_id': kw, 'name_ru': name, 'path': path, 'confidence': 0.7, 'source': 'attribute_inference'})
-
-    matches.sort(key=lambda x: -x['confidence'])
-    return jsonify({"ok": True, "categories": matches[:5], "count": len(matches)})
+    recommendations.sort(key=lambda x: -x['confidence'])
+    return jsonify({"ok": True, "categories": recommendations[:5], "count": len(recommendations)})
 
 
 @ozon_bp.route('/api/adaptation/<int:group_id>/relation', methods=['POST'])
