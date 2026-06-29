@@ -483,7 +483,7 @@ function renderSelectedCategory(d, sel) {
   document.getElementById('catIdDisplay').textContent = 'dcid='+(d.ozon_category_id||sel.description_category_id)+' type_id='+(d.type_id||sel.type_id);
 }
 
-function loadAttributeForm(dcid, typeId) {
+function loadAttributeForm(dcid, typeId, savedAttrs) {
   var section = document.getElementById('attributeFormSection');
   var panel = document.getElementById('attributeForm');
   section.classList.remove('d-none');
@@ -491,29 +491,55 @@ function loadAttributeForm(dcid, typeId) {
   fetch('/ozon/api/category/'+encodeURIComponent(dcid)+'/get-attributes?type_id='+encodeURIComponent(typeId))
   .then(r=>r.json()).then(d=>{
     if(!d.ok||!d.attrs||!d.attrs.length){ panel.innerHTML='<div class="alert alert-warning py-2 mb-0">暂无属性，请点击同步属性</div>'; return; }
-    renderAttributeForm(d.attrs);
+    renderAttributeForm(d.attrs, savedAttrs||window.__savedAttrs||{});
   }).catch(e=>{ panel.innerHTML='<div class="text-danger p-2">加载失败: '+e.message+'</div>'; });
 }
 
-function renderAttributeForm(attrs) {
+function renderAttributeForm(attrs, savedAttrs) {
+  savedAttrs = savedAttrs || {};
   var h='';
   attrs.forEach(function(a){
+    var aid = String(a.attribute_id);
+    var sv = savedAttrs[aid] || {};
+    var sVal = typeof sv==='object' ? (sv.value||'') : String(sv||'');
+    var sVid = typeof sv==='object' ? (sv.value_id||'') : '';
     var name = a.name_cn || a.name || a.attribute_id;
     var req = a.is_required ? ' <span class="text-danger">*</span>' : '';
     h += '<div class="mb-1"><label style="font-size:10px">'+name+req+'</label>';
     if (a.is_dictionary && a.values && a.values.length) {
-      h += '<select class="form-select form-select-sm attr-input" data-attr-id="'+a.attribute_id+'" style="font-size:10px">';
+      h += '<select class="form-select form-select-sm attr-input" data-attr-id="'+aid+'" style="font-size:10px">';
       h += '<option value="">--</option>';
-      a.values.forEach(function(v){ h += '<option value="'+v.value_id+'">'+(v.value_cn||v.value)+'</option>'; });
+      a.values.forEach(function(v){
+        var sel = (String(v.value_id)===String(sVid)||String(v.value)===String(sVal)) ? ' selected' : '';
+        h += '<option value="'+v.value_id+'"'+sel+'>'+(v.value_cn||v.value)+'</option>';
+      });
       h += '</select>';
     } else if (a.is_boolean) {
-      h += '<input type="checkbox" class="form-check-input attr-input" data-attr-id="'+a.attribute_id+'">';
+      h += '<input type="checkbox" class="form-check-input attr-input" data-attr-id="'+aid+'"'+(sVal?' checked':'')+'>';
     } else {
-      h += '<input class="form-control form-control-sm attr-input" data-attr-id="'+a.attribute_id+'" style="font-size:10px">';
+      h += '<input class="form-control form-control-sm attr-input" data-attr-id="'+aid+'" value="'+escapeHtml(sVal)+'" style="font-size:10px">';
     }
     h += '</div>';
   });
   document.getElementById('attributeForm').innerHTML = h;
+}
+
+// 推荐类目
+function recommendCategory(){
+  var btn = document.getElementById('btnRecommendCat');
+  if(!btn||btn.disabled) return;
+  btn.disabled=true; btn.textContent='分析中...';
+  fetch('/ozon/api/adaptation/{{ group.id }}/recommend-category',{method:'POST',headers:{'Accept':'application/json'}})
+  .then(r=>r.json()).then(d=>{
+    if(!d.ok||!d.categories||!d.categories.length){ alert('未找到匹配类目'); return; }
+    var c=d.categories[0];
+    applyCategoryTypeSelection({
+      description_category_id: c.description_category_id||c.category_id||'',
+      type_id: c.type_id, type_name: c.type_name_cn||c.type_name||c.name_ru||'',
+      path: c.path||'', source: c.source||'recommend'
+    });
+  }).catch(e=>alert('推荐失败: '+e.message))
+  .finally(function(){btn.disabled=false;btn.textContent='🤖 推荐类目';});
 }
 
 function saveAttributes() {
@@ -599,7 +625,12 @@ function applyAutoFill(){
   fetch('/ozon/api/adaptation/{{ group.id }}/auto-fill-apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
   .then(r=>r.json()).then(d=>{
     if(!d.ok) throw new Error(d.error);
-    alert('✅ 已应用 '+d.filled_count+' 项'); closeAutoFillModal(); location.reload();
+    if(d.saved_attributes) window.__savedAttrs = d.saved_attributes;
+    var msg = '✅ 已应用 '+d.filled_count+' 项';
+    if(d.not_filled_count) msg += '，'+d.not_filled_count+' 项未填写(见预览原因)';
+    alert(msg); closeAutoFillModal();
+    if(d.dcid&&d.type_id) loadAttributeForm(d.dcid, d.type_id, d.saved_attributes||{});
+    else location.reload();
   }).catch(e=>alert('应用失败: '+e.message));
 }
 

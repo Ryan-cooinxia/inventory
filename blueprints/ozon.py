@@ -4587,7 +4587,13 @@ def api_adaptation_auto_fill_apply(group_id):
         filled += 1
 
     adaptation.save()
-    return jsonify({"ok": True, "message": f"已应用 {filled} 项", "filled_count": filled})
+    saved = {}
+    if adaptation.attribute_mapping_json:
+        try: saved = json.loads(adaptation.attribute_mapping_json).get('attributes', {})
+        except: pass
+    return jsonify({"ok": True, "dcid": adaptation.ozon_category_id, "type_id": adaptation.type_id,
+                    "saved_attributes": saved, "filled_count": filled,
+                    "message": f"已应用 {filled} 项"})
 
 
 @ozon_bp.route("/api/adaptation/<int:group_id>/recommend-category", methods=["POST"])
