@@ -4283,32 +4283,19 @@ def api_ai_suggest_fact(fact_id):
     return jsonify({"ok": True, "filled_count": len(filled), "filled_fields": filled, "message": f"AI 填充了 {len(filled)} 个字段"})
 
 
-@ozon_bp.route("/api/adaptation/<int:group_id>/save-category-type", methods=["POST"])
+@ozon_bp.route("/api/adaptation/<int:group_id>/save-attributes", methods=["POST"])
 @login_required
-def api_save_adaptation_category_type(group_id):
-    """直接在适配工作台选择类目和 type 并保存"""
+def api_save_adaptation_attributes(group_id):
+    """保存适配工作的属性值"""
     group = SourceProductGroup.get_or_none((SourceProductGroup.id == group_id) & (SourceProductGroup.user == current_user))
     if not group: return jsonify({"ok": False, "error": "任务组不存在"}), 404
-    data = request.get_json(silent=True) or {}
-    cat_id = data.get('category_id', '')
-    type_id = data.get('type_id', '')
-    type_name = data.get('type_name', '')
-
     adaptation = ListingAdaptation.get_or_none((ListingAdaptation.user == current_user) & (ListingAdaptation.group == group))
-    if not adaptation:
-        fact = ProductFact.get_or_none((ProductFact.user == current_user) & (ProductFact.group == group))
-        adaptation = ListingAdaptation.create(
-            user=current_user, group=group, fact=fact,
-            ozon_category_id=cat_id, type_id=type_id,
-            category_path=type_name, status='adapting'
-        )
-    else:
-        adaptation.ozon_category_id = cat_id
-        adaptation.type_id = type_id
-        adaptation.category_path = type_name
-        adaptation.save()
-
-    return jsonify({"ok": True, "message": f"已选择: {type_name} (type_id={type_id})"})
+    if not adaptation: return jsonify({"ok": False, "error": "请先选择类目和Type"}), 400
+    data = request.get_json(silent=True) or {}
+    attrs = data.get('attributes', {})
+    adaptation.attribute_mapping_json = json.dumps({'attributes': attrs, 'type_id': adaptation.type_id}, ensure_ascii=False)
+    adaptation.save()
+    return jsonify({"ok": True, "message": f"已保存 {len(attrs)} 个属性值"})
 
 
 @ozon_bp.route("/api/adaptation/<int:group_id>/recommend-category", methods=["POST"])

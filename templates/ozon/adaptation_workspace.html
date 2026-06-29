@@ -203,48 +203,34 @@
         <div class="mb-2"><strong style="font-size:12px">📂 OZON 类目与类型</strong></div>
 
         <div class="d-flex gap-1 mb-2">
-          <select class="form-select form-select-sm flex-grow-1" id="ozonCategorySelect" onchange="onOzonCategoryChange()" style="font-size:11px">
-            <option value="">📂 选择 OZON 类目/类型...</option>
-            {% for t in adaptation_types %}
-            <option value="{{ t.type_id }}" data-cat-id="{{ t.description_category_id }}" data-name="{{ t.type_name_cn or t.type_name }}">
-              {{ t.type_name_cn or t.type_name }} ({{ t.type_id }})
-            </option>
-            {% endfor %}
-          </select>
-          <button class="btn btn-outline-success btn-sm" style="font-size:10px" id="btnRecommendCat" onclick="recommendCategory()" title="根据商品事实自动推荐匹配的 OZON 类目和 Type">
+          <button class="btn btn-outline-primary btn-sm flex-grow-1" id="btnSelectCategory" onclick="openCategoryForAdaptation()">
+            📂 选择 OZON 类目/类型
+          </button>
+          <button class="btn btn-outline-success btn-sm" style="font-size:10px" id="btnRecommendCat" onclick="recommendCategory()">
             🤖 推荐类目
           </button>
         </div>
 
-        <!-- 推荐结果 -->
-        <div id="recommendResults" class="mb-2 d-none" style="font-size:11px"></div>
-
-        <div id="selectedCategoryInfo" class="mb-2 {% if not (adaptation and adaptation.ozon_category_id) %}d-none{% endif %}" style="font-size:11px">
+        <div id="selectedCategoryInfo" class="mb-2 {% if not adaptation or not adaptation.ozon_category_id %}d-none{% endif %}" style="font-size:11px">
           <div class="d-flex justify-content-between align-items-start">
             <div>
-              <strong>已选类目:</strong> <span id="catPathDisplay">{{ adaptation.category_path if adaptation else (adaptation.ozon_category_name if adaptation else '') }}</span>
-              <code class="ms-1" id="catIdDisplay" style="font-size:9px">{{ adaptation.ozon_category_id if adaptation else '' }}</code>
+              <strong>已选:</strong> <span id="catPathDisplay">{{ adaptation.type_name_cn or adaptation.type_name_ru or adaptation.category_path or '' }}</span>
+              <code class="ms-1" id="catIdDisplay" style="font-size:9px">{% if adaptation %}dcid={{ adaptation.ozon_category_id }} type_id={{ adaptation.type_id }}{% endif %}</code>
             </div>
             <button class="btn btn-sm btn-outline-secondary" style="font-size:9px;padding:1px 4px" onclick="openCategoryForAdaptation()">更改</button>
           </div>
         </div>
 
-        <!-- Type 选择区 -->
-        <div id="typeSelectorSection" class="mb-2">
+        <!-- 属性表单区 -->
+        <div id="attributeFormSection" class="mt-2 d-none">
           <div class="d-flex justify-content-between align-items-center mb-1">
-            <strong style="font-size:11px">商品类型:</strong>
-            <button class="btn btn-sm btn-outline-warning" style="font-size:9px;padding:1px 6px" id="btnSyncTypes" onclick="syncTypesForCurrentCategory()">
-              📋 同步 type
-            </button>
+            <strong style="font-size:11px">属性字典:</strong>
+            <div>
+              <button class="btn btn-sm btn-outline-warning" style="font-size:9px;padding:1px 6px" onclick="syncAttributesForType()">📋 同步属性</button>
+              <button class="btn btn-sm btn-outline-primary" style="font-size:9px;padding:1px 6px" onclick="saveAttributes()">💾 保存</button>
+            </div>
           </div>
-          <select class="form-select form-select-sm" id="typeSelect" onchange="onTypeSelectChange()" style="font-size:11px">
-            <option value="">-- 暂未选择 type --</option>
-            {% for t in adaptation_types %}
-            <option value="{{ t.type_id }}" {% if adaptation and adaptation.type_id == t.type_id %}selected{% endif %}>
-              {{ t.type_name_cn or t.type_name }} ({{ t.type_id }})
-            </option>
-            {% endfor %}
-          </select>
+          <div id="attributeForm" class="border rounded p-1" style="max-height:300px;overflow-y:auto;font-size:10px"></div>
           <div id="selectedTypeInfo" class="mt-1" style="font-size:10px;color:#6c757d">
             {% if adaptation and adaptation.type_id %}
             已选: {{ adaptation.type_name_cn or adaptation.type_name_ru or '' }} <code>{{ adaptation.type_id }}</code>
@@ -456,6 +442,90 @@ function approveFact() {
       else alert('❌ ' + d.error);
     });
 }
+
+// ═══ 类目/Type 选择 ═══
+function openCategoryForAdaptation() {
+  // 复用已有的树形类目选择器
+  if (typeof openCategorySelector === 'function') {
+    openCategorySelector(function(sel) {
+      if (sel && sel.type_id) applyCategoryTypeSelection(sel);
+      else alert('请展开类目树并选择到具体的 type');
+    });
+  } else {
+    // 无树形组件时 → 弹出简易输入
+    var dcid = prompt('请输入 description_category_id:');
+    var tid = prompt('请输入 type_id:');
+    var tname = prompt('请输入 type 名称:');
+    if (dcid && tid) applyCategoryTypeSelection({description_category_id: dcid, type_id: tid, type_name: tname||''});
+  }
+}
+
+function applyCategoryTypeSelection(sel) {
+  fetch('/ozon/api/adaptation/{{ group.id }}/save-category-type', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({description_category_id: sel.description_category_id||sel.category_id||'', type_id: sel.type_id, type_name: sel.type_name||'', path: sel.path||'', source: sel.source||''})
+  })
+  .then(r=>r.json()).then(d=>{
+    if(!d.ok) throw new Error(d.error);
+    renderSelectedCategory(d, sel);
+    return loadAttributeForm(d.ozon_category_id||sel.description_category_id, d.type_id||sel.type_id);
+  }).catch(e=>alert('保存类目失败: '+e.message));
+}
+
+function renderSelectedCategory(d, sel) {
+  var info = document.getElementById('selectedCategoryInfo');
+  info.classList.remove('d-none');
+  document.getElementById('catPathDisplay').textContent = sel.type_name || d.type_name_cn || '';
+  document.getElementById('catIdDisplay').textContent = 'dcid='+(d.ozon_category_id||sel.description_category_id)+' type_id='+(d.type_id||sel.type_id);
+}
+
+function loadAttributeForm(dcid, typeId) {
+  var section = document.getElementById('attributeFormSection');
+  var panel = document.getElementById('attributeForm');
+  section.classList.remove('d-none');
+  panel.innerHTML = '<div class="text-muted p-2">加载属性中...</div>';
+  fetch('/ozon/api/category/'+encodeURIComponent(dcid)+'/get-attributes?type_id='+encodeURIComponent(typeId))
+  .then(r=>r.json()).then(d=>{
+    if(!d.ok||!d.attrs||!d.attrs.length){ panel.innerHTML='<div class="alert alert-warning py-2 mb-0">暂无属性，请点击同步属性</div>'; return; }
+    renderAttributeForm(d.attrs);
+  }).catch(e=>{ panel.innerHTML='<div class="text-danger p-2">加载失败: '+e.message+'</div>'; });
+}
+
+function renderAttributeForm(attrs) {
+  var h='';
+  attrs.forEach(function(a){
+    var name = a.name_cn || a.name || a.attribute_id;
+    var req = a.is_required ? ' <span class="text-danger">*</span>' : '';
+    h += '<div class="mb-1"><label style="font-size:10px">'+name+req+'</label>';
+    if (a.is_dictionary && a.values && a.values.length) {
+      h += '<select class="form-select form-select-sm attr-input" data-attr-id="'+a.attribute_id+'" style="font-size:10px">';
+      h += '<option value="">--</option>';
+      a.values.forEach(function(v){ h += '<option value="'+v.value_id+'">'+(v.value_cn||v.value)+'</option>'; });
+      h += '</select>';
+    } else if (a.is_boolean) {
+      h += '<input type="checkbox" class="form-check-input attr-input" data-attr-id="'+a.attribute_id+'">';
+    } else {
+      h += '<input class="form-control form-control-sm attr-input" data-attr-id="'+a.attribute_id+'" style="font-size:10px">';
+    }
+    h += '</div>';
+  });
+  document.getElementById('attributeForm').innerHTML = h;
+}
+
+function saveAttributes() {
+  var attrs = {};
+  document.querySelectorAll('.attr-input').forEach(function(el){
+    var id = el.dataset.attrId; if (!id) return;
+    attrs[id] = el.type==='checkbox' ? el.checked : (el.value||'');
+  });
+  fetch('/ozon/api/adaptation/{{ group.id }}/save-attributes', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({attributes:attrs})})
+  .then(r=>r.json()).then(d=>{ alert(d.message||'属性已保存'); }).catch(e=>alert('保存失败: '+e.message));
+}
+
+function syncAttributesForType() { alert('请在属性字典页面点击同步按钮'); }
+
+// 类目选择变更
+function onOzonCategoryChange(){}
 
 // 生成草稿
 function generateDraft() {
