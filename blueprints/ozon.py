@@ -5724,18 +5724,38 @@ def _collect_descendant_category_ids(parent_id, user):
 @ozon_bp.route('/api/category/children')
 @login_required
 def api_category_children():
-    """获取子类目（仅返回 OzonCategory，不返回 type 节点）"""
+    """获取子类目 + 当前类目直接挂载的 type"""
     parent_id = request.args.get('parent_id', '').strip()
     if not parent_id:
         return jsonify({'ok': False, 'error': '缺少 parent_id'}), 400
 
+    items = []
+
+    # ★ 1. 先返回当前类目直接挂载的 type
+    direct_types = (OzonCategoryType
+                    .select()
+                    .where((OzonCategoryType.user == current_user) &
+                           (OzonCategoryType.description_category_id == parent_id))
+                    .order_by(OzonCategoryType.type_name))
+    for t in direct_types:
+        items.append({
+            'id': t.type_id,
+            'name': t.type_name_cn or t.type_name or f'type_{t.type_id}',
+            'name_cn': t.type_name_cn,
+            'is_type': True,
+            'description_category_id': parent_id,
+            'has_children': False,
+            'type_count': 0,
+            'path': t.path or '',
+        })
+
+    # ★ 2. 再返回子类目
     children = (OzonCategory
                 .select()
                 .where((OzonCategory.user == current_user) &
                        (OzonCategory.parent_id == parent_id))
                 .order_by(OzonCategory.name))
 
-    items = []
     for c in children:
         if not c.ozon_category_id:
             continue
@@ -5865,17 +5885,43 @@ def api_category_search():
     if len(q) < 2:
         return jsonify({'ok': False, 'error': '至少输入2个字符'}), 400
 
+    items = []
+    seen = set()
+
+    # 1. 搜索类目
     cats = (OzonCategory
             .select()
             .where((OzonCategory.user == current_user) &
                    ((OzonCategory.name.contains(q)) |
                     (OzonCategory.name_cn.contains(q)) |
                     (OzonCategory.ozon_category_id.contains(q))))
-            .limit(50))
+            .limit(30))
+    for c in cats:
+        if not c.ozon_category_id or c.ozon_category_id in seen: continue
+        seen.add(c.ozon_category_id)
+        items.append({'id': c.ozon_category_id, 'name': c.name, 'name_cn': c.name_cn,
+                      'is_type': False, 'has_children': not c.is_leaf, 'path': c.path})
 
-    items = [{'id': c.ozon_category_id, 'name': c.name, 'name_cn': c.name_cn,
-              'has_children': not c.is_leaf, 'path': c.path}
-             for c in cats if c.ozon_category_id]
+    # 2. 搜索 type
+    types = (OzonCategoryType
+             .select()
+             .where((OzonCategoryType.user == current_user) &
+                    ((OzonCategoryType.type_name.contains(q)) |
+                     (OzonCategoryType.type_name_cn.contains(q)) |
+                     (OzonCategoryType.type_id.contains(q))))
+             .limit(30))
+    for t in types:
+        if t.type_id in seen: continue
+        seen.add(t.type_id)
+        items.append({
+            'id': t.type_id,
+            'name': t.type_name_cn or t.type_name or f'type_{t.type_id}',
+            'name_cn': t.type_name_cn,
+            'is_type': True,
+            'description_category_id': t.description_category_id,
+            'has_children': False,
+            'path': t.path or '',
+        })
 
     return jsonify({'ok': True, 'items': items})
 
