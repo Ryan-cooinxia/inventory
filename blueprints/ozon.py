@@ -4289,7 +4289,9 @@ def api_save_adaptation_attributes(group_id):
     """保存适配工作的属性值"""
     group = SourceProductGroup.get_or_none((SourceProductGroup.id == group_id) & (SourceProductGroup.user == current_user))
     if not group: return jsonify({"ok": False, "error": "任务组不存在"}), 404
-    adaptation = ListingAdaptation.get_or_none((ListingAdaptation.user == current_user) & (ListingAdaptation.group == group))
+    fact = ProductFact.get_or_none((ProductFact.user == current_user) & (ProductFact.group == group))
+    if not fact: return jsonify({"ok": False, "error": "请先保存商品事实"}), 400
+    adaptation = ListingAdaptation.get_or_none((ListingAdaptation.user == current_user) & (ListingAdaptation.fact == fact))
     if not adaptation: return jsonify({"ok": False, "error": "请先选择类目和Type"}), 400
     data = request.get_json(silent=True) or {}
     attrs = data.get('attributes', {})
