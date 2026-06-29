@@ -2356,26 +2356,61 @@ def processing_generate(source_id):
 
     draft = _get_or_create_draft(source)
 
-    # TODO: 阶段 6 接入实际 AI 生成
-    # 当前模拟 AI 生成结果
-    draft.title_ru = f"Mock Russian Title for {source.title_cn}"
-    draft.bullets_ru = json.dumps([
-        "• Подходит для ежедневного использования",
-        "• Компактный и удобный дизайн",
-        "• Высокое качество материалов",
-    ], ensure_ascii=False)
-    draft.description_ru = f"Mock Russian description for {source.title_cn}."
-    draft.ai_title_confidence = 0.82
-    draft.ai_description_confidence = 0.75
-    draft.ai_bullets_confidence = 0.78
+    # ── 从采集数据直接填草稿（OZON 源本身就是俄语）──
+    raw = {}
+    try: raw = json.loads(source.raw_json or '{}')
+    except: raw = {}
+
+    # 标题：直接使用 OZON 原始俄语标题（截取前150字符符合 OZON 规范）
+    draft.title_ru = (source.title_cn or '')[:150]
+
+    # 描述：直接使用采集的富文本 HTML（俄语原文）
+    rich_text = raw.get('rich_text') or {}
+    draft.description_ru = (rich_text.get('html') or rich_text.get('plain_text') or '')[:50000]
+    if not draft.description_ru:
+        draft.description_ru = (source.description_cn or '')[:50000]
+
+    # 卖点：从属性字典提取关键属性拼接
+    source_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
+    bullets = []
+    key_attrs = ['Тип', 'Цвет', 'Вес товара, г', 'Материал', 'Гарантия',
+                 'Страна-изготовитель', 'Размеры', 'Особенности', 'Назначение',
+                 'Бренд', 'Модель', 'Емкость аккумулятора', 'Совместимость']
+    for attr in source_attrs:
+        name = (attr.get('name') or attr.get('key') or '').strip().rstrip(',:;')
+        value = attr.get('value') or attr.get('text') or ''
+        if not name or not value: continue
+        # 匹配关键属性或直接拼接
+        for ka in key_attrs:
+            if ka.lower() in name.lower():
+                bullets.append(f"• {name}: {value}")
+                break
+    # 最少保留3条兜底
+    if len(bullets) < 3:
+        for attr in source_attrs[:8]:
+            name = (attr.get('name') or attr.get('key') or '').strip()
+            value = attr.get('value') or attr.get('text') or ''
+            if name and value:
+                b = f"• {name}: {value}"
+                if b not in bullets: bullets.append(b)
+    draft.bullets_ru = json.dumps(bullets[:8], ensure_ascii=False)
+
+    # 属性 + 定价数据
+    draft.attributes_json = json.dumps(source_attrs, ensure_ascii=False)[:8000]
+    pricing = raw.get('pricing') or {}
+    draft.pricing_json = json.dumps({
+        'reference_price_rub': pricing.get('reference_price_rub'),
+        'current_price_rub': pricing.get('current_price_rub'),
+        'currency': pricing.get('currency', 'RUB'),
+    }, ensure_ascii=False)
+
     draft.status = 'draft'
     draft.updated_at = datetime.datetime.now()
     draft.save()
 
-    # 确保有 8 个图片槽位
     _ensure_image_slots(draft)
 
-    flash('AI 内容已生成（模拟），请审核后保存', 'success')
+    flash(f'草稿已生成：标题 {len(draft.title_ru)} 字符、{len(bullets)} 条卖点、描述 {len(draft.description_ru or "")} 字符', 'success')
     return redirect(url_for('ozon.processing', source_id=source_id))
 
 
