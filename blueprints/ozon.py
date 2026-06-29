@@ -4432,8 +4432,58 @@ def api_adaptation_auto_fill_preview(group_id):
     if rich.get('html') or rich.get('plain_text'):
         text['description_ru'] = {'value': (rich.get('html') or rich.get('plain_text'))[:50000], 'source': 'source_rich_text', 'confidence': 1.0}
 
-    # 3. 属性匹配
+    # 3. 属性匹配（中俄双语）
+    import re as _re
+    def _norm(s): return _re.sub(r'\s+',' ',str(s or '').strip().lower())
+    ALIASES = {
+        '麦克风类型':['вид микрофона','тип микрофона','тип','类型'],
+        '麦克风技术':['технология микрофона','技术'],
+        '麦克风固定方式':['крепление микрофона','固定方式','安装方式'],
+        '指向性':['диаграмма направленности','指向性图','拾音模式'],
+        '颜色':['цвет','商品颜色'],'商品颜色':['цвет','颜色'],
+        '保修期':['гарантия','保修'],'包装数量':['количество в упаковке','每包数量'],
+        '产地':['страна-изготовитель','制造国'],'重量':['вес товара','商品重量'],
+        '连接方式':['подключение','接口'],'品牌':['бренд','brand','производитель'],
+        '型号':['модель','название модели','型号名称'],
+    }
+    def _attr_name_match(s_attr, t_attr):
+        sn = {_norm(x) for x in [s_attr.get('name_cn'),s_attr.get('name_ru'),s_attr.get('name'),s_attr.get('key')] if x}
+        tn = {_norm(x) for x in [t_attr.name_cn,t_attr.name,(t_attr.description or '')] if x}
+        for s in sn:
+            for t in tn:
+                if s and t and (s==t or s in t or t in s): return True
+        js=' '.join(sn); jt=' '.join(tn)
+        for k,ws in ALIASES.items():
+            aw=[_norm(k)]+[_norm(w) for w in ws]
+            if any(w in js for w in aw) and any(w in jt for w in aw): return True
+        return False
+    def _match_dict_val(s_attr, t_vals):
+        sv=set()
+        for v in [s_attr.get('value_cn'),s_attr.get('value_ru'),s_attr.get('value'),s_attr.get('text')]:
+            if v:
+                sv.add(_norm(str(v)))
+                for p in _re.split(r'[,，、/;；]+',str(v)):
+                    if p.strip(): sv.add(_norm(p.strip()))
+        res=[]
+        for tv in t_vals:
+            tn={_norm(x) for x in [tv.value_cn,tv.value,tv.info] if x}
+            if any(s in t for s in sv for t in tn) or any(t in s for s in sv for t in tn if len(t)>2):
+                res.append(tv)
+        return res
+
     src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
+    # 使用翻译后的双语属性
+    loc = raw.get('localized') or {}
+    loc_attrs = loc.get('source_attributes') or {}
+    for sa in src_attrs:
+        nr = (sa.get('name') or sa.get('key') or '').strip()
+        vr = str(sa.get('value') or sa.get('text') or '')
+        ck = (nr+'='+vr).lower()
+        lc = loc_attrs.get(ck,{}) if isinstance(loc_attrs,dict) else {}
+        if lc.get('name_cn'): sa['name_cn'] = lc['name_cn']
+        if lc.get('value_cn'): sa['value_cn'] = lc['value_cn']
+
+    diagnostics = []
     if dcid and tid:
         tgt_attrs = list(OzonCategoryAttribute.select().where((OzonCategoryAttribute.user == current_user) & (OzonCategoryAttribute.ozon_category_id == dcid) & (OzonCategoryAttribute.type_id == tid)))
         tgt_vals = {}
@@ -4443,29 +4493,53 @@ def api_adaptation_auto_fill_preview(group_id):
                 tgt_vals.setdefault(v.attribute_id, []).append(v)
 
         for ta in tgt_attrs:
-            matched = False
-            tname = (ta.name_cn or ta.name or '').lower()
+            matched = None
             for sa in src_attrs:
-                sname = (sa.get('name') or sa.get('key') or '').lower()
-                sval = sa.get('value') or sa.get('text') or ''
-                if sname in tname or tname in sname or any(w in sname for w in tname.split() if len(w) > 2):
-                    item = {'attribute_id': ta.attribute_id, 'attribute_name': ta.name_cn or ta.name, 'source_value': sval, 'source_attribute_name': sa.get('name', ''), 'confidence': 0.8, 'action': 'fill'}
-                    if ta.is_dictionary and ta.attribute_id in tgt_vals:
-                        for tv in tgt_vals[ta.attribute_id]:
-                            if (tv.value_cn or tv.value or '').lower() == sval.lower():
-                                item['target_value'] = tv.value_cn or tv.value
-                                item['target_value_id'] = tv.value_id
-                                item['confidence'] = 1.0
-                                break
-                    elif not ta.is_dictionary:
-                        item['target_value'] = sval
-                    attrs.append(item)
-                    matched = True
-                    break
-            if not matched and ta.is_required:
-                missing.append({'field': ta.name_cn or ta.name, 'reason': '源属性未匹配'})
+                if not _attr_name_match(sa, ta): continue
+                sv = sa.get('value_cn') or sa.get('value_ru') or sa.get('value') or sa.get('text') or ''
+                item = {'attribute_id':ta.attribute_id,'attribute_name':ta.name_cn or ta.name,'source_value':sv,'source_attribute_name':sa.get('name_cn') or sa.get('name',''),'confidence':0.85,'action':'fill','reason':'源属性双语匹配成功'}
+                if ta.is_dictionary and ta.attribute_id in tgt_vals:
+                    dvs = _match_dict_val(sa, tgt_vals[ta.attribute_id])
+                    if dvs:
+                        item['target_value']=dvs[0].value_cn or dvs[0].value
+                        item['target_value_id']=dvs[0].value_id
+                        item['confidence']=1.0
+                        item['reason']='字典值精确匹配'
+                        if len(dvs)>1: item['reason']+=f'（{len(dvs)}个候选取首个）'
+                    else:
+                        item['action']='skip'
+                        item['reason']=f'目标字典值未匹配到"{sv}"'
+                        matched=item; break
+                elif not ta.is_dictionary:
+                    item['target_value']=sv
+                if item['action']!='skip': matched=item
+                break
+            # 品牌/型号兜底
+            if not matched and fact:
+                tn = _norm(ta.name_cn or ta.name or '')
+                if any(w in tn for w in ['品牌','бренд','brand']):
+                    b = fact.brand_name or ''
+                    if not b and source:
+                        t = (source.title_cn or '').split()
+                        for w in t:
+                            if w.upper()==w and len(w)>=2 and w.isascii(): b=w; break
+                    if b: matched={'attribute_id':ta.attribute_id,'attribute_name':ta.name_cn or ta.name,'target_value':b,'source_value':b,'source_attribute_name':'标题/品牌识别','confidence':0.9,'action':'fill','reason':'从商品事实/标题提取品牌'}
+                elif any(w in tn for w in ['型号','модель','名称']):
+                    m = fact.model or ''
+                    if _norm(m) in ('микрофон','microphone','麦克风',''): m=''
+                    if not m and source:
+                        t = (source.title_cn or '').split()
+                        for i,w in enumerate(t):
+                            if w.upper()==w and w.isascii() and w not in ('DJI','Для','Экшн-камера'): m=w; break
+                    if m: matched={'attribute_id':ta.attribute_id,'attribute_name':ta.name_cn or ta.name,'target_value':m,'source_value':m,'source_attribute_name':'标题/型号识别','confidence':0.85,'action':'fill','reason':'从商品事实/标题提取型号'}
 
-    return jsonify({"ok": True, "category": cat, "text": text, "attributes": attrs, "missing": missing})
+            if matched and matched.get('action')!='skip': attrs.append(matched)
+            elif matched and matched.get('action')=='skip':
+                diagnostics.append({'attribute_id':ta.attribute_id,'attribute_name':ta.name_cn or ta.name,'status':'not_filled','reason_code':matched.get('reason_code','dictionary_value_not_matched'),'reason':matched.get('reason',''),'required':ta.is_required,'suggestion':'请同步属性字典或手动选择'})
+            elif ta.is_required:
+                diagnostics.append({'attribute_id':ta.attribute_id,'attribute_name':ta.name_cn or ta.name,'status':'not_filled','reason_code':'no_source_match','reason':'未找到匹配的源属性','required':True,'suggestion':'请手动填写'})
+
+    return jsonify({"ok": True, "category": cat, "text": text, "attributes": attrs, "diagnostics": diagnostics, "missing": missing})
 
 
 @ozon_bp.route("/api/adaptation/<int:group_id>/auto-fill-apply", methods=["POST"])

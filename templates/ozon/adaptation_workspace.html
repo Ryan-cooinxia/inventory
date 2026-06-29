@@ -563,6 +563,15 @@ function autoFillDraftPreview(){
     if(d.missing&&d.missing.length){
       h+='<div class=\"alert alert-warning py-1\"><b>⚠️ 缺失项:</b> '+d.missing.map(function(m){return m.field;}).join(', ')+'</div>';
     }
+    // 未填写原因诊断
+    if(d.diagnostics&&d.diagnostics.length){
+      h+='<div class=\"mt-2\"><b>🔍 未自动填写原因:</b></div>';
+      h+='<table class=\"table table-sm table-bordered\" style=\"font-size:10px\"><tr><th>字段</th><th>原因</th><th>建议</th></tr>';
+      d.diagnostics.forEach(function(x){
+        h+='<tr><td>'+escapeHtml(x.attribute_name||'')+(x.required?' <span class=\"text-danger\">*</span>':'')+'</td><td>'+escapeHtml(x.reason||'')+'</td><td>'+escapeHtml(x.suggestion||'')+'</td></tr>';
+      });
+      h+='</table>';
+    }
     h+='</div>';
     h+='<div class=\"d-flex gap-2 mt-2\"><button class=\"btn btn-sm btn-success\" onclick=\"applyAutoFill()\">✅ 应用全部</button><button class=\"btn btn-sm btn-secondary\" onclick=\"closeAutoFillModal()\">取消</button></div>';
     showModal('自动填写预览', h);
