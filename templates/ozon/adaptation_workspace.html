@@ -538,6 +538,7 @@ function autoFillDraftPreview(){
   fetch('/ozon/api/adaptation/{{ group.id }}/auto-fill-preview',{method:'POST',headers:{'Accept':'application/json'}})
   .then(r=>r.json()).then(d=>{
     if(!d.ok) throw new Error(d.error);
+    window.__autoFillPreview = d;
     var h='<div style=\"max-height:60vh;overflow-y:auto;font-size:11px\">';
     // 类目
     if(d.category){
@@ -570,7 +571,23 @@ function autoFillDraftPreview(){
 }
 
 function applyAutoFill(){
-  fetch('/ozon/api/adaptation/{{ group.id }}/auto-fill-apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({apply_all:true})})
+  var preview = window.__autoFillPreview;
+  if (!preview) { alert('没有可应用的预览，请重新点击自动填写'); return; }
+  var payload = {
+    category: preview.category || null,
+    attributes: {},
+    title_ru: (preview.text&&preview.text.title_ru?preview.text.title_ru.value:''),
+    description_ru: (preview.text&&preview.text.description_ru?preview.text.description_ru.value:'')
+  };
+  (preview.attributes||[]).forEach(function(a){
+    if(!a.attribute_id) return;
+    payload.attributes[String(a.attribute_id)] = {
+      value: a.target_value||a.source_value||'',
+      value_id: a.target_value_id||'',
+      source: a.source||'', confidence: a.confidence||0
+    };
+  });
+  fetch('/ozon/api/adaptation/{{ group.id }}/auto-fill-apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
   .then(r=>r.json()).then(d=>{
     if(!d.ok) throw new Error(d.error);
     alert('✅ 已应用 '+d.filled_count+' 项'); closeAutoFillModal(); location.reload();
