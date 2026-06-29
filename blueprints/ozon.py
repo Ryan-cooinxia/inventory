@@ -4649,7 +4649,77 @@ def api_recommend_category(group_id):
         if trec: recommendations.append(_make_rec(src_dcid,src_tid,trec.type_name or '',trec.type_name_cn or '',trec.path or '',1.0,'source_collected','源采集类目'))
     else: diagnostics.append('采集数据无type_id')
 
-    # P1: 系统识别 + OZON字典匹配
+    # P1: 系统识别 + 类目树分层过滤（只在相关路径下找type，不全局扁平搜索）
+    if not recommendations and pk:
+        rule = CATEGORY_RULES.get(pk, {})
+        tkw, confs = rule.get('target_kw',[]), rule.get('conflicts',[])
+        skw = rule.get('strong_kw', tkw)
+
+        # 新增配件冲突词 — 运动相机绝不推荐相机配件
+        ACCESSORY_WORDS = ['аксессуар','кнопка','видоискатель','картридж','объектив','адаптер','переходник','чехол','крепление','защит','пленк','фильтр','держател','кронштейн','штатив','крышка','заглушка','ремень','сумка','кейс','насадк','переходн','адаптер','пульт','аккумулятор отдел','зарядн устройств','блок питан','кабель','провод','переходник','вспышк','диффузор','отражатель','софтбокс','направляющ','салазк','площадк','креплени','рукоятк','крышк','линз','фильтр','блютус','bluetooth','пульт','спуск']
+        all_confs = list(set(confs + ACCESSORY_WORDS))
+
+        # 1. 先在类目树中找匹配路径
+        cat_candidates = list(OzonCategory.select().where(
+            (OzonCategory.user == current_user) &
+            ((OzonCategory.name_cn.contains(tkw[0])) if tkw else False) |
+            ((OzonCategory.name.contains(tkw[0])) if tkw else False) |
+            ((OzonCategory.path.contains(tkw[0])) if tkw else False)
+        ).limit(30))
+        # 如果第一个keyword没结果，尝试其他
+        if not cat_candidates and len(tkw) > 1:
+            for kw in tkw[1:]:
+                cat_candidates = list(OzonCategory.select().where(
+                    (OzonCategory.user == current_user) &
+                    ((OzonCategory.name_cn.contains(kw)) | (OzonCategory.name.contains(kw)) | (OzonCategory.path.contains(kw)))
+                ).limit(30))
+                if cat_candidates: break
+
+        # 2. 优先在匹配类目下找type
+        cat_dcids = [c.ozon_category_id for c in cat_candidates if c.ozon_category_id]
+        type_query = OzonCategoryType.select().where(OzonCategoryType.user == current_user)
+        if cat_dcids:
+            type_query = type_query.where(OzonCategoryType.description_category_id.in_(cat_dcids[:50]))
+        else:
+            type_query = type_query.limit(500)  # fallback: all types
+        types = list(type_query.order_by(OzonCategoryType.last_synced_at.desc()))
+
+        # 3. 匹配+冲突过滤
+        matched = []
+        for t in types:
+            tn = _norm((t.type_name_cn or '') + ' ' + (t.type_name or '') + ' ' + (t.path or ''))
+            if any(kw in tn for kw in all_confs): continue  # 配件/冲突过滤
+            strong_score = sum(1 for k in skw if _norm(k) in tn)
+            score = sum(1 for k in tkw if _norm(k) in tn)
+            if strong_score > 0:
+                matched.append((t, score + 2, True))  # strong match boost
+            elif score > 0:
+                matched.append((t, score, False))
+        matched.sort(key=lambda x: (-x[1], -(x[0].last_synced_at.timestamp() if x[0].last_synced_at else 0)))
+
+        # 4. 生成推荐
+        if matched:
+            for t, s, is_strong in matched[:5]:
+                rec_name = t.type_name_cn or t.type_name
+                path = t.path or ''
+                # 查对应类目节点补路径
+                cat_node = OzonCategory.get_or_none((OzonCategory.user == current_user) & (OzonCategory.ozon_category_id == t.description_category_id))
+                if cat_node and cat_node.path: path = cat_node.path + ' > ' + rec_name
+                conf = 0.9 if is_strong else 0.65
+                reason = f'系统识别为{product_info["kind_cn"]},类目路径含运动相机相关词'
+                if not is_strong: reason = f'弱匹配(非{product_info["kind_cn"]}强关键词),建议确认'
+                recommendations.append(_make_rec(t.description_category_id,t.type_id,t.type_name or '',t.type_name_cn or '',path,conf,'system_inference' if is_strong else 'weak_match',reason,product_info.get('evidence',[])))
+        else:
+            diagnostics.append(f'识别为{pk}({product_info.get("kind_cn","")}),本地类目树无匹配(请同步{product_info.get("kind_cn","")}类目树)')
+
+    # P2: 当前已选不参与推荐
+
+    # P3: 关键词兜底（禁用：无类目树时不再推荐配件）
+    if not recommendations:
+        search = _norm(((fact.product_type if fact else '') + ' ' + (fact.standard_name_cn if fact else '') + ' ' + (source.title_cn if source else '')))
+        # 只在已匹配类目下兜底，不全局搜索
+        if pk: diagnostics.append(f'本地类目树未同步{product_info.get("kind_cn","")}类目,请先同步后再推荐')
+
     if not recommendations and pk:
         rule = CATEGORY_RULES.get(pk, {})
         tkw, confs = rule.get('target_kw',[]), rule.get('conflicts',[])
