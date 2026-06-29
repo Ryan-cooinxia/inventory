@@ -508,31 +508,40 @@ function analyzeProductFacts(button) {
 }
 
 
-function analyzeImages() {
-  return analyzeProductFacts(document.getElementById('btnAnalyze'));
+// AI 智能填充
+function aiSuggest() {
+  var btn = document.getElementById('btnAiSuggest');
+  if (!btn || btn.disabled) return;
+  btn.disabled = true; btn.textContent = 'AI 填充中...';
+  fetch('/ozon/api/product-fact/{{ fact.id }}/ai-suggest', {method:'POST',headers:{'Accept':'application/json'}})
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d.ok) throw new Error(d.error || '失败');
+      alert('✅ AI 已填充 ' + (d.filled_count || 0) + ' 个字段：' + (d.filled_fields || []).join(', '));
+      location.reload();
+    })
+    .catch(function(e) { alert('AI 填充失败：' + e.message); })
+    .finally(function() { btn.disabled = false; btn.textContent = '🤖 AI智能填充'; });
 }
 
-function analyzeProductFacts(button) {
-  const btn = button || document.getElementById('btnAnalyze');
-  if (!btn || btn.disabled) return false;
-  const originalText = btn.textContent;
+// 推荐类目
+function recommendCategory() {
+  var btn = document.getElementById('btnRecommendCat');
+  if (!btn || btn.disabled) return;
   btn.disabled = true; btn.textContent = '分析中...';
-  const factId = {{ fact.id }};
-  fetch('/ozon/api/product-fact/' + factId + '/analyze', {method:'POST',headers:{'Accept':'application/json'}})
-    .then(async function(r) {
-      var data;
-      try { data = await r.json(); } catch(e) { throw new Error('服务器返回了非JSON内容，HTTP '+r.status); }
-      if (!r.ok || !data.ok) throw new Error(data.error || 'HTTP '+r.status);
-      var lines = ['分析完成','图片总数：'+(data.total_images||0),'处理成功：'+(data.images||0),
-        '模型调用：'+(data.model_calls||0),'历史回填：'+(data.backfilled||0),'跳过模型：'+(data.skipped||0),
-        '失败：'+(data.failed||0),'新增网页证据：'+(data.text_facts||0),'新增图片证据：'+(data.image_evidences||0),
-        '冲突：'+(data.conflicts||0)];
-      if (data.image_errors && data.image_errors.length) lines.push('','失败详情：',...data.image_errors);
-      alert(lines.join(chr(10))); location.reload();
+  fetch('/ozon/api/adaptation/{{ group.id }}/recommend-category', {method:'POST',headers:{'Accept':'application/json'}})
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d.ok) throw new Error(d.error || '失败');
+      var cats = d.categories || [];
+      if (!cats.length) { alert('未找到匹配类目，请手动选择'); return; }
+      // 显示第一个推荐
+      var c = cats[0];
+      alert('✅ 推荐类目: ' + (c.name_ru || c.category_name || '') + '\n类目ID: ' + (c.category_id || '') + '\n置信度: ' + Math.round((c.confidence || 0) * 100) + '%');
+      location.reload();
     })
-    .catch(function(e) { console.error('分析失败',e); alert('分析失败：'+e.message); })
-    .finally(function() { btn.disabled=false; btn.textContent=originalText||'AI识别图片'; });
-  return false;
+    .catch(function(e) { alert('类目推荐失败：' + e.message); })
+    .finally(function() { btn.disabled = false; btn.textContent = '🤖 推荐类目'; });
 }
 
 

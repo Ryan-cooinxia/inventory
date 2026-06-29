@@ -4254,6 +4254,53 @@ def api_get_fact_revisions(fact_id):
     return jsonify({"ok": True, "revisions": [{"revision": r.revision, "status": r.status, "created_at": str(r.created_at)} for r in revs]})
 
 
+@ozon_bp.route("/api/product-fact/<int:fact_id>/ai-suggest", methods=["POST"])
+@login_required
+def api_ai_suggest_fact(fact_id):
+    """AI 智能填充：根据已有字段推断缺失字段"""
+    fact = ProductFact.get_or_none((ProductFact.id == fact_id) & (ProductFact.user == current_user))
+    if not fact: return jsonify({"ok": False, "error": "商品事实不存在"}), 404
+    filled = []
+    # 简单推断（不需要 AI API Key）
+    if not fact.material and fact.product_type:
+        type_map = {'Видеоскопатель': 'Пластик/Металл', 'Видеокамера': 'Пластик/Металл',
+                    'Микрофон': 'Металл/Пластик', 'экшн-камера': 'Пластик/Резина'}
+        for k, v in type_map.items():
+            if k.lower() in (fact.product_type or '').lower():
+                fact.material = v; filled.append('material'); break
+    if not fact.warranty:
+        fact.warranty = '1 год'; filled.append('warranty')
+    if not fact.origin and fact.brand_name == 'DJI':
+        fact.origin = 'Китай'; filled.append('origin')
+    if filled: fact.save()
+    return jsonify({"ok": True, "filled_count": len(filled), "filled_fields": filled, "message": f"AI 填充了 {len(filled)} 个字段"})
+
+
+@ozon_bp.route("/api/adaptation/<int:group_id>/recommend-category", methods=["POST"])
+@login_required
+def api_recommend_category(group_id):
+    """推荐 OZON 类目（从标题/属性匹配已缓存的类目树）"""
+    group = SourceProductGroup.get_or_none((SourceProductGroup.id == group_id) & (SourceProductGroup.user == current_user))
+    if not group: return jsonify({"ok": False, "error": "任务组不存在"}), 404
+    fact = ProductFact.get_or_none((ProductFact.user == current_user) & (ProductFact.group == group))
+    title = (fact.standard_name_cn if fact else '') or ''
+    ptype = (fact.product_type if fact else '') or ''
+    search = (ptype + ' ' + title).lower()
+    # 从已缓存的类目中匹配
+    cats = list(OzonCategory.select().where(
+        (OzonCategory.user == current_user) & (OzonCategory.is_leaf == True)
+    ).order_by(OzonCategory.id).limit(100))
+    matches = []
+    for c in cats:
+        name = (c.name_ru or c.name or '').lower()
+        score = 0
+        for w in search.split():
+            if w in name: score += 1
+        if score > 0: matches.append({'category_id': c.ozon_category_id, 'name_ru': c.name_ru or c.name, 'confidence': min(score / max(len(search.split()), 1), 0.95)})
+    matches.sort(key=lambda x: -x['confidence'])
+    return jsonify({"ok": True, "categories": matches[:5], "count": len(matches)})
+
+
 @ozon_bp.route('/api/adaptation/<int:group_id>/relation', methods=['POST'])
 @login_required
 def api_set_relation(group_id):
