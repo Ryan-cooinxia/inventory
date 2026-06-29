@@ -3792,7 +3792,19 @@ function scrapeRichTextBySelection() {
         try {
           var sty = window.getComputedStyle(el);
           fs = parseFloat(sty.fontSize) || 16;
+          // 自身CSS划线 OR 父元素CSS划线 OR 祖先含<s>/<del>/<strike>标签
           isLT = (sty.textDecoration||'').indexOf('line-through') >= 0;
+          if (!isLT && el.parentElement) {
+            var psty = window.getComputedStyle(el.parentElement);
+            isLT = (psty.textDecoration||'').indexOf('line-through') >= 0;
+          }
+          if (!isLT) {
+            var pn = el.parentElement;
+            for (var ud = 0; ud < 3 && pn; ud++, pn = pn.parentElement) {
+              var tag = (pn.tagName||'').toLowerCase();
+              if (tag === 's' || tag === 'del' || tag === 'strike') { isLT = true; break; }
+            }
+          }
           var cc = (sty.color||'').toLowerCase();
           isGr = /rgb\(0,\s*(1[2-9]\d|[2-9]\d{2})/.test(cc) || cc.indexOf('#2d') >= 0 || cc.indexOf('green') >= 0;
         } catch(e) {}
@@ -3835,7 +3847,14 @@ function scrapeRichTextBySelection() {
     if (result.current_price_rub) {
       var refc = uniq.filter(function(c) { return c.isLineThrough && c.price > result.current_price_rub && c.price / result.current_price_rub <= 2; });
       refc.sort(function(a,b) { return a.price - b.price; });
-      result.reference_price_rub = refc.length ? refc[0].price : result.current_price_rub;
+      // 无划线价 → 取买区内比current更高的最近价格
+      if (!refc.length) {
+        var altRef = uniq.filter(function(c) { return c.price > result.current_price_rub && c.price / result.current_price_rub <= 2; });
+        altRef.sort(function(a,b) { return a.price - b.price; });
+        result.reference_price_rub = altRef.length ? altRef[0].price : result.current_price_rub;
+      } else {
+        result.reference_price_rub = refc[0].price;
+      }
     }
 
     if (result.current_price_rub || result.reference_price_rub) result.confidence = 'high';
