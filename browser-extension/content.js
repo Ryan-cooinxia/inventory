@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 电商商品采集器 v2 — 店小秘式页面内采集
  * 支持: 1688 / 淘宝 / 天猫 / 拼多多 商品详情页
  */
@@ -3548,184 +3548,76 @@ function scrapeRichTextBySelection() {
     return Math.round(n * 100) / 100;
   }
 
-  function extractOzonPricing_old(stateData) {
+  
+  // ── OZON 价格提取（最终版：Unicode安全 + 全页面扫描）──
+  function extractOzonPricing(stateData) {
+    var RUB = '₽';
     var result = { reference_price_rub: null, currency: 'RUB', source: '', confidence: 'low', price_candidates: [] };
-    var seenPrices = {};
-    function addPrice(price, source, confidence, text, score) {
-      if (!price || seenPrices[price]) return;
-      seenPrices[price] = true;
-      result.price_candidates.push({ price: price, currency: 'RUB', source: source, confidence: confidence || 'medium', text: (text||'').slice(0,200), score: score || 0 });
+    var seen = {};
+
+    function add(p, src, conf, text) {
+      if (!p || !isFinite(p) || p < 100 || seen[p]) return;
+      seen[p] = true;
+      result.price_candidates.push({ price: p, currency: 'RUB', source: src, confidence: conf || 'low', text: (text||'').slice(0,200) });
     }
+
     function pickBest() {
-      // 按 score 降序排列，取最高分
-      result.price_candidates.sort(function(a,b){ return (b.score||0) - (a.score||0); });
-      var best = result.price_candidates[0];
-      if (best) {
-        result.reference_price_rub = best.price;
-        result.source = best.source;
-        result.confidence = best.confidence;
-      }
-    }
-
-    // ★ 第1层：购买区 DOM（高权重）
-    var buySelectors = [
-      '[data-widget*="webPrice"]', '[data-widget*="webSaleBlock"]',
-      '[data-widget*="webPriceWithButton"]', '[data-widget*="webStickyProducts"]',
-      '[data-widget*="webAddToCart"]', '[class*="Price"][class*="main"]',
-    ];
-    document.querySelectorAll(buySelectors.join(',')).forEach(function(el) {
-      if (typeof isInBadArea === 'function' && isInBadArea(el)) return;
-      // 自身
-      var text = (el.textContent||'').replace(/[\s]+/g,' ').trim();
-      var p = parseOzonRubPrice(text);
-      if (p) { addPrice(p, 'dom_buy_block', 'high', text, 90); return; }
-      // 父节点（合并: <span>32 083</span><span>₽</span>）
-      if (el.parentElement) {
-        var ptext = (el.parentElement.textContent||'').replace(/[\s]+/g,' ').trim();
-        p = parseOzonRubPrice(ptext);
-        if (p) addPrice(p, 'dom_buy_block_parent', 'high', ptext, 80);
-      }
-    });
-
-    // 也扫描含 price 的通用区域（低权重）
-    document.querySelectorAll('[class*="price"],[class*="Price"]').forEach(function(el) {
-      if (typeof isInBadArea === 'function' && isInBadArea(el)) return;
-      var text = (el.textContent||'').replace(/[\s]+/g,' ').trim();
-      var p = parseOzonRubPrice(text);
-      if (!p && el.parentElement) p = parseOzonRubPrice((el.parentElement.textContent||'').replace(/[\s]+/g,' ').trim());
-      if (p) addPrice(p, 'dom_price_area', 'medium', text, 50);
-      var p = parseOzonRubPrice(text);
-      // 自身没匹配到，尝试父节点文本（合并兄弟节点）
-      if (!p && el.parentElement) {
-        var ptext = (el.parentElement.textContent||'').replace(/[\s  ]+/g,' ').trim();
-        p = parseOzonRubPrice(ptext);
-      }
-      if (p) addPrice(p, 'dom_price_area', 'medium', text, 50);
-    });
-
-    // ★ 第2层：全页面文本兜底扫描
-    if (!result.reference_price_rub) {
-      var bodyText = (document.body.textContent||document.body.innerText||'').replace(/[\s]+/g,' ').trim();
-      var rubMatches = bodyText.match(/(\d[\d\s]{2,})\s*[₽]/g);
-      if (rubMatches) {
-        rubMatches.forEach(function(m) {
-          var p = parseOzonRubPrice(m);
-          if (p) addPrice(p, 'body_text_scan', 'low', m, 10);
-        });
-      }
-    }
-
-    // ★ 第3层：JSON state / meta 兜底
-    var meta = document.querySelector('meta[property="product:price:amount"],meta[itemprop="price"]');
-    if (meta) {
-      var mn = parseFloat((meta.getAttribute('content')||'').replace(/[^\d.]/g,''));
-      if (isFinite(mn) && mn > 1) addPrice(mn, 'meta', 'medium', meta.getAttribute('content'), 30);
-    }
-    if (stateData && stateData.length) {
-      var stateArr = Array.isArray(stateData) ? stateData : [stateData];
-      stateArr.forEach(function(sd) {
-        if (!sd || typeof sd !== 'object') return;
-        walkOzonState(sd, function(obj) {
-          var raw = obj.finalPrice || obj.salePrice || obj.cardPrice || obj.currentPrice || obj.price;
-          if (!raw && obj.offerData) raw = obj.offerData.price || obj.offerData.salePrice;
-          var n = normalizeOzonPriceNumber(raw);
-          if (n) addPrice(n, 'state_json', 'medium', String(raw), 30);
-        });
-      });
-    }
-
-    pickBest();
-    return result;
-  }
-
-  // ── OLD ──
-  function extractOzonPricing_old3(stateData) {
-    var result = { reference_price_rub: null, currency: 'RUB', source: '', confidence: 'low', price_candidates: [] };
-    var seenValues = {};
-    function addPrice(price, source, confidence, text, score) {
-      if (!price || !isFinite(price) || price < 100) return;
-      if (seenValues[price]) return; seenValues[price] = true;
-      result.price_candidates.push({ price: price, currency: 'RUB', source: source, confidence: confidence || 'medium', text: (text||'').slice(0,200), score: score || 0 });
-    }
-    function pickBest() {
-      result.price_candidates.sort(function(a,b){ return (b.score||0) - (a.score||0); });
+      result.price_candidates.sort(function(a,b){ return (b.confidence==='high'?1:0) - (a.confidence==='high'?1:0) || b.price - a.price; });
       var best = result.price_candidates[0];
       if (best) { result.reference_price_rub = best.price; result.source = best.source; result.confidence = best.confidence; }
     }
 
-    // ★ A: 从"В корзину"按钮反查价格 — 取父节点中非划线价的最小值（当前售价）
-    var allEls = document.querySelectorAll('button, a, [role="button"], span, div');
-    for (var ei = 0; ei < allEls.length; ei++) {
-      var el = allEls[ei];
-      var txt = (el.textContent||'').trim();
-      if (!/В корзину|Купить|купить|Оплатить|корзин/i.test(txt) || txt.length > 30) continue;
-      var node = el;
-      for (var d = 0; d < 6 && node; d++, node = node.parentElement) {
-        if (!node || node === document.body || node === document.documentElement) break;
-        // 提取父节点中所有 ₽ 价格，排除划线旧价
-        var prices = [];
-        var children = node.querySelectorAll ? node.querySelectorAll('*') : [];
-        for (var ci = 0; ci < children.length; ci++) {
-          var child = children[ci];
-          var ct = (child.textContent||'').trim();
-          if (!/[₽]/.test(ct) || ct.length > 30) continue;
-          try {
-            var cdeco = window.getComputedStyle(child).textDecoration || '';
-            if (cdeco.indexOf('line-through') >= 0) continue;
-          } catch(e) {}
-          var cp = parseOzonRubPrice(ct);
-          if (cp && cp > 100) prices.push(cp);
-        }
-        // 找不到子节点价格，回退到整个父节点文本
-        if (!prices.length) {
-          var ntext = (node.textContent||'').replace(/[\s]+/g,' ').trim();
-          var p = parseOzonRubPrice(ntext);
-          if (p && p > 100) prices.push(p);
-        }
-        // 取所有价中的最大值（卖家原价通常高于 OZON 折扣价）
-        if (prices.length) {
-          prices.sort(function(a,b){ return b-a; });
-          addPrice(prices[0], 'cart_btn_parent', 'high', 'seller_original_price', 100);
-          break;
-        }
+    // ★ 扫描所有含 RUB 的文本节点
+    var allNodes = document.querySelectorAll('span,div,a,p,b,strong');
+    for (var i = 0; i < allNodes.length; i++) {
+      var el = allNodes[i];
+      if (el.children && el.children.length > 0) continue;
+      var t = (el.textContent||'').trim();
+      if (t.length > 45) continue;
+      if (!new RegExp(RUB).test(t) && !/руб/i.test(t) && !/RUB/i.test(t)) continue;
+
+      // 清洗：统一所有特殊空白为普通空格
+      var clean = t.replace(/[\s    -‏]/g, ' ').replace(/\s+/g,' ').trim();
+      // 提取所有4+位数字
+      var nums = [];
+      var m, rx = /(\d[\d\s]*\d)/g;
+      while ((m = rx.exec(clean)) !== null) {
+        var raw = m[1].replace(/\s/g, '');
+        var v = parseInt(raw, 10);
+        if (v > 100 && v < 10000000) nums.push(v);
+      }
+
+      if (!nums.length) continue;
+
+      // 确定置信度
+      var rect = el.getBoundingClientRect ? el.getBoundingClientRect() : {};
+      var conf = 'medium';
+      var bestNum = nums[nums.length - 1]; // 最后一个数字通常是主要价格
+
+      // 右侧价格 widget 区 -> high
+      if (rect.left > window.innerWidth * 0.45 && rect.top < window.innerHeight * 0.7) conf = 'high';
+      // 大字号 -> high
+      try { var fs = parseFloat(window.getComputedStyle(el).fontSize); if (fs > 22) conf = 'high'; } catch(e) {}
+
+      add(bestNum, 'dom_rub_scan', conf, clean);
+
+      // 如果有多个价格（如原价+折扣价），都记录
+      for (var ni = 0; ni < nums.length; ni++) {
+        if (nums[ni] !== bestNum) add(nums[ni], 'dom_rub_extra', 'low', clean);
       }
     }
 
-    // ★ B: 全页面含 ₽ 的叶子节点 (score=50~80)
-    document.querySelectorAll('*').forEach(function(el) {
-      if (el.children && el.children.length > 0) return;
-      var t = (el.textContent||'').trim();
-      if (t.length > 40 || !/[₽]/.test(t)) return;
-      var p = parseOzonRubPrice(t);
-      if (!p || p < 100) return;
-      var rect = el.getBoundingClientRect ? el.getBoundingClientRect() : {};
-      var score = 60;
-      if (rect.left > window.innerWidth * 0.45) score += 15; // 右侧购买栏
-      try {
-        var fs = parseFloat(window.getComputedStyle(el).fontSize);
-        if (fs > 20) score += 10;
-        var pdeco = window.getComputedStyle(el.parentElement).textDecoration || '';
-        if (pdeco.indexOf('line-through') >= 0) score -= 30;
-      } catch(e) {}
-      var ptext = el.parentElement ? (el.parentElement.textContent||'') : '';
-      if (/от\s+\d/.test(ptext)) score -= 20;
-      if (/дешевле/.test(ptext)) score -= 20;
-      addPrice(p, 'rub_leaf_scan', score > 70 ? 'high' : 'medium', t, score);
-    });
-
-    // ★ C: body 全局正则匹配 (score=30)
-    var bodyText = (document.body.textContent||document.body.innerText||'');
-    var allVals = [], rx = /(\d[\d\s]{2,})\s*[₽]/g, rm;
-    while ((rm = rx.exec(bodyText)) !== null) {
-      var raw = rm[1].replace(/[\s  ]/g, '');
-      var v = parseInt(raw, 10);
-      if (v > 100 && allVals.indexOf(v) < 0) allVals.push(v);
+    // ★ 兜底：body.textContent 全局扫描
+    if (!result.reference_price_rub) {
+      var body = (document.body.textContent||'').replace(/[\s   ]/g, ' ');
+      var brx = /(\d[\d\s]{2,})\s*[' + RUB + ']/g, bm;
+      while ((bm = brx.exec(body)) !== null) {
+        var bv = parseInt(bm[1].replace(/\s/g, ''), 10);
+        if (bv > 100) add(bv, 'body_fallback', 'low', bm[0]);
+      }
     }
-    allVals.forEach(function(v) { addPrice(v, 'body_global_rx', 'low', v+' RUB', 30); });
 
-    // ★ D: meta / JSON state (score=25)
-    var meta = document.querySelector('meta[property="product:price:amount"],meta[itemprop="price"]');
-    if (meta) { var mn = parseFloat((meta.getAttribute('content')||'').replace(/[^\d.]/g,'')); if (isFinite(mn) && mn > 1) addPrice(mn, 'meta', 'medium', meta.getAttribute('content'), 25); }
+    // ★ JSON state 兜底
     if (stateData && stateData.length) {
       (Array.isArray(stateData)?stateData:[stateData]).forEach(function(sd) {
         if (!sd || typeof sd !== 'object') return;
@@ -3733,7 +3625,7 @@ function scrapeRichTextBySelection() {
           var raw = obj.finalPrice || obj.salePrice || obj.cardPrice || obj.currentPrice || obj.price;
           if (!raw && obj.offerData) raw = obj.offerData.price || obj.offerData.salePrice;
           var n = normalizeOzonPriceNumber(raw);
-          if (n) addPrice(n, 'state_json', 'medium', String(raw), 25);
+          if (n) add(n, 'state_json', 'low', String(raw));
         });
       });
     }
@@ -3742,76 +3634,6 @@ function scrapeRichTextBySelection() {
     return result;
   }
 
-  // ── OZON价格提取 v4：直接清洗特殊空格后取数字 ──
-  function ozonCleanPrice(text) {
-    if (!text) return null;
-    // 干掉所有隐形空格（0x2000-0x200F 范围 + NBSP）
-    var clean = text.replace(/[\s -‏    ]/g, '');
-    // 找最后一个大数字块
-    var m = clean.match(/(\d{4,})[^\d/]*$/);
-    if (m) {
-      var v = parseInt(m[1], 10);
-      if (v > 100 && v < 10000000) return v;
-    }
-    // 兜底：任意连续4+位数字
-    m = clean.match(/(\d{4,})/);
-    if (m) {
-      var v = parseInt(m[1], 10);
-      if (v > 100 && v < 10000000) return v;
-    }
-    return null;
-  }
-
-  function extractOzonPricing(stateData) {
-    var result = { reference_price_rub: null, currency: 'RUB', source: '', confidence: 'low', price_candidates: [] };
-    var seen = {};
-    function add(p, src, conf) {
-      if (!p || seen[p]) return; seen[p] = true;
-      result.price_candidates.push({ price: p, currency: 'RUB', source: src, confidence: conf });
-    }
-
-    // 收集所有含 ₽ 的叶子节点，清洗提取价格
-    var nodes = [];
-    document.querySelectorAll('span,div,a,p,b,strong').forEach(function(el) {
-      if (el.children && el.children.length > 0) return;
-      var t = (el.textContent||'').trim();
-      if (!/[₽]/.test(t) || t.length > 40) return;
-      var p = ozonCleanPrice(t);
-      if (!p) return;
-      var rect = el.getBoundingClientRect ? el.getBoundingClientRect() : {};
-      var score = 50;
-      if (rect.left > window.innerWidth * 0.45) score += 20;
-      try {
-        var fs = parseFloat(window.getComputedStyle(el).fontSize);
-        if (fs > 22) score += 15;
-        var c = (window.getComputedStyle(el).color||'').toLowerCase();
-        // 绿色=折扣价 -> 降权；灰色/黑色 = 卖家原价 -> 优先
-        if (/rgb\(0,\s*1[2-9]|rgb\(45|#2d|green/.test(c)) score -= 10;
-      } catch(e) {}
-      nodes.push({ price: p, score: score || 0 });
-    });
-
-    nodes.sort(function(a,b){ return (b.score||0) - (a.score||0) || b.price - a.price; });
-    nodes.forEach(function(n,i){ add(n.price, 'rub_clean_scan', i<3?'medium':'low'); });
-
-    // 兜底：body全页面清洗
-    if (!result.reference_price_rub) {
-      var bodyText = (document.body.textContent||'').replace(/[\s -‏   ]/g, '');
-      var rx = /(\d{4,})\s*[₽]/g, rm;
-      while ((rm = rx.exec(bodyText)) !== null) {
-        var v = parseInt(rm[1], 10);
-        if (v > 100) add(v, 'body_sweep', 'low');
-      }
-    }
-
-    if (result.price_candidates.length) {
-      var best = result.price_candidates[0];
-      result.reference_price_rub = best.price;
-      result.source = best.source;
-      result.confidence = best.confidence;
-    }
-    return result;
-  }
 
   function extractOzonSkus(stateData, productInfo, pricing) {
     var name = productInfo.title || '默认规格';
@@ -4879,5 +4701,6 @@ var currentVariantSnapshot = {
       package_list: packageList
     };
   }
+
 
 

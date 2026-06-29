@@ -764,7 +764,11 @@ def api_source_add():
 
     quality = collect_quality_check(raw_data, source_url)
 
-    has_confirmed_price = any(sku.get('purchase_price_cny') for sku in skus)
+    # OZON：有 reference_price_rub 就算价格已识别（参考售价，非采购价）
+    if platform == 'ozon_product':
+        has_confirmed_price = bool(pricing.get('reference_price_rub'))
+    else:
+        has_confirmed_price = any(sku.get('purchase_price_cny') for sku in skus)
     price_unconfirmed = not has_confirmed_price
 
     # ── OZON 来源特殊标记 ──
