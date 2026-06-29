@@ -930,6 +930,53 @@ def extract_candidate_price_from_url(source_url: str) -> dict:
 # 采集质量检查
 # ═════════════════════════════════════════════════════════
 
+# ── OZON 属性名 俄→英 映射表 ──
+OZON_ATTR_RU_TO_EN = {
+    'артикул': 'article', 'тип': 'type', 'бренд': 'brand',
+    'вес': 'weight', 'вес товара': 'weight', 'вес товара, г': 'weight',
+    'материал': 'material', 'цвет': 'color',
+    'размер': 'size', 'размеры': 'dimensions', 'размеры, мм': 'dimensions',
+    'гарантия': 'warranty', 'страна': 'origin', 'страна-изготовитель': 'origin',
+    'емкость': 'battery_capacity', 'емкость аккумулятора': 'battery_capacity',
+    'аккумулятор': 'battery_capacity', 'батарея': 'battery_capacity',
+    'питание': 'power', 'мощность': 'power',
+    'совместимость': 'compatibility',
+    'назначение': 'usage', 'комплектация': 'package_contents',
+    'особенности': 'features', 'модель': 'model',
+    'производитель': 'manufacturer', 'серия': 'series',
+    'частота': 'frequency', 'чувствительность': 'sensitivity',
+    'битрейт': 'bitrate', 'дисплей': 'display', 'экран': 'screen',
+    'водонепроницаемость': 'waterproof', 'защита': 'protection',
+    'подключение': 'connectivity', 'интерфейс': 'interface',
+    'формат': 'format', 'разрешение': 'resolution',
+    'стабилизация': 'stabilization', 'угол обзора': 'viewing_angle',
+    'рабочая температура': 'operating_temperature',
+    'время работы': 'battery_life', 'время зарядки': 'charging_time',
+    'дальность': 'wireless_range', 'радиус действия': 'wireless_range',
+    'количество': 'quantity', 'шт': 'quantity',
+}
+
+def map_ozon_attributes_to_fields(source_attributes):
+    """将 OZON 俄语属性列表映射为系统字段 dict。
+    返回: {field_name: value, ...}"""
+    result = {}
+    if not source_attributes:
+        return result
+    for attr in source_attributes:
+        name = (attr.get('name') or attr.get('key') or '').lower().strip().rstrip(',:;')
+        value = attr.get('value') or attr.get('text') or ''
+        # 精确匹配
+        if name in OZON_ATTR_RU_TO_EN:
+            result[OZON_ATTR_RU_TO_EN[name]] = value
+            continue
+        # 模糊匹配（属性名包含关键词）
+        for ru_key, en_key in OZON_ATTR_RU_TO_EN.items():
+            if ru_key in name or name in ru_key:
+                result[en_key] = value
+                break
+    return result
+
+
 def collect_quality_check(data: dict, source_url: str) -> dict:
     """
     检查 AI 提取结果的质量，判断是否满足适配条件。

@@ -3746,19 +3746,70 @@ def adaptation_workspace(source_id):
             standard_name_cn=source.title_cn or '',
             review_status='pending',
         )
+        # ── 自动映射 OZON 俄语属性到 ProductFact 字段 ──
+        if source.platform == 'ozon_product':
+            from services.ozon_collector import map_ozon_attributes_to_fields
+            mapped = map_ozon_attributes_to_fields(source_attributes)
+            if mapped:
+                field_map = {
+                    'weight': 'weight', 'material': 'material',
+                    'dimensions': 'dimensions', 'size': 'dimensions',
+                    'color': 'color', 'model': 'model', 'brand': 'brand_name',
+                    'warranty': 'warranty', 'origin': 'origin',
+                    'battery_capacity': 'battery_capacity', 'power': 'power',
+                    'wireless_range': 'wireless_range',
+                }
+                for en_key, fact_field in field_map.items():
+                    if mapped.get(en_key) and not getattr(fact, fact_field, None):
+                        setattr(fact, fact_field, str(mapped[en_key])[:500])
+                # 从 unknown_fields 中排除已映射字段
+                existing_unknown = []
+                if fact.unknown_fields_json:
+                    try: existing_unknown = json.loads(fact.unknown_fields_json)
+                    except: pass
+                fact.unknown_fields_json = json.dumps(
+                    [f for f in existing_unknown if f not in mapped], ensure_ascii=False
+                )
+                fact.save()
         for sku in source_skus:
             ProductFactSku.create(
-                user=current_user,
-                fact=fact,
-                source_sku=sku,
+                user=current_user, fact=fact, source_sku=sku,
                 source_order=sku.source_order,
                 standard_sku_name_cn=sku.source_sku_name,
-                color_cn=sku.color_cn,
-                size_cn=sku.size_cn,
-                style_cn=sku.style_cn,
-                bundle_quantity=sku.bundle_quantity,
+                color_cn=sku.color_cn, size_cn=sku.size_cn,
+                style_cn=sku.style_cn, bundle_quantity=sku.bundle_quantity,
                 purchase_price_cny=sku.purchase_price_cny,
             )
+    # ── 每次加载都尝试映射 OZON 属性（空字段自动补全）──
+    if source.platform == 'ozon_product' and fact:
+        did_update = False
+        field_map = {
+            'weight': 'weight', 'material': 'material',
+            'dimensions': 'dimensions', 'color': 'color',
+            'model': 'model', 'brand': 'brand_name',
+            'warranty': 'warranty', 'origin': 'origin',
+            'battery_capacity': 'battery_capacity', 'power': 'power',
+            'wireless_range': 'wireless_range',
+        }
+        try:
+            mapped = map_ozon_attributes_to_fields(source_attributes)
+            for en_key, fact_field in field_map.items():
+                if mapped.get(en_key) and not getattr(fact, fact_field, None):
+                    setattr(fact, fact_field, str(mapped[en_key])[:500])
+                    did_update = True
+            # 清理 unknown_fields
+            existing_unknown = []
+            if fact.unknown_fields_json:
+                try: existing_unknown = json.loads(fact.unknown_fields_json)
+                except: pass
+            cleaned = [f for f in existing_unknown if f not in mapped]
+            if len(cleaned) != len(existing_unknown):
+                fact.unknown_fields_json = json.dumps(cleaned, ensure_ascii=False)
+                did_update = True
+            if did_update:
+                fact.save()
+        except Exception:
+            pass
 
     fact_skus = (ProductFactSku
                  .select()
