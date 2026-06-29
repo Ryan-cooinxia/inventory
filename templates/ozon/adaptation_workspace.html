@@ -250,12 +250,12 @@
         </div>
 
         <!-- 属性填写表单 -->
-        <div id="attributeFormSection" class="mb-2 {% if not adaptation_attr_schema %}d-none{% endif %}">
+        <div id="attributeFormSectionOld" class="mb-2 {% if not adaptation_attr_schema %}d-none{% endif %}">
           <div class="d-flex justify-content-between align-items-center mb-1">
             <strong style="font-size:11px">📝 类目属性</strong>
             <span class="badge bg-danger" style="font-size:9px" id="attrRequiredCount"></span>
           </div>
-          <div id="attributeForm" class="overflow-auto" style="max-height:35vh;font-size:11px">
+          <div id="attributeFormOld" class="overflow-auto" style="max-height:35vh;font-size:11px">
             {% if adaptation_attr_schema %}
             {% set groups = {} %}
             {% for a in adaptation_attr_schema %}
