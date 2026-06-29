@@ -4311,7 +4311,12 @@ def api_adaptation_auto_fill_preview(group_id):
     if not group: return jsonify({"ok": False, "error": "任务组不存在"}), 404
     fact = ProductFact.get_or_none((ProductFact.user == current_user) & (ProductFact.group == group))
     adaptation = ListingAdaptation.get_or_none((ListingAdaptation.user == current_user) & (ListingAdaptation.fact == fact)) if fact else None
-    source = OzonSource.get_or_none((OzonSource.user == current_user) & (OzonSource.id == group.source_id))
+    # 通过 SourceProductGroupItem 查找关联的源商品
+    item = SourceProductGroupItem.get_or_none((SourceProductGroupItem.user == current_user) & (SourceProductGroupItem.group == group))
+    source = None
+    if item and item.source:
+        try: source = OzonSource.get_or_none((OzonSource.user == current_user) & (OzonSource.id == item.source.id))
+        except: pass
     cat = None; text = {}; attrs = []; missing = []
     raw = {}
     if source:
