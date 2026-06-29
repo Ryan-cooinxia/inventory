@@ -5311,13 +5311,6 @@ def api_sync_category_tree():
         def save_categories(cats, parent_id=None, path=''):
             count = 0
             for cat in cats:
-                # 规则：含 type_id 的节点禁止写入 OzonCategory
-                if cat.get('type_id'):
-                    # 仍然递归处理其 children（可能含真实子类目）
-                    if cat.get('children'):
-                        count += save_categories(cat['children'], parent_id, path)
-                    continue
-
                 cat_id = str(cat.get('category_id', ''))
                 title = cat.get('title', '')
                 current_path = (path + ' > ' + title).strip(' > ')
