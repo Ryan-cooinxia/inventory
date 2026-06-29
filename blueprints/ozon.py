@@ -4292,11 +4292,11 @@ def api_recommend_category(group_id):
     ).order_by(OzonCategory.id).limit(100))
     matches = []
     for c in cats:
-        name = (c.name_ru or c.name or '').lower()
+        name = (c.name or '').lower()
         score = 0
         for w in search.split():
             if w in name: score += 1
-        if score > 0: matches.append({'category_id': c.ozon_category_id, 'name_ru': c.name_ru or c.name, 'confidence': min(score / max(len(search.split()), 1), 0.95)})
+        if score > 0: matches.append({'category_id': c.ozon_category_id, 'name_ru': c.name or '', 'confidence': min(score / max(len(search.split()), 1), 0.95)})
     matches.sort(key=lambda x: -x['confidence'])
     return jsonify({"ok": True, "categories": matches[:5], "count": len(matches)})
 
