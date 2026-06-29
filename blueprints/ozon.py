@@ -4303,6 +4303,119 @@ def api_save_adaptation_attributes(group_id):
     return jsonify({"ok": True, "message": f"已保存 {len(attrs)} 个属性值"})
 
 
+@ozon_bp.route("/api/adaptation/<int:group_id>/auto-fill-preview", methods=["POST"])
+@login_required
+def api_adaptation_auto_fill_preview(group_id):
+    """根据采集资料生成自动填写建议"""
+    group = SourceProductGroup.get_or_none((SourceProductGroup.id == group_id) & (SourceProductGroup.user == current_user))
+    if not group: return jsonify({"ok": False, "error": "任务组不存在"}), 404
+    fact = ProductFact.get_or_none((ProductFact.user == current_user) & (ProductFact.group == group))
+    adaptation = ListingAdaptation.get_or_none((ListingAdaptation.user == current_user) & (ListingAdaptation.fact == fact)) if fact else None
+    source = OzonSource.get_or_none((OzonSource.user == current_user) & (OzonSource.id == group.source_id))
+    cat = None; text = {}; attrs = []; missing = []
+    raw = {}
+    if source:
+        try: raw = json.loads(source.raw_json or '{}')
+        except: raw = {}
+
+    # 1. 类目建议
+    dcid = (adaptation.ozon_category_id if adaptation else '') or raw.get('ozon_category_id', '')
+    tid = (adaptation.type_id if adaptation else '') or raw.get('type_id', '')
+    if dcid and tid:
+        tname = raw.get('type_name', '') or (adaptation.type_name_ru if adaptation else '')
+        cat = {'description_category_id': dcid, 'type_id': tid, 'type_name': tname, 'path': raw.get('category_path', ''), 'source': 'source_ozon' if source.platform == 'ozon_product' else 'existing', 'confidence': 1.0}
+
+    # 2. 文本建议
+    if source.title_cn:
+        text['title_ru'] = {'value': source.title_cn[:150], 'source': 'source_title', 'confidence': 1.0}
+    rich = raw.get('rich_text') or {}
+    if rich.get('html') or rich.get('plain_text'):
+        text['description_ru'] = {'value': (rich.get('html') or rich.get('plain_text'))[:50000], 'source': 'source_rich_text', 'confidence': 1.0}
+
+    # 3. 属性匹配
+    src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
+    if dcid and tid:
+        tgt_attrs = list(OzonCategoryAttribute.select().where((OzonCategoryAttribute.user == current_user) & (OzonCategoryAttribute.ozon_category_id == dcid) & (OzonCategoryAttribute.type_id == tid)))
+        tgt_vals = {}
+        dict_ids = [a.attribute_id for a in tgt_attrs if a.is_dictionary]
+        if dict_ids:
+            for v in OzonAttributeValue.select().where((OzonAttributeValue.user == current_user) & (OzonAttributeValue.type_id == tid) & (OzonAttributeValue.attribute_id.in_(dict_ids))):
+                tgt_vals.setdefault(v.attribute_id, []).append(v)
+
+        for ta in tgt_attrs:
+            matched = False
+            tname = (ta.name_cn or ta.name or '').lower()
+            for sa in src_attrs:
+                sname = (sa.get('name') or sa.get('key') or '').lower()
+                sval = sa.get('value') or sa.get('text') or ''
+                if sname in tname or tname in sname or any(w in sname for w in tname.split() if len(w) > 2):
+                    item = {'attribute_id': ta.attribute_id, 'attribute_name': ta.name_cn or ta.name, 'source_value': sval, 'source_attribute_name': sa.get('name', ''), 'confidence': 0.8, 'action': 'fill'}
+                    if ta.is_dictionary and ta.attribute_id in tgt_vals:
+                        for tv in tgt_vals[ta.attribute_id]:
+                            if (tv.value_cn or tv.value or '').lower() == sval.lower():
+                                item['target_value'] = tv.value_cn or tv.value
+                                item['target_value_id'] = tv.value_id
+                                item['confidence'] = 1.0
+                                break
+                    elif not ta.is_dictionary:
+                        item['target_value'] = sval
+                    attrs.append(item)
+                    matched = True
+                    break
+            if not matched and ta.is_required:
+                missing.append({'field': ta.name_cn or ta.name, 'reason': '源属性未匹配'})
+
+    return jsonify({"ok": True, "category": cat, "text": text, "attributes": attrs, "missing": missing})
+
+
+@ozon_bp.route("/api/adaptation/<int:group_id>/auto-fill-apply", methods=["POST"])
+@login_required
+def api_adaptation_auto_fill_apply(group_id):
+    """应用自动填写结果"""
+    group = SourceProductGroup.get_or_none((SourceProductGroup.id == group_id) & (SourceProductGroup.user == current_user))
+    if not group: return jsonify({"ok": False, "error": "任务组不存在"}), 404
+    fact = ProductFact.get_or_none((ProductFact.user == current_user) & (ProductFact.group == group))
+    if not fact: return jsonify({"ok": False, "error": "请先保存商品事实"}), 400
+    adaptation = ListingAdaptation.get_or_none((ListingAdaptation.user == current_user) & (ListingAdaptation.fact == fact))
+    if not adaptation:
+        adaptation = ListingAdaptation.create(user=current_user, fact=fact, status='adapting')
+    data = request.get_json(silent=True) or {}
+    filled = 0
+
+    # 类目
+    cat = data.get('category') or {}
+    if cat.get('description_category_id') and cat.get('type_id'):
+        adaptation.ozon_category_id = cat['description_category_id']
+        adaptation.type_id = cat['type_id']
+        adaptation.type_name_ru = cat.get('type_name_ru') or cat.get('type_name', '')
+        adaptation.category_path = cat.get('path', '')
+        adaptation.status = 'adapting'
+        filled += 1
+
+    # 属性
+    attrs_data = data.get('attributes') or {}
+    if attrs_data:
+        existing = {}
+        if adaptation.attribute_mapping_json:
+            try: existing = json.loads(adaptation.attribute_mapping_json).get('attributes', {})
+            except: pass
+        for aid, v in attrs_data.items():
+            existing[str(aid)] = v
+        adaptation.attribute_mapping_json = json.dumps({'attributes': existing}, ensure_ascii=False)
+        filled += len(attrs_data)
+
+    # 文本
+    if data.get('title_ru'):
+        adaptation.title_ru = data['title_ru'][:300]
+        filled += 1
+    if data.get('description_ru'):
+        adaptation.description_ru = data['description_ru'][:50000]
+        filled += 1
+
+    adaptation.save()
+    return jsonify({"ok": True, "message": f"已应用 {filled} 项", "filled_count": filled})
+
+
 @ozon_bp.route("/api/adaptation/<int:group_id>/recommend-category", methods=["POST"])
 @login_required
 def api_recommend_category(group_id):

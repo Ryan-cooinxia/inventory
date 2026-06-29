@@ -222,6 +222,10 @@
         </div>
 
         <!-- 属性表单区 -->
+        <button class="btn btn-sm btn-success w-100 mb-2" id="btnAutoFillDraft" onclick="autoFillDraftPreview()" style="font-size:11px">
+          🤖 根据采集资料自动填写
+        </button>
+
         <div id="attributeFormSection" class="mt-2 d-none">
           <div class="d-flex justify-content-between align-items-center mb-1">
             <strong style="font-size:11px">属性字典:</strong>
@@ -526,6 +530,61 @@ function syncAttributesForType() { alert('请在属性字典页面点击同步�
 
 // 类目选择变更
 function onOzonCategoryChange(){}
+
+// ═══ 自动填写草稿 ═══
+function autoFillDraftPreview(){
+  var btn=document.getElementById('btnAutoFillDraft');
+  btn.disabled=true;btn.textContent='分析中...';
+  fetch('/ozon/api/adaptation/{{ group.id }}/auto-fill-preview',{method:'POST',headers:{'Accept':'application/json'}})
+  .then(r=>r.json()).then(d=>{
+    if(!d.ok) throw new Error(d.error);
+    var h='<div style=\"max-height:60vh;overflow-y:auto;font-size:11px\">';
+    // 类目
+    if(d.category){
+      h+='<div class=\"mb-2 p-1 bg-light rounded\"><b>📂 推荐类目:</b> '+escapeHtml(d.category.type_name||'')+' (dcid='+(d.category.description_category_id||'')+', type_id='+(d.category.type_id||'')+')<br><small class=\"text-muted\">来源: 源商品采集</small></div>';
+    }
+    // 属性
+    if(d.attributes&&d.attributes.length){
+      h+='<div class=\"mb-2\"><b>📋 属性建议 ('+d.attributes.length+'条):</b></div>';
+      h+='<table class=\"table table-sm table-bordered\" style=\"font-size:10px\"><tr><th>目标属性</th><th>建议值</th><th>来源</th></tr>';
+      d.attributes.forEach(function(a){
+        h+='<tr><td>'+escapeHtml(a.attribute_name||'')+'</td><td>'+escapeHtml(a.target_value||a.source_value||'')+'</td><td><span class=\"badge bg-info\">'+(a.confidence>=1?'精确匹配':'模糊匹配')+'</span></td></tr>';
+      });
+      h+='</table>';
+    }
+    // 文本
+    if(d.text){
+      h+='<div class=\"mb-2\"><b>📝 文本建议:</b></div>';
+      if(d.text.title_ru) h+='<div class=\"mb-1\"><b>标题:</b> <span class=\"text-success\">'+escapeHtml((d.text.title_ru.value||'').slice(0,80))+'...</span></div>';
+      if(d.text.description_ru) h+='<div class=\"mb-1\"><b>描述:</b> <span class=\"text-success\">'+(d.text.description_ru.value||'').length+' 字符</span></div>';
+    }
+    // 缺失
+    if(d.missing&&d.missing.length){
+      h+='<div class=\"alert alert-warning py-1\"><b>⚠️ 缺失项:</b> '+d.missing.map(function(m){return m.field;}).join(', ')+'</div>';
+    }
+    h+='</div>';
+    h+='<div class=\"d-flex gap-2 mt-2\"><button class=\"btn btn-sm btn-success\" onclick=\"applyAutoFill()\">✅ 应用全部</button><button class=\"btn btn-sm btn-secondary\" onclick=\"closeAutoFillModal()\">取消</button></div>';
+    showModal('自动填写预览', h);
+  }).catch(e=>alert('自动填写失败: '+e.message))
+  .finally(function(){btn.disabled=false;btn.textContent='🤖 根据采集资料自动填写';});
+}
+
+function applyAutoFill(){
+  fetch('/ozon/api/adaptation/{{ group.id }}/auto-fill-apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({apply_all:true})})
+  .then(r=>r.json()).then(d=>{
+    if(!d.ok) throw new Error(d.error);
+    alert('✅ 已应用 '+d.filled_count+' 项'); closeAutoFillModal(); location.reload();
+  }).catch(e=>alert('应用失败: '+e.message));
+}
+
+function showModal(title,body){
+  var m=document.createElement('div');
+  m.id='autoFillModal';
+  m.innerHTML='<div style=\"position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1050;display:flex;align-items:center;justify-content:center\" onclick=\"if(event.target===this)closeAutoFillModal()\"><div style=\"background:#fff;border-radius:8px;padding:16px;max-width:600px;width:90%\"><h6>'+title+'</h6>'+body+'</div></div>';
+  document.body.appendChild(m);
+}
+function closeAutoFillModal(){ var m=document.getElementById('autoFillModal'); if(m)m.remove(); }
+function escapeHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 // ── 页面初始化：已有类目自动加载属性 ──
 (function(){
