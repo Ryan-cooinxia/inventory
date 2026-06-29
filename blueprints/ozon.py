@@ -3843,14 +3843,17 @@ def adaptation_workspace(source_id):
             # 加载字典属性值
             dict_attr_ids = [a.attribute_id for a in adaptation_attr_schema if a.is_dictionary]
             if dict_attr_ids:
+                wv = ((OzonAttributeValue.user == current_user) &
+                      (OzonAttributeValue.attribute_id.in_(dict_attr_ids)))
+                if adaptation.type_id:
+                    wv = wv & (OzonAttributeValue.type_id == adaptation.type_id)
                 val_records = list(OzonAttributeValue
                     .select()
-                    .where((OzonAttributeValue.user == current_user) &
-                           (OzonAttributeValue.attribute_id.in_(dict_attr_ids)))
+                    .where(wv)
                     .order_by(OzonAttributeValue.attribute_id, OzonAttributeValue.value_id))
                 for v in val_records:
                     adaptation_attr_values.setdefault(v.attribute_id, []).append({
-                        'value_id': v.value_id, 'value': v.value, 'info': v.info
+                        'value_id': v.value_id, 'value': v.value, 'value_cn': v.value_cn, 'info': v.info
                     })
 
         # 解析已保存的属性值
@@ -5535,14 +5538,21 @@ def api_get_category_attributes(cat_id):
     dict_attr_ids = [a.attribute_id for a in attr_list if a.is_dictionary]
     values_map = {}
     if dict_attr_ids:
+        where_val = ((OzonAttributeValue.user == current_user) &
+                     (OzonAttributeValue.attribute_id.in_(dict_attr_ids)))
+        if type_id:
+            where_val = where_val & (OzonAttributeValue.type_id == type_id)
         val_records = (OzonAttributeValue
                        .select()
-                       .where((OzonAttributeValue.user == current_user) &
-                              (OzonAttributeValue.attribute_id.in_(dict_attr_ids)))
+                       .where(where_val)
                        .order_by(OzonAttributeValue.attribute_id, OzonAttributeValue.value_id))
+        seen_val = set()
         for v in val_records:
+            key = (v.attribute_id, v.value_id)
+            if key in seen_val: continue
+            seen_val.add(key)
             values_map.setdefault(v.attribute_id, []).append({
-                'value_id': v.value_id, 'value': v.value, 'info': v.info
+                'value_id': v.value_id, 'value': v.value, 'value_cn': v.value_cn, 'info': v.info
             })
 
     attrs = [{
