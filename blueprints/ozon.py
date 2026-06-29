@@ -4612,9 +4612,31 @@ def api_recommend_category(group_id):
 
     recommendations = []
     MIC_KEYWORDS = ['микрофон','microphone','mic','麦克风','话筒']
+    FLASH_KEYWORDS = ['вспышк','синхронизатор','闪光','同步器','flash']
 
     def _make_rec(dcid, tid, tname_ru, tname_cn, path, conf, src, reason, evidence=None):
         return {'description_category_id': dcid, 'type_id': tid, 'type_name_ru': tname_ru, 'type_name_cn': tname_cn, 'path': path or '', 'confidence': conf, 'source': src, 'reason': reason, 'evidence': evidence or []}
+
+    def _detect_product_kind():
+        """从源属性+标题检测产品类别"""
+        src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
+        for sa in src_attrs:
+            t = ((sa.get('name') or sa.get('key') or '') + ' ' + str(sa.get('value') or sa.get('text') or '')).lower()
+            for kw in MIC_KEYWORDS:
+                if kw in t: return 'microphone'
+        search = ((fact.product_type if fact else '') + ' ' + (fact.standard_name_cn if fact else '') + ' ' + (source.title_cn if source else '')).lower()
+        for kw in MIC_KEYWORDS:
+            if kw in search: return 'microphone'
+        return ''
+
+    def _is_conflict(trec):
+        """检查推荐类目是否与源属性冲突"""
+        pk = _detect_product_kind()
+        if pk == 'microphone':
+            tn = ((trec.type_name_cn or '') + ' ' + (trec.type_name or '')).lower()
+            if any(kw in tn for kw in FLASH_KEYWORDS):
+                return True, '源商品属性明确为麦克风,该类目为闪光同步器,已自动排除'
+        return False, ''
 
     # ★ P0: 源采集类目
     src_dcid = raw.get('description_category_id') or raw.get('ozon_category_id') or raw.get('category_id') or ''
@@ -4622,60 +4644,56 @@ def api_recommend_category(group_id):
     if src_dcid and src_tid:
         trec = OzonCategoryType.get_or_none((OzonCategoryType.user == current_user) & (OzonCategoryType.description_category_id == src_dcid) & (OzonCategoryType.type_id == src_tid))
         if trec:
-            recommendations.append(_make_rec(src_dcid, src_tid, trec.type_name or '', trec.type_name_cn or '', trec.path or '', 1.0, 'source_collected_category', '优先采用源商品采集时的OZON类目/type', ['源商品来自OZON平台,采集时已包含类目信息']))
+            conflict, reason = _is_conflict(trec)
+            if not conflict:
+                recommendations.append(_make_rec(src_dcid, src_tid, trec.type_name or '', trec.type_name_cn or '', trec.path or '', 1.0, 'source_collected_category', '优先采用源商品采集时的OZON类目/type'))
 
-    # ★ P1: 当前已选
+    # ★ P1: 源属性强判断（优先级高于当前已选,避免错误强化）
+    product_cat = _detect_product_kind()
     adaptation = ListingAdaptation.get_or_none((ListingAdaptation.user == current_user) & (ListingAdaptation.fact == fact)) if fact else None
-    if adaptation and adaptation.type_id and not recommendations:
-        trec = OzonCategoryType.get_or_none((OzonCategoryType.user == current_user) & (OzonCategoryType.description_category_id == adaptation.ozon_category_id) & (OzonCategoryType.type_id == adaptation.type_id))
-        if trec:
-            src = 'manual' if adaptation.attribute_mapping_json else 'existing_selection'
-            recommendations.append(_make_rec(adaptation.ozon_category_id, adaptation.type_id, trec.type_name or '', trec.type_name_cn or '', trec.path or '', 0.95, src, '当前已选择的类目/type'))
 
-    # ★ P2: 源属性 + 标题关键词 → 找出产品类别
-    src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
-    product_cat = ''
-    for sa in src_attrs:
-        n = (sa.get('name') or sa.get('key') or '').lower()
-        v = str(sa.get('value') or sa.get('text') or '').lower()
-        for kw in MIC_KEYWORDS:
-            if kw in n or kw in v: product_cat = 'microphone'; break
-        if product_cat: break
-    if not product_cat and fact:
-        search = ((fact.product_type or '') + ' ' + (fact.standard_name_cn or '') + ' ' + (source.title_cn if source else '')).lower()
-        for kw in MIC_KEYWORDS:
-            if kw in search: product_cat = 'microphone'; break
-
-    # ★ P3: 关键词兜底
     if not recommendations and product_cat:
-        search = 'микрофон'
         types = list(OzonCategoryType.select().where(OzonCategoryType.user == current_user).order_by(OzonCategoryType.last_synced_at.desc()).limit(500))
         best = None
         for t in types:
-            n = (t.type_name_cn or t.type_name or '').lower()
-            if any(kw in n for kw in MIC_KEYWORDS):
-                if not best or t.last_synced_at > (best.last_synced_at if best else None):
+            tn = (t.type_name_cn or t.type_name or '').lower()
+            if any(kw in tn for kw in MIC_KEYWORDS):
+                if not best or (t.last_synced_at and best.last_synced_at and t.last_synced_at > best.last_synced_at):
                     best = t
         if best:
             evidence = []
+            src_attrs = raw.get('source_attributes') or []
             for sa in src_attrs[:5]:
                 n = (sa.get('name') or sa.get('key') or '')
                 v = sa.get('value') or sa.get('text') or ''
                 if any(kw in str(n).lower() for kw in MIC_KEYWORDS):
-                    evidence.append(f'源属性: {n}={v}')
-            recommendations.append(_make_rec(best.description_category_id, best.type_id, best.type_name or '', best.type_name_cn or '', best.path or '', 0.85, 'keyword_match_filtered', '源属性+标题均指向麦克风,优先匹配麦克风类目', evidence))
+                    evidence.append(f'{n}={v}')
+            recommendations.append(_make_rec(best.description_category_id, best.type_id, best.type_name or '', best.type_name_cn or '', best.path or '', 0.9, 'source_attr_inference', '源属性+标题均指向麦克风,优先匹配麦克风类目', evidence))
 
-    # ★ P4: 通用关键词兜底（去重+低置信）
+    # ★ P2: 当前已选（但必须与源属性无冲突）
+    if adaptation and adaptation.type_id and not recommendations:
+        trec = OzonCategoryType.get_or_none((OzonCategoryType.user == current_user) & (OzonCategoryType.description_category_id == adaptation.ozon_category_id) & (OzonCategoryType.type_id == adaptation.type_id))
+        if trec:
+            conflict, reason = _is_conflict(trec)
+            if not conflict:
+                recommendations.append(_make_rec(adaptation.ozon_category_id, adaptation.type_id, trec.type_name or '', trec.type_name_cn or '', trec.path or '', 0.85, 'existing_selection', '当前已选择的类目/type'))
+            else:
+                # 当前已选与源属性冲突 → 标记冲突但不推荐
+                recommendations.append(_make_rec(adaptation.ozon_category_id, adaptation.type_id, trec.type_name or '', trec.type_name_cn or '', trec.path or '', 0.0, 'conflict_excluded', reason))
+
+    # ★ P3: 关键词兜底
     if not recommendations:
         search = ((fact.product_type if fact else '') + ' ' + (fact.standard_name_cn if fact else '') + ' ' + (source.title_cn if source else '')).lower()
         types = list(OzonCategoryType.select().where(OzonCategoryType.user == current_user).order_by(OzonCategoryType.last_synced_at.desc()).limit(300))
         seen = set()
         for t in types:
-            n = (t.type_name_cn or t.type_name or '').lower()
-            score = sum(1 for w in search.split() if w in n)
-            if score > 0 and n not in seen:
-                seen.add(n)
-                recommendations.append(_make_rec(t.description_category_id, t.type_id, t.type_name or '', t.type_name_cn or '', t.path or '', min(score/max(len(search.split()),1),0.6), 'keyword_match', '关键词匹配兜底'))
+            tn = (t.type_name_cn or t.type_name or '').lower()
+            conflict, _ = _is_conflict(t)
+            if conflict: continue
+            score = sum(1 for w in search.split() if w in tn)
+            if score > 0 and tn not in seen:
+                seen.add(tn)
+                recommendations.append(_make_rec(t.description_category_id, t.type_id, t.type_name or '', t.type_name_cn or '', t.path or '', min(score/max(len(search.split()),1),0.5), 'keyword_match', '关键词匹配兜底'))
 
     recommendations.sort(key=lambda x: -x['confidence'])
     return jsonify({"ok": True, "categories": recommendations[:5], "count": len(recommendations)})
