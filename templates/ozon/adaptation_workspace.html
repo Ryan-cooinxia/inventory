@@ -47,8 +47,10 @@
           {% if pricing and pricing.reference_price_rub %}
           <span class="text-danger">₽{{ '{:,.0f}'.format(pricing.reference_price_rub) }}</span>
           <small class="text-muted">（非采购价）</small>
+          <button class="btn btn-sm btn-outline-warning" style="font-size:9px;padding:1px 4px;margin-left:4px" onclick="editReferencePrice({{ source.id }})" title="修改参考售价">✏️ 修改</button>
           {% else %}
-          <span class="text-muted">未识别</span>
+          <span class="text-warning">未识别</span>
+          <button class="btn btn-sm btn-outline-warning" style="font-size:9px;padding:1px 4px;margin-left:4px" onclick="editReferencePrice({{ source.id }})" title="手动输入 OZON 页面上的卢布价格">✏️ 手动填写</button>
           {% endif %}
         </div>
         {% endif %}
@@ -674,6 +676,26 @@ function openSourceGallery() {
   }
   overlay.style.display = 'block';
   document.body.style.overflow = 'hidden';
+}
+
+function editReferencePrice(sourceId) {
+  var input = prompt('请输入 OZON 页面上的卢布售价（数字即可），例如 32083：');
+  if (!input) return;
+  var m = input.replace(/[\s   ₽рубRUB]/gi, '').match(/(\d{3,})/);
+  if (!m) { alert('无法识别，请输入纯数字如 32083'); return; }
+  var price = parseInt(m[1], 10);
+  if (price < 100) { alert('价格太小，请检查输入'); return; }
+  fetch('/ozon/api/source/' + sourceId + '/reference-price', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({reference_price_rub: price})
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.ok) { location.reload(); }
+    else { alert('保存失败: ' + (d.error || '未知')); }
+  })
+  .catch(function(e) { alert('网络错误: ' + e.message); });
 }
 
 function removeSourceVideo(mediaId, btn) {

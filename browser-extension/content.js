@@ -274,6 +274,7 @@
           '<button class="btn-collect" id="ozon-btn-auto-rt" style="background:#20c997;margin-top:3px;font-size:10px;padding:4px 8px">📝 仅采富文本</button>' +
           '<button class="btn-collect" id="ozon-btn-video" style="background:#0d6efd;margin-top:3px;font-size:10px;padding:4px 8px">🎬 仅采视频</button>' +
           '<button class="btn-collect" id="ozon-btn-selection" style="background:#6c757d;margin-top:3px;font-size:10px;padding:4px 8px">📋 选中文本</button>' +
+          '<button class="btn-collect" id="ozon-btn-price" style="background:#ffc107;color:#333;margin-top:3px;font-size:10px;padding:4px 8px">💰 重新识别价格</button>' +
           '</div></details>' :
           '<button class="btn-collect" id="ozon-btn-submit">📥 一键采集入库</button>'
         ) +
@@ -305,6 +306,46 @@
       } else {
         if (st) st.innerHTML = '<span style="color:#dc3545;">请先用鼠标选中OZON描述区域再点此按钮</span>';
       }
+    });
+
+    // 💰 重新识别价格按钮（自动扫描 → 失败才弹手动输入）
+    var priceBtn = document.getElementById('ozon-btn-price');
+    if (priceBtn) priceBtn.addEventListener('click', function() {
+      var st = document.getElementById('ozon-submit-status');
+      if (st) st.innerHTML = '<span style="color:#ffc107;">🔍 正在重新扫描价格...</span>';
+      var pricing = null;
+      try {
+        // 先滚动到价格区域
+        var priceEls = document.querySelectorAll('[data-widget*="webPrice"], [data-widget*="webSaleBlock"], [data-widget*="webStickyProducts"]');
+        if (priceEls.length > 0) {
+          try { priceEls[0].scrollIntoView({ behavior: 'instant', block: 'center' }); } catch(e) {}
+        }
+        // 等 500ms 让懒加载完成
+        pricing = extractOzonPricing(null);
+      } catch(e) {}
+      // 自动识别成功
+      if (pricing && pricing.reference_price_rub) {
+        var p = pricing.reference_price_rub;
+        if (!window.__ozonExtractedData) window.__ozonExtractedData = {};
+        window.__ozonExtractedData.pricing = pricing;
+        if (st) st.innerHTML = '<span style="color:#198754;">✅ 价格已识别: ' + p + ' RUB（点击"一键采集"提交入库）</span>';
+        return;
+      }
+      // 自动失败 → 手动输入兜底
+      var input = prompt('未能自动识别价格。请手动输入 OZON 页面卢布售价（数字即可），例如 32083：');
+      if (!input) return;
+      var clean = input.replace(/[\s   ₽рубRUB]/gi, '');
+      var m = clean.match(/(\d{3,})/);
+      if (!m) { alert('无法识别有效数字'); return; }
+      var price = parseInt(m[1], 10);
+      if (!price || price < 100) { alert('价格无效'); return; }
+      if (!window.__ozonExtractedData) window.__ozonExtractedData = {};
+      window.__ozonExtractedData.pricing = window.__ozonExtractedData.pricing || {};
+      window.__ozonExtractedData.pricing.reference_price_rub = price;
+      window.__ozonExtractedData.pricing.currency = 'RUB';
+      window.__ozonExtractedData.pricing.source = 'manual_input';
+      window.__ozonExtractedData.pricing.confidence = 'high';
+      if (st) st.innerHTML = '<span style="color:#198754;">✅ 已手动补录: ' + price + ' RUB（点击"一键采集"提交入库）</span>';
     });
 
     // 📝 自动抓取富文本按钮
@@ -3610,7 +3651,7 @@ function scrapeRichTextBySelection() {
     // ★ 兜底：body.textContent 全局扫描
     if (!result.reference_price_rub) {
       var body = (document.body.textContent||'').replace(/[\s   ]/g, ' ');
-      var brx = /(\d[\d\s]{2,})\s*[' + RUB + ']/g, bm;
+      var brx = new RegExp('(\\d[\\d\\s]{2,})\\s*[' + RUB + ']', 'g'), bm;
       while ((bm = brx.exec(body)) !== null) {
         var bv = parseInt(bm[1].replace(/\s/g, ''), 10);
         if (bv > 100) add(bv, 'body_fallback', 'low', bm[0]);

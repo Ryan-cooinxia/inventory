@@ -2187,6 +2187,37 @@ def api_reject_source_media(media_id):
     return jsonify({'ok': True, 'message': '媒体已移除', 'media_id': media.id})
 
 
+@ozon_bp.route('/api/source/<int:source_id>/reference-price', methods=['POST'])
+@login_required
+def api_update_reference_price(source_id):
+    """更新 OZON 参考售价"""
+    source = OzonSource.get_or_none((OzonSource.id == source_id) & (OzonSource.user == current_user))
+    if not source:
+        return jsonify({'ok': False, 'error': '来源不存在'}), 404
+
+    data = request.get_json(silent=True) or {}
+    price = data.get('reference_price_rub')
+    try: price = int(price)
+    except: return jsonify({'ok': False, 'error': '无效价格'}), 400
+    if price < 100 or price > 10000000:
+        return jsonify({'ok': False, 'error': '价格超出范围'}), 400
+
+    raw = {}
+    try: raw = json.loads(source.raw_json or '{}')
+    except: raw = {}
+
+    pricing = raw.get('pricing') or {}
+    pricing['reference_price_rub'] = price
+    pricing['currency'] = 'RUB'
+    pricing['source'] = 'manual'
+    pricing['confirmed'] = True
+    raw['pricing'] = pricing
+    source.raw_json = json.dumps(raw, ensure_ascii=False)
+    source.save()
+
+    return jsonify({'ok': True, 'reference_price_rub': price, 'message': '参考售价已更新'})
+
+
 @ozon_bp.route('/api/source-media/<int:source_id>/upload', methods=['POST'])
 @login_required
 def api_upload_source_media(source_id):
