@@ -3725,6 +3725,99 @@ def _infer_group_key(field_path):
     if any(k in fp for k in ["safety", "certification"]): return "safety"
     return "custom"
 
+# ── 源资料本地化（模块级常量）──
+SOURCE_ATTR_TR = {
+    'артикул':'货号','тип':'类型','вид микрофона':'麦克风类型','технология микрофона':'麦克风技术',
+    'крепление микрофона':'麦克风固定方式','диаграмма направленности':'指向性','цвет':'颜色',
+    'подключение':'连接方式','вес товара, г':'商品重量(g)','вес товара':'商品重量',
+    'количество в упаковке, шт':'包装数量','гарантия':'保修期','страна-изготовитель':'产地',
+    'бренд':'品牌','модель':'型号','назначение':'用途','особенности':'特性','размеры':'尺寸',
+    'совместимость':'兼容性','емкость аккумулятора':'电池容量','материал':'材质',
+}
+SOURCE_VAL_TR = {
+    'микрофон':'麦克风','универсальный':'通用','динамический':'动圈式','петличный':'领夹式',
+    'всенаправленная':'全向','прозрачный':'透明','черный':'黑色','прозрачный, черный':'透明、黑色',
+    'беспроводное':'无线','китай':'中国','3 месяца':'3个月','1 год':'1年','белый':'白色',
+    'красный':'红色','синий':'蓝色','зеленый':'绿色','серый':'灰色','металл':'金属','пластик':'塑料',
+}
+
+def _build_localized_view(source, fact, src_attrs, user, adaptation=None):
+    """从OZON字典+硬编码表构建源属性本地化显示，结果缓存到raw_json.localized"""
+    import re
+    raw = {}
+    if source:
+        try: raw = json.loads(source.raw_json or '{}')
+        except: raw = {}
+    # 优先读缓存
+    cached = raw.get('localized') or {}
+    cached_attrs = cached.get('source_attributes') or {}
+    result_attrs = []
+    # 查OZON字典翻译
+    attr_cn_map = {}; val_cn_map = {}
+    if adaptation and adaptation.type_id:
+        tgt = list(OzonCategoryAttribute.select().where(
+            (OzonCategoryAttribute.user == user) & (OzonCategoryAttribute.type_id == adaptation.type_id)))
+        for a in tgt:
+            if a.name: attr_cn_map[a.name.strip().lower()] = a.name_cn or a.name
+        dids = [a.attribute_id for a in tgt if a.is_dictionary]
+        if dids:
+            for v in OzonAttributeValue.select().where(
+                (OzonAttributeValue.user == user) & (OzonAttributeValue.type_id == adaptation.type_id) &
+                (OzonAttributeValue.attribute_id.in_(dids))):
+                if v.value: val_cn_map[v.value.strip().lower()] = v.value_cn or v.value
+
+    for a in (src_attrs or []):
+        n_ru = (a.get('name') or a.get('key') or '').strip()
+        v_ru = str(a.get('value') or a.get('text') or '')
+        ck = (n_ru+'='+v_ru).lower()
+        cc = cached_attrs.get(ck, {}) if isinstance(cached_attrs, dict) else {}
+        n_cn = cc.get('name_cn') or attr_cn_map.get(n_ru.lower()) or SOURCE_ATTR_TR.get(n_ru.lower(), '')
+        v_cn = cc.get('value_cn') or val_cn_map.get(v_ru.lower()) or SOURCE_VAL_TR.get(v_ru.lower(), '')
+        # 多值拆分翻译
+        if not v_cn and ',' in v_ru:
+            parts = [p.strip() for p in v_ru.split(',')]
+            tps = [SOURCE_VAL_TR.get(p.lower(), '') for p in parts]
+            if all(tps): v_cn = '、'.join(tps)
+        result_attrs.append({'name_cn':n_cn,'name_ru':n_ru,'value_cn':v_cn,'value_ru':v_ru,'source':a.get('source','')})
+
+    return {'attributes': result_attrs}
+
+@ozon_bp.route('/api/source/<int:source_id>/translate-materials', methods=['POST'])
+@login_required
+def api_translate_source_materials(source_id):
+    """翻译源资料（属性名/值）并缓存到raw_json.localized"""
+    source = OzonSource.get_or_none((OzonSource.id == source_id) & (OzonSource.user == current_user))
+    if not source: return jsonify({'ok':False,'error':'源不存在'}), 404
+    raw = {}
+    try: raw = json.loads(source.raw_json or '{}')
+    except: raw = {}
+    src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
+    # 用全局OZON字典兜底
+    avals = list(OzonAttributeValue.select().where(OzonAttributeValue.user == current_user).limit(5000))
+    gval = {}
+    for v in avals:
+        if v.value and v.value_cn: gval[v.value.strip().lower()] = v.value_cn
+    cached = {}
+    for a in src_attrs:
+        n = (a.get('name') or a.get('key') or '').strip()
+        v = str(a.get('value') or a.get('text') or '')
+        ck = (n+'='+v).lower()
+        nc = SOURCE_ATTR_TR.get(n.lower(), '') or ''
+        vc = gval.get(v.lower(), '') or SOURCE_VAL_TR.get(v.lower(), '')
+        if not vc and ',' in v:
+            pts = [p.strip() for p in v.split(',')]
+            tps = [gval.get(p.lower()) or SOURCE_VAL_TR.get(p.lower(), '') for p in pts]
+            if all(tps): vc = '、'.join(tps)
+        cached[ck] = {'name_cn': nc, 'value_cn': vc}
+    localized = raw.get('localized') or {}
+    localized['source_attributes'] = cached
+    localized['translated_at'] = datetime.datetime.now().isoformat()
+    raw['localized'] = localized
+    source.raw_json = json.dumps(raw, ensure_ascii=False)
+    source.save()
+    return jsonify({'ok':True,'message':f'已翻译 {len(cached)} 条属性','count':len(cached)})
+
+
 @ozon_bp.route('/adaptation/<int:source_id>')
 @login_required
 def adaptation_workspace(source_id):
@@ -3894,6 +3987,7 @@ def adaptation_workspace(source_id):
     pricing = raw.get('pricing') or {}
     rich_text = raw.get('rich_text') or {}
     source_attributes = raw.get('source_attributes') or raw.get('specs_json') or []
+    localized_source = _build_localized_view(source, fact, source_attributes, current_user, adaptation)
     # ── 自动映射 OZON 俄语属性到 ProductFact（空字段补全 + 清理 unknown_fields）──
     if source.platform == 'ozon_product' and fact and source_attributes:
         try:
@@ -4059,6 +4153,7 @@ def adaptation_workspace(source_id):
                            collection_summary=collection_summary,
                            pricing=pricing, rich_text=rich_text,
                            source_attributes=source_attributes,
+                           localized_source=localized_source,
                            video_media=video_media,
                            video_media_parsed=video_media_parsed,
                            rejected_video_candidates=rejected_video_candidates,

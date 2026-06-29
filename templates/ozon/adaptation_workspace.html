@@ -1145,24 +1145,56 @@ function submitManualUpload() {
 
 
         <!-- V4: 源产品属性字典 -->
-        {% if source_attributes %}
+        {% set display_attrs = localized_source.attributes if localized_source and localized_source.attributes else [] %}
+        {% if display_attrs or source_attributes %}
         <div class="card mt-2">
-          <div class="card-header py-1 d-flex justify-content-between">
+          <div class="card-header py-1 d-flex justify-content-between align-items-center">
             <strong style="font-size:12px">源产品属性字典</strong>
-            <span class="badge bg-secondary" style="font-size:10px">{{ source_attributes|length }} 条</span>
+            <div>
+              <span class="badge bg-secondary" style="font-size:10px">{{ source_attributes|length }} 条</span>
+              <button class="btn btn-sm btn-outline-info ms-1" style="font-size:9px;padding:1px 6px" onclick="translateSourceAttrs()">🌐 翻译源资料</button>
+            </div>
           </div>
           <div class="card-body p-1" style="max-height:200px;overflow-y:auto;font-size:11px">
             <table class="table table-sm mb-0" style="font-size:10px">
               <thead><tr><th>属性</th><th>值</th><th>来源</th></tr></thead>
               <tbody>
+              {% if display_attrs %}
+              {% for a in display_attrs[:50] %}
+                <tr>
+                  <td>
+                    <strong>{{ a.name_cn or a.name_ru }}</strong>
+                    {% if a.name_cn and a.name_ru and a.name_cn != a.name_ru %}<br><small class="text-muted">{{ a.name_ru }}</small>{% endif %}
+                  </td>
+                  <td>
+                    <span>{{ a.value_cn or a.value_ru }}</span>
+                    {% if a.value_cn and a.value_ru and a.value_cn != a.value_ru %}<br><small class="text-muted">{{ a.value_ru }}</small>{% endif %}
+                  </td>
+                  <td class="text-muted">{{ a.source }}</td>
+                </tr>
+              {% endfor %}
+              {% else %}
               {% for a in source_attributes[:50] %}
                 <tr><td>{{ a.get('name','') }}</td><td>{{ a.get('value','') }}</td><td class="text-muted">{{ a.get('source','') }}</td></tr>
               {% endfor %}
+              {% endif %}
               </tbody>
             </table>
           </div>
         </div>
         {% endif %}
+
+<script>
+function translateSourceAttrs(){
+  var b = event.target; b.disabled = true; b.textContent = '翻译中...';
+  fetch('/ozon/api/source/{{ source.id if source else 0 }}/translate-materials', {method:'POST',headers:{'Accept':'application/json'}})
+  .then(r=>r.json()).then(d=>{
+    if(!d.ok) throw new Error(d.error);
+    alert('✅ 已翻译 '+d.count+' 条'); location.reload();
+  }).catch(e=>alert('翻译失败: '+e.message))
+  .finally(function(){ b.disabled=false; b.textContent='🌐 翻译源资料'; });
+}
+</script>
 
         <!-- V4: 源商品视频 -->
         {% if video_media_parsed %}
