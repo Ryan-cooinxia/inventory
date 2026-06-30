@@ -3140,13 +3140,29 @@ def listing_review(draft_id):
         except: raw = {}
         pricing = raw.get('pricing') or {}
 
+    # 解析已保存属性
+    draft_attrs = {}
+    try: draft_attrs = json.loads(draft.attributes_json or '{}')
+    except: draft_attrs = {}
+    if 'attributes' not in draft_attrs: draft_attrs = {'attributes': draft_attrs}
+
+    # 源属性双语显示
+    src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
+    source_attrs_display = []
+    for a in src_attrs[:20]:
+        n_ru = a.get('name','') or a.get('key','')
+        v_ru = str(a.get('value','') or a.get('text',''))
+        source_attrs_display.append({'name_ru':n_ru,'value_ru':v_ru,'source':a.get('source','')})
+
     return render_template('ozon/listing_review.html',
                            draft=draft,
                            validation=validation,
                            skus_with_images=skus_with_images,
                            total_slots=total_slots,
                            approved_slots=approved_slots,
-                           raw=raw, pricing=pricing)
+                           raw=raw, pricing=pricing,
+                           draft_attrs=draft_attrs,
+                           source_attrs_display=source_attrs_display)
 
 
 @ozon_bp.route('/listings/<int:draft_id>/save', methods=['POST'])
@@ -6515,28 +6531,45 @@ def api_draft_auto_fill_apply(draft_id):
         src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
         bullets = ['• ' + (a.get('name','') + ': ' + str(a.get('value',''))) for a in src_attrs[:8] if a.get('name') and a.get('value')]
         if bullets: draft.bullets_ru = json.dumps(bullets, ensure_ascii=False); filled += 1
-    # 属性
-    if draft.ozon_category_id and draft.type_id and data.get('apply_all') != False:
+    # 属性（双语匹配+字典值匹配）
+    if draft.ozon_category_id and draft.type_id:
         saved = {}
         if draft.attributes_json:
             try: saved = json.loads(draft.attributes_json)
             except: saved = {}
-        src_attrs = raw.get('source_attributes') or []
+        if not isinstance(saved, dict) or 'attributes' not in saved:
+            saved = {'attributes': {}}
+        src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
         tgt_attrs = list(OzonCategoryAttribute.select().where((OzonCategoryAttribute.user == current_user) & (OzonCategoryAttribute.ozon_category_id == draft.ozon_category_id) & (OzonCategoryAttribute.type_id == draft.type_id)))
+        # 字典值缓存
+        dict_ids = [a.attribute_id for a in tgt_attrs if a.is_dictionary]
+        tgt_vals = {}
+        if dict_ids:
+            for v in OzonAttributeValue.select().where((OzonAttributeValue.user == current_user) & (OzonAttributeValue.type_id == draft.type_id) & (OzonAttributeValue.attribute_id.in_(dict_ids))):
+                tgt_vals.setdefault(v.attribute_id, []).append(v)
         for ta in tgt_attrs:
             aid = str(ta.attribute_id)
-            if aid in (saved.get('attributes',{}) if isinstance(saved,dict) else saved): continue
-            tname = (ta.name_cn or ta.name or '').lower()
+            if aid in saved.get('attributes',{}): continue
+            tname = (ta.name_cn + ' ' + ta.name).lower()
             for sa in src_attrs:
-                sname = (sa.get('name') or sa.get('key') or '').lower()
-                if sname in tname or tname in sname:
-                    if isinstance(saved, dict) and 'attributes' not in saved: saved = {'attributes': {}}
-                    saved.setdefault('attributes', {})[aid] = {'value': sa.get('value',''), 'source': 'auto_fill'}
+                sname = ((sa.get('name_cn') or '') + ' ' + (sa.get('name') or '') + ' ' + (sa.get('key') or '')).lower()
+                if sname in tname or tname in sname or any(w in sname for w in tname.split() if len(w)>2):
+                    val = str(sa.get('value_cn') or sa.get('value') or '')
+                    entry = {'value': val, 'source': 'auto_fill', 'attribute_name': ta.name_cn or ta.name}
+                    if ta.is_dictionary and ta.attribute_id in tgt_vals:
+                        for tv in tgt_vals[ta.attribute_id]:
+                            if (tv.value_cn or tv.value or '').lower() == val.lower():
+                                entry['value_id'] = tv.value_id
+                                entry['value_cn'] = tv.value_cn
+                                entry['value_ru'] = tv.value
+                                break
+                    saved['attributes'][aid] = entry; filled += 1
                     break
         draft.attributes_json = json.dumps(saved, ensure_ascii=False)
-        filled += len(saved.get('attributes', {}))
     draft.save()
-    return jsonify({"ok": True, "filled_count": filled, "message": f"已应用 {filled} 项"})
+    return jsonify({"ok": True, "filled_count": filled, "saved_attributes": saved.get('attributes',{}),
+                    "dcid": draft.ozon_category_id, "type_id": draft.type_id,
+                    "message": f"已应用 {filled} 项"})
 
 @ozon_bp.route('/api/draft/<int:draft_id>/save-attributes', methods=['POST'])
 @login_required

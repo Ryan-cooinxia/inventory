@@ -101,7 +101,12 @@
             <tr><th>SKU</th><th>颜色</th><th>数量</th><th>采购价</th></tr>
             {% if draft.draft_skus.count() %}
             {% for sku in draft.draft_skus %}
-            <tr><td>{{ sku.source_sku_name[:40] }}</td><td>{{ sku.color_ru or '-' }}</td><td>{{ sku.bundle_quantity or 1 }}</td><td>{% if sku.purchase_price_cny %}¥{{ '{:,.2f}'.format(sku.purchase_price_cny) }}{% else %}-{% endif %}</td></tr>
+            <tr>
+              <td><input class="form-control form-control-sm" name="sku_name_{{ loop.index0 }}" value="{{ sku.source_sku_name }}" style="font-size:10px;width:120px"></td>
+              <td><input class="form-control form-control-sm" name="sku_color_{{ loop.index0 }}" value="{{ sku.color_ru or '' }}" style="font-size:10px;width:80px"></td>
+              <td><input class="form-control form-control-sm" name="sku_qty_{{ loop.index0 }}" value="{{ sku.bundle_quantity or 1 }}" type="number" style="font-size:10px;width:60px"></td>
+              <td><input class="form-control form-control-sm" name="sku_price_{{ loop.index0 }}" value="{{ sku.purchase_price_cny or '' }}" placeholder="¥" style="font-size:10px;width:80px"></td>
+            </tr>
             {% endfor %}
             {% else %}
             <tr><td colspan="4" class="text-muted">暂无 SKU 数据</td></tr>
@@ -207,7 +212,7 @@ function loadDraftAttrs(){
   .then(r=>r.json()).then(d=>{
     if(!d.ok||!d.attrs){panel.innerHTML='<div class="alert alert-warning">暂无属性,请同步</div>';return;}
     var h='',saved={};
-    try{saved=JSON.parse('{{ draft.attributes_json or "{}" | safe }}');}catch(e){}
+    try{saved = {{ draft_attrs|tojson }};}catch(e){}
     if(saved.attributes) saved=saved.attributes;
     d.attrs.forEach(function(a){
       var aid=String(a.attribute_id),sv=saved[aid]||{},sVal=typeof sv==='object'?sv.value||'':sv,sVid=typeof sv==='object'?sv.value_id||'':'';
