@@ -548,6 +548,8 @@ class OzonDraft(BaseModel):
     attributes_json = TextField(null=True)                        # 类目属性 JSON
     skus_json = TextField(null=True)                              # SKU 数据 JSON（快照）
     pricing_json = TextField(null=True)                           # 定价数据 JSON
+    media_json = TextField(null=True)                             # 草稿媒体池 JSON（图片+视频统一管理）
+    rich_content_json = TextField(null=True)                      # 富文本块 JSON（替代追加到 description_ru）
     ai_title_confidence = FloatField(null=True)                   # AI 标题置信度
     ai_description_confidence = FloatField(null=True)
     ai_bullets_confidence = FloatField(null=True)
@@ -579,6 +581,7 @@ class OzonDraftSku(BaseModel):
     bundle_quantity = IntegerField(default=1)
     purchase_price_cny = FloatField(null=True)
     offer_id = CharField(max_length=100, null=True)               # OZON offer_id
+    barcode = CharField(max_length=100, null=True)                # 条码
     ozon_sku_id = CharField(max_length=50, null=True)             # OZON SKU ID
     created_at = DateTimeField(default=datetime.datetime.now)
 

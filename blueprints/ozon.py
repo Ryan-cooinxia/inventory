@@ -3156,8 +3156,34 @@ def listing_review(draft_id):
 
     # 源图片
     source_media = []
+    source_media_json = []
     if draft.source:
         source_media = list(OzonSourceMedia.select().where(OzonSourceMedia.source == draft.source).limit(20))
+        for sm in source_media:
+            source_media_json.append({
+                'url': (sm.source_url or sm.local_path or ''),
+                'role': (sm.role or ''),
+                'id': sm.id
+            })
+
+    # 颜色属性（由当前 type 的 Schema 决定是否必填）
+    COLOR_ALIASES = ["商品颜色", "颜色", "Цвет", "Цвет товара", "color", "colour"]
+    color_attr = None
+    if draft.ozon_category_id and draft.type_id:
+        attrs = list(OzonCategoryAttribute.select().where(
+            (OzonCategoryAttribute.user == current_user) &
+            (OzonCategoryAttribute.ozon_category_id == draft.ozon_category_id) &
+            (OzonCategoryAttribute.type_id == draft.type_id)
+        ))
+        for a in attrs:
+            name_lower = ((a.name_cn or '') + ' ' + (a.name or '')).lower()
+            if any(alias.lower() in name_lower for alias in COLOR_ALIASES):
+                color_attr = {'attribute_id': a.attribute_id, 'name': a.name,
+                              'name_cn': a.name_cn, 'is_required': a.is_required}
+                break
+
+    # 解析媒体池
+    media = _load_media_json(draft)
 
     return render_template('ozon/listing_review.html',
                            draft=draft,
@@ -3168,7 +3194,10 @@ def listing_review(draft_id):
                            raw=raw, pricing=pricing,
                            draft_attrs=draft_attrs,
                            source_attrs_display=source_attrs_display,
-                           source_media=source_media)
+                           source_media=source_media,
+                           source_media_json=source_media_json,
+                           color_attr=color_attr,
+                           media=media)
 
 
 @ozon_bp.route('/listings/<int:draft_id>/save', methods=['POST'])
@@ -3188,16 +3217,34 @@ def listing_save(draft_id):
     draft.ozon_category_path = request.form.get('ozon_category_path') or draft.ozon_category_path
     draft.price_manual_confirmed = request.form.get('price_manual_confirmed') == '1'
     draft.updated_at = datetime.datetime.now()
+
+    # 保存刊登价到 pricing_json
+    listing_price = request.form.get('listing_price', '').strip()
+    listing_currency = request.form.get('listing_currency', 'RUB').strip()
+    pricing = {}
+    try:
+        pricing = json.loads(draft.pricing_json or '{}')
+    except (json.JSONDecodeError, TypeError):
+        pricing = {}
+    if listing_price:
+        pricing['listing_price'] = listing_price
+    if listing_currency:
+        pricing['listing_currency'] = listing_currency
+    draft.pricing_json = json.dumps(pricing, ensure_ascii=False)
     draft.save()
 
-    # 保存 SKU 颜色/款式
+    # 保存 SKU 数据（使用数据库 ID 匹配的名称）
     for sku in draft.draft_skus:
-        color_key = f'color_ru_{sku.id}'
-        style_key = f'style_ru_{sku.id}'
-        if color_key in request.form:
-            sku.color_ru = request.form[color_key] or None
-        if style_key in request.form:
-            sku.style_ru = request.form[style_key] or None
+        sku.offer_id = request.form.get(f'offer_id_{sku.id}') or sku.offer_id
+        sku.color_ru = request.form.get(f'color_ru_{sku.id}') or None
+        sku.style_ru = request.form.get(f'style_ru_{sku.id}') or None
+        sku.barcode = request.form.get(f'barcode_{sku.id}') or None
+        qty = request.form.get(f'bundle_qty_{sku.id}', '')
+        if qty:
+            try:
+                sku.bundle_quantity = int(qty)
+            except ValueError:
+                pass
         sku.save()
 
     flash('草稿已保存', 'success')
@@ -3219,8 +3266,63 @@ def listing_validate(draft_id):
     checks.append({'label': '俄语标题已填写', 'pass': bool(draft.title_ru), 'blocking': True, 'level': 'error' if not draft.title_ru else 'success'})
     checks.append({'label': 'OZON 类目已选择', 'pass': bool(draft.ozon_category_id or draft.ozon_category_path), 'blocking': True, 'level': 'error' if not (draft.ozon_category_id or draft.ozon_category_path) else 'success'})
     checks.append({'label': '缺少 SKU 数据', 'pass': draft.draft_skus.count() > 0, 'blocking': True, 'level': 'error' if draft.draft_skus.count() == 0 else 'success'})
-    checks.append({'label': '价格已人工确认', 'pass': draft.price_manual_confirmed, 'blocking': True, 'level': 'error' if not draft.price_manual_confirmed else 'success'})
-    checks.append({'label': '图片全部审核通过', 'pass': _all_slots_approved(draft), 'blocking': True, 'level': 'error' if not _all_slots_approved(draft) else 'success'})
+
+    # 价格校验
+    pricing = {}
+    try:
+        pricing = json.loads(draft.pricing_json or '{}')
+    except (json.JSONDecodeError, TypeError):
+        pricing = {}
+    checks.append({'label': '刊登价已填写', 'pass': bool(pricing.get('listing_price')), 'blocking': True,
+                   'level': 'error' if not pricing.get('listing_price') else 'success'})
+    checks.append({'label': '刊登币种已选择', 'pass': bool(pricing.get('listing_currency')), 'blocking': True,
+                   'level': 'error' if not pricing.get('listing_currency') else 'success'})
+    checks.append({'label': '价格已人工确认', 'pass': draft.price_manual_confirmed, 'blocking': True,
+                   'level': 'error' if not draft.price_manual_confirmed else 'success'})
+
+    # SKU offer_id 校验
+    all_have_offer = all(sk.offer_id for sk in draft.draft_skus)
+    checks.append({'label': '所有 SKU 已填 offer_id', 'pass': all_have_offer, 'blocking': True,
+                   'level': 'error' if not all_have_offer else 'success'})
+
+    # 颜色仅当 Schema 要求时才阻断
+    COLOR_ALIASES = ["商品颜色", "颜色", "Цвет", "Цвет товара", "color", "colour"]
+    color_required = False
+    if draft.ozon_category_id and draft.type_id:
+        attrs = list(OzonCategoryAttribute.select().where(
+            (OzonCategoryAttribute.user == current_user) &
+            (OzonCategoryAttribute.ozon_category_id == draft.ozon_category_id) &
+            (OzonCategoryAttribute.type_id == draft.type_id)
+        ))
+        for a in attrs:
+            name_lower = ((a.name_cn or '') + ' ' + (a.name or '')).lower()
+            if any(alias.lower() in name_lower for alias in COLOR_ALIASES):
+                color_required = a.is_required
+                break
+    if color_required:
+        missing_color_skus = [sk.source_sku_name for sk in draft.draft_skus if not sk.color_ru]
+        checks.append({'label': '商品颜色已填写（当前类目必填）',
+                       'pass': len(missing_color_skus) == 0, 'blocking': True,
+                       'level': 'success' if len(missing_color_skus) == 0 else 'error'})
+    else:
+        checks.append({'label': '商品颜色（当前类目非必填）', 'pass': True, 'blocking': False, 'level': 'success'})
+
+    # 媒体校验
+    media = _load_media_json(draft)
+    images = media.get('images', [])
+    selected_imgs = [i for i in images if i.get('selected')]
+    has_main = any(i.get('role') == 'main' for i in selected_imgs)
+    checks.append({'label': '至少有 1 张已选图片', 'pass': len(selected_imgs) > 0, 'blocking': True,
+                   'level': 'success' if selected_imgs else 'error'})
+    checks.append({'label': '已指定主图', 'pass': has_main, 'blocking': True,
+                   'level': 'success' if has_main else 'error'})
+
+    # 图片槽位审批（同时保留旧逻辑）
+    slots_ok = _all_slots_approved(draft)
+    if not slots_ok:
+        checks.append({'label': '图片槽位全部审核通过', 'pass': False, 'blocking': False,
+                       'level': 'warning'})
+
     checks.append({'label': 'SKU 顺序与源一致', 'pass': True, 'blocking': False, 'level': 'success'})
     checks.append({'label': '买家可见内容未检测到禁止词', 'pass': True, 'blocking': False, 'level': 'warning'})
 
@@ -3233,6 +3335,19 @@ def listing_validate(draft_id):
 
     flash(f'校验完成：{blocking_count} 项阻断', 'warning' if blocking_count > 0 else 'success')
     return redirect(url_for('ozon.listing_review', draft_id=draft_id))
+
+
+def _load_media_json(draft):
+    """读取草稿媒体池 JSON，若为空返回初始结构"""
+    try:
+        media = json.loads(draft.media_json or '{}')
+    except (json.JSONDecodeError, TypeError):
+        media = {}
+    if 'images' not in media:
+        media['images'] = []
+    if 'videos' not in media:
+        media['videos'] = []
+    return media
 
 
 def _all_slots_approved(draft):
@@ -6621,33 +6736,193 @@ def api_draft_fill_from_source(draft_id):
 @ozon_bp.route('/api/draft/<int:draft_id>/media/upload-image', methods=['POST'])
 @login_required
 def api_draft_upload_image(draft_id):
-    """上传草稿图片"""
+    """上传草稿图片 — 保存到磁盘并写入 draft.media_json"""
     draft = OzonDraft.get_or_none((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
     if not draft: return jsonify({"ok": False, "error": "草稿不存在"}), 404
     files = request.files.getlist('images')
     if not files: return jsonify({"ok": False, "error": "无文件"}), 400
     saved = []
     import os
-    save_dir = os.path.join('static', 'uploads', 'ozon_drafts', str(draft_id))
-    os.makedirs(save_dir, exist_ok=True)
+    img_dir = os.path.join('static', 'uploads', 'ozon_drafts', str(draft_id), 'images')
+    os.makedirs(img_dir, exist_ok=True)
+
+    # 读现有媒体池
+    media = _load_media_json(draft)
+
     for f in files[:5]:
         if not f.filename: continue
-        fname = f'{int(time.time())}_{f.filename}'
-        fpath = os.path.join(save_dir, fname)
+        ts = int(time.time() * 1000)
+        safe_name = f.filename.rsplit('.', 1)[0][:40] + '_' + str(ts)
+        ext = (f.filename.rsplit('.', 1)[-1] or 'jpg').lower()
+        if ext not in ('jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'):
+            ext = 'jpg'
+        fname = f'{safe_name}.{ext}'
+        fpath = os.path.join(img_dir, fname)
         f.save(fpath)
-        saved.append({'id': f'img_{int(time.time())}', 'local_path': fpath, 'public_url': '/' + fpath.replace('\\', '/'), 'source': 'uploaded'})
+
+        # 生成缩略图
+        thumb_path = None
+        thumb_url = None
+        try:
+            from PIL import Image
+            img = Image.open(fpath)
+            img.thumbnail((150, 150), Image.LANCZOS)
+            thumb_name = f'{safe_name}_thumb.{ext}'
+            thumb_path = os.path.join(img_dir, thumb_name)
+            img.save(thumb_path)
+            thumb_url = '/' + thumb_path.replace('\\', '/')
+        except Exception:
+            pass
+
+        public_url = '/' + fpath.replace('\\', '/')
+        img_id = f'img_{ts}_{len(media["images"])}'
+        img_obj = {
+            'id': img_id,
+            'source': 'uploaded',
+            'local_path': fpath,
+            'public_url': public_url,
+            'ozon_url': None,
+            'thumb_url': thumb_url or public_url,
+            'filename': fname,
+            'role': 'gallery',
+            'selected': True,
+            'sort_order': len(media['images']) + 1,
+            'upload_status': 'local',
+            'review_status': 'pending',
+            'alt': '',
+            'width': None,
+            'height': None
+        }
+        media['images'].append(img_obj)
+        saved.append(img_obj)
+
+    draft.media_json = json.dumps(media, ensure_ascii=False)
+    draft.updated_at = datetime.datetime.now()
+    draft.save()
+
     return jsonify({"ok": True, "message": f"已上传 {len(saved)} 张", "images": saved})
+
+
+@ozon_bp.route('/api/draft/<int:draft_id>/media/save', methods=['POST'])
+@login_required
+def api_draft_media_save(draft_id):
+    """统一保存草稿媒体池（图片+视频）"""
+    draft = OzonDraft.get_or_none((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
+    if not draft: return jsonify({"ok": False, "error": "草稿不存在"}), 404
+    data = request.get_json(silent=True) or {}
+    images = data.get('images')
+    videos = data.get('videos')
+    media = _load_media_json(draft)
+    if images is not None:
+        media['images'] = images
+    if videos is not None:
+        media['videos'] = videos
+    draft.media_json = json.dumps(media, ensure_ascii=False)
+    draft.updated_at = datetime.datetime.now()
+    draft.save()
+    return jsonify({"ok": True, "message": "媒体池已保存", "media": media})
+
+
+@ozon_bp.route('/api/draft/<int:draft_id>/media/import-from-source', methods=['POST'])
+@login_required
+def api_draft_media_import_from_source(draft_id):
+    """从采集源导入图片/视频到草稿媒体池"""
+    draft = OzonDraft.get_or_none((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
+    if not draft or not draft.source:
+        return jsonify({"ok": False, "error": "草稿或源商品不存在"}), 404
+
+    media = _load_media_json(draft)
+    existing_paths = {img.get('local_path', '') for img in media['images']}
+    existing_urls = {img.get('public_url', '') for img in media['images']}
+    existing_video_urls = {v.get('url', '') for v in media['videos']}
+    imported_imgs = 0
+    imported_vids = 0
+
+    # 从 OzonSourceMedia 导入采集图片
+    source_images = list(OzonSourceMedia.select().where(
+        OzonSourceMedia.source == draft.source
+    ).order_by(OzonSourceMedia.id))
+    for sm in source_images:
+        url = sm.source_url or sm.local_path or ''
+        if url in existing_urls or sm.local_path in existing_paths:
+            continue
+        ts = int(time.time() * 1000) + imported_imgs
+        img_id = f'img_src_{sm.id}'
+        img_obj = {
+            'id': img_id,
+            'source': 'collected',
+            'local_path': sm.local_path or '',
+            'public_url': url,
+            'ozon_url': None,
+            'thumb_url': url,
+            'filename': url.rsplit('/', 1)[-1] if url else f'source_{sm.id}.jpg',
+            'role': sm.role or 'gallery',
+            'selected': True,
+            'sort_order': len(media['images']) + imported_imgs + 1,
+            'upload_status': 'public_ready' if url.startswith('http') else 'local',
+            'review_status': sm.review_status or 'pending',
+            'alt': '',
+            'width': sm.width,
+            'height': sm.height,
+            'source_media_id': sm.id
+        }
+        media['images'].append(img_obj)
+        existing_urls.add(url)
+        if sm.local_path:
+            existing_paths.add(sm.local_path)
+        imported_imgs += 1
+
+    # 从 raw_json 导入采集视频
+    raw = {}
+    try:
+        raw = json.loads(draft.source.raw_json or '{}')
+    except Exception:
+        raw = {}
+    source_videos = raw.get('videos', []) or raw.get('product_videos', []) or []
+    for vi, v in enumerate(source_videos):
+        v_url = v.get('video_url') or v.get('url') or ''
+        if not v_url or v_url in existing_video_urls:
+            continue
+        vid = {
+            'id': f'video_src_{vi}_{int(time.time())}',
+            'source': 'collected',
+            'url': v_url,
+            'cover_url': v.get('cover_url') or v.get('thumbnail_url') or '',
+            'name': v.get('name') or v.get('title') or f'视频 {vi + 1}',
+            'selected': True,
+            'upload_status': 'external',
+            'sort_order': len(media['videos']) + imported_vids + 1
+        }
+        media['videos'].append(vid)
+        existing_video_urls.add(v_url)
+        imported_vids += 1
+
+    draft.media_json = json.dumps(media, ensure_ascii=False)
+    draft.updated_at = datetime.datetime.now()
+    draft.save()
+
+    return jsonify({
+        "ok": True,
+        "message": f"已导入 {imported_imgs} 张图片, {imported_vids} 个视频",
+        "images_imported": imported_imgs,
+        "videos_imported": imported_vids,
+        "media": media
+    })
+
 
 @ozon_bp.route('/api/draft/<int:draft_id>/save-rich-content', methods=['POST'])
 @login_required
 def api_draft_save_rich_content(draft_id):
+    """保存富文本块 JSON — 写入 rich_content_json 字段"""
     draft = OzonDraft.get_or_none((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
     if not draft: return jsonify({"ok": False, "error": "草稿不存在"}), 404
     data = request.get_json(silent=True) or {}
     rich = data.get('rich_content_json', '')
-    draft.description_ru = (draft.description_ru or '') + '\n<!-- rich_content -->' + rich[:10000]
+    blocks = data.get('blocks', [])
+    draft.rich_content_json = json.dumps({'version': '1.0', 'blocks': blocks}, ensure_ascii=False) if blocks else rich
+    draft.updated_at = datetime.datetime.now()
     draft.save()
-    return jsonify({"ok": True, "message": "富文本已保存"})
+    return jsonify({"ok": True, "message": f"富文本已保存 ({len(blocks)} 块)"})
 
 @ozon_bp.route('/api/draft/<int:draft_id>/set-category-type', methods=['POST'])
 @login_required
