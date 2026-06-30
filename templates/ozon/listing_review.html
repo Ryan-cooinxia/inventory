@@ -9,9 +9,11 @@
 .rich-editor-toolbar { flex: 0 0 auto; position: sticky; top: 0; z-index: 3; background: #f8f9fa; border-bottom: 1px solid #dee2e6; padding: 6px 8px; display: flex; gap: 4px; flex-wrap: wrap; }
 .rich-editor-body { flex: 1 1 auto; overflow-y: auto; padding: 8px; max-height: 50vh; }
 .rich-editor-footer { flex: 0 0 auto; }
-.rich-block { border: 1px solid #dee2e6; border-radius: 4px; padding: 6px; margin-bottom: 6px; background: #fff; }
-.rich-block-text textarea { width: 100%; font-size: 10px; }
-.rich-block-image img { max-width: 120px; max-height: 120px; object-fit: contain; }
+.rich-block { border: 1px solid #d8dee4; border-radius: 6px; padding: 12px; margin-bottom: 12px; background: #fff; }
+.rich-block textarea { width: 100%; min-height: 180px; line-height: 1.6; font-size: 14px; resize: vertical; }
+.rich-block-image img { max-width: 200px; max-height: 200px; object-fit: contain; }
+.rich-focus-mode .source-panel{display:none!important}
+.rich-focus-mode .review-status-panel{display:none!important}
 </style>
 
 <!-- 顶部状态栏 -->
@@ -24,9 +26,11 @@
     <span class="badge {% if draft.status=='draft' %}bg-secondary{% elif draft.status=='needs_review' %}bg-warning text-dark{% elif draft.status=='approved' %}bg-success{% else %}bg-info{% endif %}">{{ draft.status or 'draft' }}</span>
   </div>
   <div class="d-flex gap-1 flex-wrap mt-1">
-    <button class="btn btn-sm btn-outline-secondary" onclick="saveDraftForm()">💾 保存</button>
+    <button class="btn btn-sm btn-outline-secondary" onclick="saveDraftForm()">💾 保存草稿</button>
+    <button class="btn btn-sm btn-outline-primary" onclick="saveDraftAndReturn()">📋 保存并返回</button>
     <button class="btn btn-sm btn-success" onclick="autoFillDraftAll()">🤖 根据采集资料自动填写</button>
-    <button class="btn btn-sm btn-primary" onclick="validateDraft()">🔍 发布前校验</button>
+    <button class="btn btn-sm btn-warning" onclick="validateDraft()">🔍 发布前校验</button>
+    <button class="btn btn-sm btn-danger" onclick="publishToOzon()" id="btnPublish" disabled>🚀 发布到OZON</button>
   </div>
 </div>
 
@@ -99,8 +103,8 @@
             <div class="text-muted p-2">请先选择类目和 type，然后点击"同步属性"</div>
           </div>
           <div class="d-flex gap-1 mt-2">
-            <button class="btn btn-sm btn-success" onclick="autoFillAttrsDraft()">🤖 根据采集属性自动填写</button>
-            <button class="btn btn-sm btn-outline-primary" onclick="saveAttrsDraft()">💾 保存属性</button>
+            <button class="btn btn-sm btn-success" onclick="autoFillAttrsDraft()">🤖 根据采集属性填充本页</button>
+            <button class="btn btn-sm btn-outline-primary" onclick="saveAttrsDraft()">📋 应用属性到草稿</button>
           </div>
         </div>
 
@@ -178,6 +182,7 @@
               <button class="btn btn-sm btn-outline-warning" onclick="validateRichJson()" style="font-size:9px">🔍 校验</button>
               <button class="btn btn-sm btn-success" onclick="saveRichJson()" style="font-size:9px">💾 保存</button>
               <button class="btn btn-sm btn-outline-primary" onclick="previewRich()" style="font-size:9px">👁 预览</button>
+              <button class="btn btn-sm btn-info" onclick="document.body.classList.toggle('rich-focus-mode')" style="font-size:9px">🔲 专注编辑</button>
               <button class="btn btn-sm btn-outline-dark" onclick="collapseRichEditor()" style="font-size:9px">收起</button>
             </div>
             <div class="rich-editor-body" id="richBlocks"><div class="text-muted p-2">点击"+文字块 / +图片块"或"从采集生成"开始编辑</div></div>
@@ -264,6 +269,11 @@ function applyDraftCategory(dcid,tid,tname){
   .then(r=>r.json()).then(d=>{if(d.ok)location.reload();else alert(d.error);});
 }
 
+function saveDraftAndReturn(){ saveDraftForm(); setTimeout(function(){ window.location.href='/ozon/adaptation'; },800); }
+function publishToOzon(){
+  if(!confirm('确认发布到OZON?请确保已完成发布前校验'))return;
+  location.href='/ozon/listings/'+DRAFT_ID+'/publish';
+}
 function validateDraft(){ location.href='/ozon/listings/'+DRAFT_ID+'/validate'; }
 
 function showDraftModal(title,body){var m=document.createElement('div');m.id='draftModal';m.innerHTML='<div style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1050;display:flex;align-items:center;justify-content:center" onclick="if(event.target===this)closeDraftModal()"><div style="background:#fff;border-radius:8px;padding:16px;max-width:500px;width:90%"><h6>'+title+'</h6>'+body+'</div></div>';document.body.appendChild(m);}
