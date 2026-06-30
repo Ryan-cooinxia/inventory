@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% block title %}刊登草稿审核 — 仓库记账系统{% endblock %}
+{% block content %}
+<style>
+.lr-tab-btn.active { border-bottom: 2px solid #0d6efd !important; font-weight: 700; }
+.lr-card { border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+.lr-source-item { font-size: 11px; padding: 4px 8px; border-left: 3px solid #6c757d; margin-bottom: 4px; background: #f8f9fa; }
+.lr-badge-gap { background: #fff3cd; color: #856404; font-size: 9px; }
+</style>
+
+<!-- 顶部状态栏 -->
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-2 p-2 bg-white rounded lr-card">
+  <div>
+    <h5 class="mb-1">📋 刊登草稿审核</h5>
+    <small class="text-muted">{{ draft.title_ru or source.title_cn or 'DJI Микрофон универсальный DJI Mic Mini 2' }}</small>
+  </div>
+  <div class="d-flex gap-2 align-items-center flex-wrap">
+    <span class="badge bg-{% if draft.status=='draft' %}secondary{% elif draft.status=='needs_review' %}warning text-dark{% elif draft.status=='ready' %}info{% elif draft.status=='published' %}success{% else %}secondary{% endif %}">{{ draft.status or 'draft' }}</span>
+    <span class="text-muted" style="font-size:11px">采集完整度: 77分</span>
+    <span class="text-muted" style="font-size:11px">校验: <span class="text-warning">3项待处理</span></span>
+  </div>
+  <div class="d-flex gap-1 flex-wrap mt-1">
+    <button class="btn btn-sm btn-outline-secondary" onclick="saveDraft()">💾 保存</button>
+    <button class="btn btn-sm btn-success" onclick="autoFillDraft()">🤖 根据采集资料自动填写</button>
+    <button class="btn btn-sm btn-outline-warning" onclick="validateDraft()">🔍 发布前校验</button>
+    <button class="btn btn-sm btn-primary" onclick="approveDraft()">✅ 审核通过</button>
+    <button class="btn btn-sm btn-danger" onclick="publishDraft()">🚀 提交发布</button>
+  </div>
+</div>
+
+<!-- 三栏主体 -->
+<div class="row g-2" style="min-height:calc(100vh - 180px)">
+
+  <!-- ★ 左栏：源资料对照（可折叠） -->
+  <div class="col-lg-2">
+    <div class="card lr-card h-100">
+      <div class="card-header py-1 d-flex justify-content-between">
+        <strong style="font-size:12px">📥 源资料对照</strong>
+        <button class="btn btn-sm btn-outline-secondary" style="font-size:9px;padding:1px 4px" onclick="toggleSrcPanel()">折叠</button>
+      </div>
+      <div class="card-body p-1 overflow-auto" style="font-size:10px" id="srcPanel">
+        <div class="lr-source-item"><b>标题:</b> DJI Микрофон универсальный...</div>
+        <div class="lr-source-item"><b>SKU:</b> 1个 | DJI Mic Mini 2</div>
+        <div class="lr-source-item"><b>参考价:</b> ₽2,972 (促销 ₽8,431)</div>
+        <div class="mt-2"><b>源属性字典</b></div>
+        <div class="lr-source-item">Тип = Микрофон <br><small class="text-success">类型 = 麦克风</small></div>
+        <div class="lr-source-item">Цвет = Прозрачный, черный <br><small class="text-success">颜色 = 透明、黑色</small></div>
+        <div class="lr-source-item">Гарантия = 3 месяца <br><small class="text-success">保修 = 3个月</small></div>
+        <div class="lr-source-item">Бренд = DJI</div>
+        <div class="mt-2"><b>富文本</b></div>
+        <div class="lr-source-item" style="max-height:120px;overflow-y:auto">
+          DJI Mic Mini (2TX+1RX+Charging Case)... 便携式无线麦克风系统...
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ★ 中栏：编辑区（4 Tab） -->
+  <div class="col-lg-7">
+    <div class="card lr-card h-100">
+      <div class="card-header py-1">
+        <ul class="nav nav-tabs card-header-tabs" style="font-size:12px">
+          <li class="nav-item"><button class="nav-link active lr-tab-btn" data-tab="tab-content">📝 内容</button></li>
+          <li class="nav-item"><button class="nav-link lr-tab-btn" data-tab="tab-category">📂 类目与属性</button></li>
+          <li class="nav-item"><button class="nav-link lr-tab-btn" data-tab="tab-sku">💰 SKU/价格</button></li>
+          <li class="nav-item"><button class="nav-link lr-tab-btn" data-tab="tab-images">🖼 图片方案</button></li>
+        </ul>
+      </div>
+      <div class="card-body p-2 overflow-auto" id="tabContent">
+
+        <!-- Tab 1: 内容 -->
+        <div id="tab-content">
+          <div class="mb-2"><label class="form-label" style="font-size:11px"><b>俄语标题</b> <small class="text-muted">(≤150字符)</small></label>
+            <textarea class="form-control form-control-sm" rows="2" style="font-size:11px">{{ draft.title_ru or 'DJI Микрофон универсальный DJI Mic Mini 2 (2TX+1RX+Charging Case)' }}</textarea>
+            <div class="d-flex gap-1 mt-1">
+              <button class="btn btn-sm btn-outline-info" style="font-size:9px" onclick="fillFromSource('title')">📋 从采集原文填充</button>
+              <small class="text-muted align-self-center">长度: <span id="titleLen">0</span>/150</small>
+            </div>
+          </div>
+          <div class="mb-2"><label class="form-label" style="font-size:11px"><b>卖点</b> <small class="text-muted">(3-5条,每行一条)</small></label>
+            <textarea class="form-control form-control-sm" rows="3" style="font-size:11px">{{ draft.bullets_ru or '' }}</textarea>
+            <button class="btn btn-sm btn-outline-info mt-1" style="font-size:9px" onclick="fillFromSource('bullets')">📋 从属性生成卖点</button>
+          </div>
+          <div class="mb-2"><label class="form-label" style="font-size:11px"><b>俄语描述</b></label>
+            <textarea class="form-control form-control-sm" rows="6" style="font-size:11px">{{ draft.description_ru or '' }}</textarea>
+            <button class="btn btn-sm btn-outline-info mt-1" style="font-size:9px" onclick="fillFromSource('desc')">📋 从采集富文本填充</button>
+          </div>
+        </div>
+
+        <!-- Tab 2: 类目与属性 -->
+        <div id="tab-category" class="d-none">
+          <div class="mb-2 p-2 bg-light rounded">
+            <div class="d-flex justify-content-between align-items-center">
+              <div><b>已选类目:</b> <span id="catName">电子产品 > 音频设备 > 麦克风</span><br>
+                <small class="text-muted">dcid=<span id="dcid">17028925</span> type_id=<span id="typeId">95141</span></small></div>
+              <div class="d-flex gap-1">
+                <button class="btn btn-sm btn-outline-success" onclick="recommendCategory()">🤖 推荐类目</button>
+                <button class="btn btn-sm btn-outline-primary" onclick="openCategoryTree()">📂 类目树选择</button>
+                <button class="btn btn-sm btn-outline-warning" onclick="syncAttributes()">🔄 同步属性</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 推荐结果区 -->
+          <div id="recommendPanel" class="mb-2 d-none">
+            <div class="border rounded p-2" style="font-size:11px">
+              <b>推荐 Top 3:</b>
+              <div class="d-flex flex-column gap-1 mt-1" id="recommendList"></div>
+            </div>
+          </div>
+
+          <!-- 属性表单 -->
+          <div class="mb-2"><b style="font-size:11px">属性字典</b> <span class="badge bg-danger" style="font-size:9px">3 必填</span></div>
+          <div id="attrFormDraft" style="font-size:10px">
+            <!-- 动态渲染的属性表单 -->
+            <div class="mb-1"><label style="font-size:10px">类型 *</label>
+              <select class="form-select form-select-sm" style="font-size:10px"><option>麦克风</option></select></div>
+            <div class="mb-1"><label style="font-size:10px">品牌 *</label>
+              <input class="form-control form-control-sm" value="DJI" style="font-size:10px"></div>
+            <div class="mb-1"><label style="font-size:10px">型号名称 *</label>
+              <input class="form-control form-control-sm" value="Mic Mini 2" style="font-size:10px"></div>
+            <div class="mb-1"><label style="font-size:10px">商品颜色</label>
+              <select class="form-select form-select-sm" style="font-size:10px"><option>透明、黑色</option></select></div>
+            <div class="mb-1"><label style="font-size:10px">保修期</label>
+              <select class="form-select form-select-sm" style="font-size:10px"><option>3个月</option></select></div>
+            <div class="mb-1"><label style="font-size:10px">出厂包装数量</label>
+              <input class="form-control form-control-sm" value="1" style="font-size:10px"></div>
+          </div>
+          <div class="d-flex gap-1 mt-2">
+            <button class="btn btn-sm btn-success" onclick="autoFillAttrs()">🤖 根据采集属性自动填写</button>
+            <button class="btn btn-sm btn-outline-primary" onclick="saveAttrs()">💾 保存属性</button>
+            <button class="btn btn-sm btn-outline-secondary" onclick="clearAttrs()">清空</button>
+          </div>
+        </div>
+
+        <!-- Tab 3: SKU/价格 -->
+        <div id="tab-sku" class="d-none">
+          <table class="table table-sm" style="font-size:11px">
+            <tr><th>SKU</th><th>颜色</th><th>款式</th><th>数量</th><th>采购价</th><th>offer_id</th></tr>
+            <tr>
+              <td>DJI Mic Mini 2</td>
+              <td><input class="form-control form-control-sm" value="透明, 黑色" style="width:80px;font-size:10px"></td>
+              <td><input class="form-control form-control-sm" value="标准" style="width:60px;font-size:10px"></td>
+              <td><input class="form-control form-control-sm" value="1" style="width:50px;font-size:10px" type="number"></td>
+              <td><input class="form-control form-control-sm" value="" style="width:80px;font-size:10px" placeholder="¥-"></td>
+              <td><input class="form-control form-control-sm" value="" style="width:100px;font-size:10px" placeholder="auto"></td>
+            </tr>
+          </table>
+          <div class="mt-2 p-2 bg-light rounded" style="font-size:11px">
+            <b>价格:</b> OZON参考价 <span class="text-danger">₽2,972</span> (促销 ₽8,431) |
+            建议售价: <input class="form-control form-control-sm d-inline" style="width:100px;font-size:10px" placeholder="₽">
+            <button class="btn btn-sm btn-outline-success ms-1" style="font-size:9px">价格已确认</button>
+          </div>
+        </div>
+
+        <!-- Tab 4: 图片方案 -->
+        <div id="tab-images" class="d-none">
+          <div class="row">
+            <div class="col-3 text-center"><div style="background:#eee;height:120px;display:flex;align-items:center;justify-content:center;border-radius:4px">主图1</div><small style="font-size:9px">✅ 已审核</small></div>
+            <div class="col-3 text-center"><div style="background:#eee;height:120px;display:flex;align-items:center;justify-content:center;border-radius:4px">主图2</div><small style="font-size:9px">✅ 已审核</small></div>
+            <div class="col-3 text-center"><div style="background:#eee;height:120px;display:flex;align-items:center;justify-content:center;border-radius:4px">+添加</div></div>
+          </div>
+          <div class="mt-2"><button class="btn btn-sm btn-outline-primary" style="font-size:10px">📷 进入图片方案管理</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ★ 右栏：审核状态 (固定) -->
+  <div class="col-lg-3">
+    <div class="card lr-card h-100">
+      <div class="card-header py-1"><strong style="font-size:12px">✅ 审核状态</strong></div>
+      <div class="card-body p-2" style="font-size:11px">
+        <div class="mb-2"><b>发布前校验</b></div>
+        <div class="mb-1">✅ 标题已填写</div>
+        <div class="mb-1">✅ 类目已选择</div>
+        <div class="mb-1 text-warning">⚠️ 品牌缺失</div>
+        <div class="mb-1 text-warning">⚠️ 图片未全部审核 (2/8)</div>
+        <div class="mb-1 text-danger">❌ 价格未确认</div>
+        <hr>
+        <div class="mb-2"><b>字段缺口</b></div>
+        <span class="badge lr-badge-gap me-1 mb-1">品牌</span>
+        <span class="badge lr-badge-gap me-1 mb-1">型号名称</span>
+        <span class="badge lr-badge-gap me-1 mb-1">欧亚经济联盟海关编码</span>
+        <hr>
+        <div class="mb-2"><b>自动填写日志</b></div>
+        <small class="text-muted">2026-06-30 12:00 根据采集资料自动填写 18 项</small>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Tab 切换
+document.querySelectorAll('.lr-tab-btn').forEach(function(btn){
+  btn.addEventListener('click', function(){
+    document.querySelectorAll('.lr-tab-btn').forEach(function(b){b.classList.remove('active');});
+    this.classList.add('active');
+    var tabId = this.dataset.tab;
+    document.querySelectorAll('#tabContent > div').forEach(function(d){d.classList.add('d-none');});
+    document.getElementById(tabId).classList.remove('d-none');
+  });
+});
+
+// 占位函数（原型交互）
+function saveDraft(){ alert('草稿已保存 (原型)'); }
+function autoFillDraft(){ alert('根据采集资料自动填写所有字段 (原型)'); }
+function validateDraft(){ alert('发布前校验: 3项待处理 (原型)'); }
+function approveDraft(){ if(confirm('确认审核通过?')) alert('已审核通过 (原型)'); }
+function publishDraft(){ if(confirm('确认提交发布?')) alert('已提交发布 (原型)'); }
+function recommendCategory(){ alert('推荐类目 (原型)'); }
+function openCategoryTree(){ alert('打开类目树 (原型)'); }
+function syncAttributes(){ alert('同步属性/字典 (原型)'); }
+function autoFillAttrs(){ alert('根据采集属性自动填写 (原型)'); }
+function saveAttrs(){ alert('属性已保存 (原型)'); }
+function clearAttrs(){ alert('已清空 (原型)'); }
+function fillFromSource(type){ alert('从采集原文填充: '+type+' (原型)'); }
+function toggleSrcPanel(){ var p=document.getElementById('srcPanel'); p.style.display=p.style.display==='none'?'':'none'; }
+</script>
+{% endblock %}

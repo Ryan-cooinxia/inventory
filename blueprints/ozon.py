@@ -3080,6 +3080,12 @@ def listings():
 
 
 @ozon_bp.route('/listings/<int:draft_id>')
+@ozon_bp.route('/listing/prototype')
+@login_required
+def listing_prototype():
+    """刊登草稿审核页 — 产品原型预览"""
+    return render_template('ozon/listing_review_prototype.html', draft=None, source=None)
+
 @login_required
 def listing_review(draft_id):
     draft = (OzonDraft
