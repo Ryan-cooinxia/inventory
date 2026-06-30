@@ -5298,8 +5298,9 @@ def api_generate_draft(group_id):
     if not fact:
         return jsonify({'ok': False, 'error': '请先保存商品事实'}), 400
 
+    warning = None
     if fact.review_status != 'approved':
-        return jsonify({'ok': False, 'error': '商品事实尚未审核通过'}), 400
+        warning = '商品事实尚未审核，已生成草稿，请在刊登前校验'
 
     adaptation = (ListingAdaptation
                   .select()
