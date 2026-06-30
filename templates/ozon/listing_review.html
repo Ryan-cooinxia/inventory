@@ -50,6 +50,8 @@
           <li class="nav-item"><button class="nav-link active lr-tab-btn" data-tab="tab-content">📝 内容</button></li>
           <li class="nav-item"><button class="nav-link lr-tab-btn" data-tab="tab-category">📂 类目与属性</button></li>
           <li class="nav-item"><button class="nav-link lr-tab-btn" data-tab="tab-sku">💰 SKU/价格</button></li>
+          <li class="nav-item"><button class="nav-link lr-tab-btn" data-tab="tab-images">🖼 图片/视频</button></li>
+          <li class="nav-item"><button class="nav-link lr-tab-btn" data-tab="tab-rich">📄 富文本</button></li>
         </ul>
       </div>
       <div class="card-body p-2 overflow-auto" id="tabContent">
@@ -113,8 +115,60 @@
             {% endif %}
           </table>
           <div class="p-2 bg-light rounded mt-2" style="font-size:11px">
-            <b>OZON参考价:</b> {% if pricing and pricing.reference_price_rub %}₽{{ '{:,.0f}'.format(pricing.reference_price_rub) }}{% else %}未识别{% endif %}
+            <div class="mb-2">
+              <b>OZON刊登币种:</b>
+              <select class="form-select form-select-sm d-inline" style="width:100px;font-size:10px" name="listing_currency">
+                <option value="RUB">₽ RUB</option>
+                <option value="CNY">¥ CNY</option>
+                <option value="USD">$ USD</option>
+                <option value="EUR">€ EUR</option>
+              </select>
+            </div>
+            <div class="row">
+              <div class="col-6"><b>采集参考价:</b><br>{% if pricing.reference_price_rub %}₽{{ '{:,.0f}'.format(pricing.reference_price_rub) }}{% else %}未识别{% endif %}</div>
+              <div class="col-6"><b>OZON刊登价:</b><br><input class="form-control form-control-sm" name="listing_price" placeholder="请输入刊登价" style="font-size:10px;width:100px"></div>
+            </div>
+            <div class="mt-1"><small class="text-muted">采集价仅作参考，刊登价为实际上传OZON价格</small></div>
           </div>
+        </div>
+
+        <!-- Tab 4: 图片/视频 -->
+        <div id="tab-images" class="d-none">
+          <div class="mb-2"><b>📷 采集图片 ({{ source_media|length if source_media is defined else 0 }})</b></div>
+          <div class="d-flex flex-wrap gap-1 mb-2" style="max-height:200px;overflow-y:auto">
+            {% if source_media is defined %}
+            {% for m in source_media[:12] %}
+            <img src="{{ m.source_url }}" style="width:60px;height:60px;object-fit:cover;border-radius:4px;border:1px solid #ddd" onerror="this.style.display='none'" title="{{ m.role }}">
+            {% endfor %}
+            {% endif %}
+          </div>
+          <div class="mb-2"><b>🎬 采集视频 ({{ video_media_parsed|length if video_media_parsed is defined else 0 }})</b></div>
+          {% if video_media_parsed is defined %}
+          {% for vm in video_media_parsed[:3] %}
+          <div class="mb-1" style="font-size:10px">🎬 {{ vm.media_id }} {% if vm.video_url %}<a href="{{ vm.video_url }}" target="_blank">查看</a>{% endif %}</div>
+          {% endfor %}
+          {% endif %}
+          <div class="mt-2"><button class="btn btn-sm btn-outline-info" onclick="alert('图片方案管理 (后续版本)')">📷 进入图片方案管理</button></div>
+        </div>
+
+        <!-- Tab 5: 富文本 -->
+        <div id="tab-rich" class="d-none">
+          <div class="mb-2">
+            <b>采集富文本</b>
+            <button class="btn btn-sm btn-outline-info ms-2" style="font-size:9px" onclick="buildRichFromSource()">📝 根据采集生成OZON JSON</button>
+          </div>
+          {% if raw and raw.get('rich_text') %}
+          <div class="ozon-rich-preview mb-2" style="max-height:200px;overflow:auto;font-size:12px">
+            {{ (raw.rich_text.html or raw.rich_text.plain_text)[:5000] | safe }}
+          </div>
+          <small class="text-muted">图片: {{ raw.rich_text.image_count or 0 }} 张</small>
+          {% else %}
+          <div class="text-muted">暂无采集富文本</div>
+          {% endif %}
+          <div class="mt-2"><b>OZON富文本JSON</b></div>
+          <textarea id="richContentJson" class="form-control form-control-sm" rows="6" style="font-size:10px;font-family:monospace" placeholder="点击'根据采集生成OZON JSON'自动生成"></textarea>
+          <button class="btn btn-sm btn-outline-primary mt-1" style="font-size:9px" onclick="validateRichJson()">🔍 校验JSON</button>
+          <button class="btn btn-sm btn-primary mt-1" style="font-size:9px" onclick="saveRichJson()">💾 保存富文本</button>
         </div>
 
       </div>
@@ -232,6 +286,23 @@ function saveAttrsDraft(){
   var attrs={};document.querySelectorAll('.draft-attr').forEach(function(e){attrs[e.dataset.aid]=e.value;});
   fetch('/ozon/api/draft/'+DRAFT_ID+'/save-attributes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({attributes:attrs})})
   .then(r=>r.json()).then(d=>{alert(d.message||'已保存');}).catch(e=>alert(e.message));
+}
+
+function buildRichFromSource(){
+  var rich = {% if raw and raw.rich_text %}{{ raw.rich_text|tojson }}{% else %}{}{% endif %};
+  var blocks=[];
+  if(rich.plain_text){rich.plain_text.split(/\n+/).forEach(function(p){p=p.trim();if(p)blocks.push({type:'text',content:p});});}
+  if(rich.image_urls)rich.image_urls.forEach(function(u){blocks.push({type:'image',url:u});});
+  document.getElementById('richContentJson').value=JSON.stringify({version:'1.0',blocks:blocks},null,2);
+}
+function validateRichJson(){
+  try{JSON.parse(document.getElementById('richContentJson').value);alert('✅ JSON格式正确');}catch(e){alert('❌ '+e.message);}
+}
+function saveRichJson(){
+  var json=document.getElementById('richContentJson').value;
+  try{JSON.parse(json);}catch(e){alert('JSON格式错误');return;}
+  fetch('/ozon/api/draft/'+DRAFT_ID+'/save-rich-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rich_content_json:json})})
+  .then(r=>r.json()).then(d=>alert(d.message||'已保存')).catch(e=>alert(e.message));
 }
 
 function autoFillAttrsDraft(){

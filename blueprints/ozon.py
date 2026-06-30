@@ -3154,6 +3154,11 @@ def listing_review(draft_id):
         v_ru = str(a.get('value','') or a.get('text',''))
         source_attrs_display.append({'name_ru':n_ru,'value_ru':v_ru,'source':a.get('source','')})
 
+    # 源图片
+    source_media = []
+    if draft.source:
+        source_media = list(OzonSourceMedia.select().where(OzonSourceMedia.source == draft.source).limit(20))
+
     return render_template('ozon/listing_review.html',
                            draft=draft,
                            validation=validation,
@@ -3162,7 +3167,8 @@ def listing_review(draft_id):
                            approved_slots=approved_slots,
                            raw=raw, pricing=pricing,
                            draft_attrs=draft_attrs,
-                           source_attrs_display=source_attrs_display)
+                           source_attrs_display=source_attrs_display,
+                           source_media=source_media)
 
 
 @ozon_bp.route('/listings/<int:draft_id>/save', methods=['POST'])
@@ -6611,6 +6617,17 @@ def api_draft_fill_from_source(draft_id):
         if bullets: draft.bullets_ru = json.dumps(bullets, ensure_ascii=False); draft.save()
         return jsonify({"ok": True, "message": f"已生成 {len(bullets)} 条卖点"})
     return jsonify({"ok": False, "error": "未知填充类型"})
+
+@ozon_bp.route('/api/draft/<int:draft_id>/save-rich-content', methods=['POST'])
+@login_required
+def api_draft_save_rich_content(draft_id):
+    draft = OzonDraft.get_or_none((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
+    if not draft: return jsonify({"ok": False, "error": "草稿不存在"}), 404
+    data = request.get_json(silent=True) or {}
+    rich = data.get('rich_content_json', '')
+    draft.description_ru = (draft.description_ru or '') + '\n<!-- rich_content -->' + rich[:10000]
+    draft.save()
+    return jsonify({"ok": True, "message": "富文本已保存"})
 
 @ozon_bp.route('/api/draft/<int:draft_id>/set-category-type', methods=['POST'])
 @login_required
