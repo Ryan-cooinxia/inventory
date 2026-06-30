@@ -5,6 +5,13 @@
 .lr-tab-btn.active { border-bottom: 2px solid #0d6efd !important; font-weight: 700; }
 .lr-card { border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
 .lr-source-item { font-size: 11px; padding: 4px 8px; border-left: 3px solid #6c757d; margin-bottom: 4px; background: #f8f9fa; }
+.rich-editor { display: flex; flex-direction: column; min-height: 400px; }
+.rich-editor-toolbar { flex: 0 0 auto; position: sticky; top: 0; z-index: 3; background: #f8f9fa; border-bottom: 1px solid #dee2e6; padding: 6px 8px; display: flex; gap: 4px; flex-wrap: wrap; }
+.rich-editor-body { flex: 1 1 auto; overflow-y: auto; padding: 8px; max-height: 50vh; }
+.rich-editor-footer { flex: 0 0 auto; }
+.rich-block { border: 1px solid #dee2e6; border-radius: 4px; padding: 6px; margin-bottom: 6px; background: #fff; }
+.rich-block-text textarea { width: 100%; font-size: 10px; }
+.rich-block-image img { max-width: 120px; max-height: 120px; object-fit: contain; }
 </style>
 
 <!-- 顶部状态栏 -->
@@ -153,22 +160,33 @@
 
         <!-- Tab 5: 富文本 -->
         <div id="tab-rich" class="d-none">
-          <div class="mb-2">
-            <b>采集富文本</b>
-            <button class="btn btn-sm btn-outline-info ms-2" style="font-size:9px" onclick="buildRichFromSource()">📝 根据采集生成OZON JSON</button>
+          <!-- 默认摘要卡片 -->
+          <div id="richSummary">
+            <div class="border rounded p-2" style="font-size:11px">
+              <b>📄 富文本内容</b><br>
+              采集富文本: {% if raw and raw.rich_text %}<span class="text-success">已采集 ({{ raw.rich_text.plain_text[:50] if raw.rich_text.plain_text else '' }}...)</span> | 图片: {{ raw.rich_text.image_count or 0 }} 张{% else %}<span class="text-muted">未采集</span>{% endif %}<br>
+              OZON JSON: <span id="richStatus">未生成</span>
+              <div class="mt-2"><button class="btn btn-sm btn-outline-primary" onclick="expandRichEditor()">📝 展开编辑</button></div>
+            </div>
           </div>
-          {% if raw and raw.get('rich_text') %}
-          <div class="ozon-rich-preview mb-2" style="max-height:200px;overflow:auto;font-size:12px">
-            {{ (raw.rich_text.html or raw.rich_text.plain_text)[:5000] | safe }}
+          <!-- 展开后编辑器 -->
+          <div id="richEditor" class="rich-editor" style="display:none">
+            <div class="rich-editor-toolbar">
+              <button class="btn btn-sm btn-outline-secondary" onclick="addRichBlock('text')" style="font-size:9px">+ 文字块</button>
+              <button class="btn btn-sm btn-outline-secondary" onclick="addRichBlock('image')" style="font-size:9px">+ 图片块</button>
+              <button class="btn btn-sm btn-outline-info" onclick="buildRichFromSource()" style="font-size:9px">📝 从采集生成</button>
+              <button class="btn btn-sm btn-outline-warning" onclick="validateRichJson()" style="font-size:9px">🔍 校验</button>
+              <button class="btn btn-sm btn-success" onclick="saveRichJson()" style="font-size:9px">💾 保存</button>
+              <button class="btn btn-sm btn-outline-primary" onclick="previewRich()" style="font-size:9px">👁 预览</button>
+              <button class="btn btn-sm btn-outline-dark" onclick="collapseRichEditor()" style="font-size:9px">收起</button>
+            </div>
+            <div class="rich-editor-body" id="richBlocks"><div class="text-muted p-2">点击"+文字块 / +图片块"或"从采集生成"开始编辑</div></div>
+            <div class="rich-editor-footer p-1 bg-light border-top" style="font-size:9px">
+              <span id="richBlockCount">0 个块</span> |
+              <a href="#" onclick="return false" id="richPreviewLink">OZON JSON预览</a>
+              <textarea id="richContentJson" style="display:none"></textarea>
+            </div>
           </div>
-          <small class="text-muted">图片: {{ raw.rich_text.image_count or 0 }} 张</small>
-          {% else %}
-          <div class="text-muted">暂无采集富文本</div>
-          {% endif %}
-          <div class="mt-2"><b>OZON富文本JSON</b></div>
-          <textarea id="richContentJson" class="form-control form-control-sm" rows="6" style="font-size:10px;font-family:monospace" placeholder="点击'根据采集生成OZON JSON'自动生成"></textarea>
-          <button class="btn btn-sm btn-outline-primary mt-1" style="font-size:9px" onclick="validateRichJson()">🔍 校验JSON</button>
-          <button class="btn btn-sm btn-primary mt-1" style="font-size:9px" onclick="saveRichJson()">💾 保存富文本</button>
         </div>
 
       </div>
@@ -288,21 +306,111 @@ function saveAttrsDraft(){
   .then(r=>r.json()).then(d=>{alert(d.message||'已保存');}).catch(e=>alert(e.message));
 }
 
+// ═══ 富文本块编辑器 ═══
+var RICH_BLOCKS = [];
+
+function expandRichEditor(){
+  document.getElementById('richSummary').style.display='none';
+  document.getElementById('richEditor').style.display='flex';
+  if(!RICH_BLOCKS.length) buildRichFromSource();
+}
+
+function collapseRichEditor(){
+  document.getElementById('richEditor').style.display='none';
+  document.getElementById('richSummary').style.display='block';
+  document.getElementById('richStatus').textContent = RICH_BLOCKS.length ? '已生成 ('+RICH_BLOCKS.length+'块)' : '未生成';
+}
+
+function addRichBlock(type){
+  var id='b_'+Date.now()+'_'+Math.random().toString(36).slice(2,6);
+  RICH_BLOCKS.push({id:id,type:type,content:type==='text'?'':type==='image'?'':''});
+  renderRichBlocks();
+}
+
+function deleteRichBlock(id){
+  RICH_BLOCKS=RICH_BLOCKS.filter(function(b){return b.id!==id;});
+  renderRichBlocks();
+}
+
+function moveRichBlock(id,dir){
+  var idx=RICH_BLOCKS.findIndex(function(b){return b.id===id;});
+  if(idx<0)return;
+  var newIdx=idx+(dir==='up'?-1:1);
+  if(newIdx<0||newIdx>=RICH_BLOCKS.length)return;
+  var tmp=RICH_BLOCKS[idx];RICH_BLOCKS[idx]=RICH_BLOCKS[newIdx];RICH_BLOCKS[newIdx]=tmp;
+  renderRichBlocks();
+}
+
+function updateRichBlock(id,field,value){
+  var b=RICH_BLOCKS.find(function(x){return x.id===id;});
+  if(b){b[field]=value;}
+}
+
+function renderRichBlocks(){
+  var h='',cnt=RICH_BLOCKS.length;
+  RICH_BLOCKS.forEach(function(b,i){
+    h+='<div class="rich-block rich-block-'+b.type+'">';
+    h+='<div class="d-flex justify-content-between align-items-center mb-1"><small class="text-muted">'+(b.type==='text'?'📝 文字块':'🖼 图片块')+' #'+(i+1)+'</small>';
+    h+='<div class="btn-group btn-group-sm">';
+    h+='<button class="btn btn-sm btn-outline-secondary" style="font-size:8px;padding:1px 4px" onclick="moveRichBlock(\''+b.id+'\',\'up\')" '+(i===0?'disabled':'')+'>↑</button>';
+    h+='<button class="btn btn-sm btn-outline-secondary" style="font-size:8px;padding:1px 4px" onclick="moveRichBlock(\''+b.id+'\',\'down\')" '+(i===cnt-1?'disabled':'')+'>↓</button>';
+    h+='<button class="btn btn-sm btn-outline-danger" style="font-size:8px;padding:1px 4px" onclick="deleteRichBlock(\''+b.id+'\')">✕</button>';
+    h+='</div></div>';
+    if(b.type==='text') h+='<textarea class="form-control form-control-sm" rows="2" onchange="updateRichBlock(\''+b.id+'\',\'content\',this.value)" style="font-size:10px">'+(b.content||'')+'</textarea>';
+    else h+='<div class="d-flex gap-2"><input class="form-control form-control-sm" placeholder="图片URL" value="'+(b.url||'')+'" onchange="updateRichBlock(\''+b.id+'\',\'url\',this.value)" style="font-size:10px"><input class="form-control form-control-sm" placeholder="Alt文案" value="'+(b.alt||'')+'" onchange="updateRichBlock(\''+b.id+'\',\'alt\',this.value)" style="font-size:10px;width:100px"></div>';
+    h+='</div>';
+  });
+  document.getElementById('richBlocks').innerHTML=h||'<div class="text-muted p-2">点击"+文字块 / +图片块"开始编辑</div>';
+  document.getElementById('richBlockCount').textContent=cnt+' 个块';
+  generateOzonJson();
+}
+
 function buildRichFromSource(){
   var rich = {% if raw and raw.rich_text %}{{ raw.rich_text|tojson }}{% else %}{}{% endif %};
-  var blocks=[];
-  if(rich.plain_text){rich.plain_text.split(/\n+/).forEach(function(p){p=p.trim();if(p)blocks.push({type:'text',content:p});});}
-  if(rich.image_urls)rich.image_urls.forEach(function(u){blocks.push({type:'image',url:u});});
+  RICH_BLOCKS=[];
+  if(rich.plain_text){
+    rich.plain_text.split(/\n+/).forEach(function(p){p=p.trim();if(p)RICH_BLOCKS.push({id:'b_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),type:'text',content:p});});
+  }
+  if(rich.image_urls)rich.image_urls.forEach(function(u){
+    RICH_BLOCKS.push({id:'b_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),type:'image',url:u,alt:''});
+  });
+  renderRichBlocks();
+}
+
+function generateOzonJson(){
+  var blocks=RICH_BLOCKS.map(function(b){return {type:b.type,content:b.content||'',url:b.url||''};});
   document.getElementById('richContentJson').value=JSON.stringify({version:'1.0',blocks:blocks},null,2);
 }
+
 function validateRichJson(){
-  try{JSON.parse(document.getElementById('richContentJson').value);alert('✅ JSON格式正确');}catch(e){alert('❌ '+e.message);}
+  var errors=[],warnings=[];
+  try{var d=JSON.parse(document.getElementById('richContentJson').value);
+    if(!d.blocks||!d.blocks.length)errors.push('blocks为空');
+    d.blocks.forEach(function(b,i){
+      if(b.type==='image'&&!b.url)errors.push('第'+(i+1)+'个图片块缺少URL');
+    });
+    if(!d.blocks.some(function(b){return b.type==='image';}))warnings.push('富文本无图片,可能影响展示');
+  }catch(e){errors.push('JSON格式错误: '+e.message);}
+  var msg='';
+  if(errors.length)msg+='❌ '+errors.join('\n')+'\n';
+  if(warnings.length)msg+='⚠️ '+warnings.join('\n');
+  alert(msg||'✅ 格式正确,无错误');
 }
+
 function saveRichJson(){
+  generateOzonJson();
   var json=document.getElementById('richContentJson').value;
   try{JSON.parse(json);}catch(e){alert('JSON格式错误');return;}
-  fetch('/ozon/api/draft/'+DRAFT_ID+'/save-rich-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rich_content_json:json})})
-  .then(r=>r.json()).then(d=>alert(d.message||'已保存')).catch(e=>alert(e.message));
+  fetch('/ozon/api/draft/'+DRAFT_ID+'/save-rich-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rich_content_json:json,blocks:RICH_BLOCKS})})
+  .then(r=>r.json()).then(function(d){
+    alert(d.message||'已保存 '+RICH_BLOCKS.length+' 个块');
+    document.getElementById('richStatus').textContent = '已生成 ('+RICH_BLOCKS.length+'块)';
+  }).catch(e=>alert(e.message));
+}
+
+function previewRich(){
+  generateOzonJson();
+  alert('点击校验JSON查看详情,或在OZON JSON编辑区查看');
 }
 
 function autoFillAttrsDraft(){
