@@ -3132,12 +3132,21 @@ def listing_review(draft_id):
     total_slots = draft.image_slots.count()
     approved_slots = draft.image_slots.where(OzonImageSlot.status == 'approved').count()
 
+    # 解析源商品 raw_json
+    raw = {}
+    pricing = {}
+    if draft.source:
+        try: raw = json.loads(draft.source.raw_json or '{}')
+        except: raw = {}
+        pricing = raw.get('pricing') or {}
+
     return render_template('ozon/listing_review.html',
                            draft=draft,
                            validation=validation,
                            skus_with_images=skus_with_images,
                            total_slots=total_slots,
-                           approved_slots=approved_slots)
+                           approved_slots=approved_slots,
+                           raw=raw, pricing=pricing)
 
 
 @ozon_bp.route('/listings/<int:draft_id>/save', methods=['POST'])
@@ -6460,6 +6469,114 @@ def api_category_search():
 
     return jsonify({'ok': True, 'items': items})
 
+
+# ═══ Draft 级 API ═══
+
+@ozon_bp.route('/api/draft/<int:draft_id>/recommend-category', methods=['POST'])
+@login_required
+def api_draft_recommend_category(draft_id):
+    """Draft 级推荐类目 — 复用 adaptation 逻辑"""
+    draft = OzonDraft.get_or_none((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
+    if not draft: return jsonify({"ok": False, "error": "草稿不存在"}), 404
+    # 查找对应的 group
+    source = draft.source
+    if not source: return jsonify({"ok": False, "error": "无源商品"}), 404
+    items = SourceProductGroupItem.select().where((SourceProductGroupItem.user == current_user) & (SourceProductGroupItem.source == source))
+    group = None
+    for item in items:
+        if item.group: group = item.group; break
+    if not group: return jsonify({"ok": False, "error": "无适配任务组"}), 404
+    # 复用 adaptation 推荐逻辑
+    return api_recommend_category(group.id)
+
+@ozon_bp.route('/api/draft/<int:draft_id>/auto-fill-apply', methods=['POST'])
+@login_required
+def api_draft_auto_fill_apply(draft_id):
+    """Draft 级自动填写 — 从源商品数据填草稿"""
+    draft = OzonDraft.get_or_none((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
+    if not draft: return jsonify({"ok": False, "error": "草稿不存在"}), 404
+    source = draft.source
+    if not source: return jsonify({"ok": False, "error": "无源商品"}), 404
+    raw = {}
+    try: raw = json.loads(source.raw_json or '{}')
+    except: raw = {}
+    filled = 0
+    data = request.get_json(silent=True) or {}
+    # 标题
+    if not draft.title_ru and source.title_cn:
+        draft.title_ru = source.title_cn[:150]; filled += 1
+    # 描述
+    rich = raw.get('rich_text') or {}
+    if not draft.description_ru and (rich.get('html') or rich.get('plain_text')):
+        draft.description_ru = (rich.get('html') or rich.get('plain_text'))[:50000]; filled += 1
+    # 卖点
+    if not draft.bullets_ru:
+        src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
+        bullets = ['• ' + (a.get('name','') + ': ' + str(a.get('value',''))) for a in src_attrs[:8] if a.get('name') and a.get('value')]
+        if bullets: draft.bullets_ru = json.dumps(bullets, ensure_ascii=False); filled += 1
+    # 属性
+    if draft.ozon_category_id and draft.type_id and data.get('apply_all') != False:
+        saved = {}
+        if draft.attributes_json:
+            try: saved = json.loads(draft.attributes_json)
+            except: saved = {}
+        src_attrs = raw.get('source_attributes') or []
+        tgt_attrs = list(OzonCategoryAttribute.select().where((OzonCategoryAttribute.user == current_user) & (OzonCategoryAttribute.ozon_category_id == draft.ozon_category_id) & (OzonCategoryAttribute.type_id == draft.type_id)))
+        for ta in tgt_attrs:
+            aid = str(ta.attribute_id)
+            if aid in (saved.get('attributes',{}) if isinstance(saved,dict) else saved): continue
+            tname = (ta.name_cn or ta.name or '').lower()
+            for sa in src_attrs:
+                sname = (sa.get('name') or sa.get('key') or '').lower()
+                if sname in tname or tname in sname:
+                    if isinstance(saved, dict) and 'attributes' not in saved: saved = {'attributes': {}}
+                    saved.setdefault('attributes', {})[aid] = {'value': sa.get('value',''), 'source': 'auto_fill'}
+                    break
+        draft.attributes_json = json.dumps(saved, ensure_ascii=False)
+        filled += len(saved.get('attributes', {}))
+    draft.save()
+    return jsonify({"ok": True, "filled_count": filled, "message": f"已应用 {filled} 项"})
+
+@ozon_bp.route('/api/draft/<int:draft_id>/save-attributes', methods=['POST'])
+@login_required
+def api_draft_save_attributes(draft_id):
+    draft = OzonDraft.get_or_none((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
+    if not draft: return jsonify({"ok": False, "error": "草稿不存在"}), 404
+    data = request.get_json(silent=True) or {}
+    attrs = data.get('attributes', {})
+    saved = {}
+    if draft.attributes_json:
+        try: saved = json.loads(draft.attributes_json)
+        except: saved = {}
+    if not isinstance(saved, dict) or 'attributes' not in saved: saved = {'attributes': {}}
+    for aid, val in attrs.items(): saved['attributes'][str(aid)] = str(val)
+    draft.attributes_json = json.dumps(saved, ensure_ascii=False)
+    draft.save()
+    return jsonify({"ok": True, "message": f"已保存 {len(attrs)} 个属性"})
+
+@ozon_bp.route('/api/draft/<int:draft_id>/fill-from-source', methods=['POST'])
+@login_required
+def api_draft_fill_from_source(draft_id):
+    draft = OzonDraft.get_or_none((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
+    if not draft or not draft.source: return jsonify({"ok": False, "error": "无源商品"}), 404
+    raw = {}
+    try: raw = json.loads(draft.source.raw_json or '{}')
+    except: raw = {}
+    tp = (request.get_json(silent=True) or {}).get('type', '')
+    if tp == 'title' and draft.source.title_cn:
+        draft.title_ru = draft.source.title_cn[:150]; draft.save()
+        return jsonify({"ok": True, "message": "标题已填充"})
+    if tp == 'desc':
+        rich = raw.get('rich_text') or {}
+        desc = rich.get('html') or rich.get('plain_text') or ''
+        if desc: draft.description_ru = desc[:50000]; draft.save()
+        return jsonify({"ok": True, "message": "描述已填充"})
+    if tp == 'bullets':
+        src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
+        bullets = ['• ' + (a.get('name','') + ': ' + str(a.get('value',''))) for a in src_attrs[:8] if a.get('name') and a.get('value')]
+        if bullets: draft.bullets_ru = json.dumps(bullets, ensure_ascii=False); draft.save()
+        return jsonify({"ok": True, "message": f"已生成 {len(bullets)} 条卖点"})
+    return jsonify({"ok": False, "error": "未知填充类型"})
 
 @ozon_bp.route('/api/draft/<int:draft_id>/set-category-type', methods=['POST'])
 @login_required

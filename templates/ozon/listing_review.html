@@ -1,291 +1,236 @@
 {% extends "base.html" %}
 {% block title %}刊登草稿审核 — 仓库记账系统{% endblock %}
 {% block content %}
-<nav aria-label="breadcrumb"><ol class="breadcrumb">
-  <li class="breadcrumb-item"><a href="{{ url_for('ozon.listings') }}">刊登草稿</a></li>
-  <li class="breadcrumb-item active">草稿审核</li>
-</ol></nav>
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h2 class="mb-0">刊登草稿审核</h2>
-  <span class="badge fs-6
-    {% if draft.status == 'draft' %}bg-secondary
-    {% elif draft.status == 'needs_review' %}bg-warning text-dark
-    {% elif draft.status == 'approved' %}bg-success
-    {% elif draft.status == 'published' %}bg-success
-    {% elif draft.status == 'failed' %}bg-danger
-    {% else %}bg-info{% endif %}
-  ">
-    {% if draft.status == 'draft' %}草稿
-    {% elif draft.status == 'needs_review' %}待审核
-    {% elif draft.status == 'ready' %}已就绪
-    {% elif draft.status == 'approved' %}已通过
-    {% elif draft.status == 'publishing' %}发布中
-    {% elif draft.status == 'published' %}已发布
-    {% elif draft.status == 'failed' %}失败
-    {% else %}{{ draft.status }}{% endif %}
-  </span>
-</div>
-<p class="text-muted small">源商品：<a href="{{ url_for('ozon.source_detail', source_id=draft.source.id) if draft.source else '#' }}">{{ draft.source.title_cn if draft.source else '—' }}</a> | 来源：{{ draft.source.platform if draft.source else '—' }} | 采集：{{ draft.source.captured_at.strftime('%Y-%m-%d') if draft.source and draft.source.captured_at else '' }}</p>
+<style>
+.lr-tab-btn.active { border-bottom: 2px solid #0d6efd !important; font-weight: 700; }
+.lr-card { border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+.lr-source-item { font-size: 11px; padding: 4px 8px; border-left: 3px solid #6c757d; margin-bottom: 4px; background: #f8f9fa; }
+</style>
 
-<form method="POST" action="{{ url_for('ozon.listing_save', draft_id=draft.id) }}">
-<!-- Content -->
-<div class="card mb-3">
-  <div class="card-header fw-bold">📝 内容</div>
-  <div class="card-body">
-    <div class="row mb-2">
-      <div class="col-md-6 mb-2">
-        <label class="form-label fw-bold">🇷🇺 俄语标题</label>
-        <input name="title_ru" class="form-control" value="{{ draft.title_ru or '' }}">
-      </div>
-      <div class="col-md-6 mb-2">
-        <label class="form-label fw-bold">📌 俄语卖点</label>
-        <textarea name="bullets_ru" class="form-control" rows="2">{{ draft.bullets_ru or '' }}</textarea>
-      </div>
-    </div>
-    <div class="mb-2">
-      <label class="form-label fw-bold">📄 俄语描述</label>
-      <textarea name="description_ru" class="form-control" rows="3">{{ draft.description_ru or '' }}</textarea>
-    </div>
+<!-- 顶部状态栏 -->
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-2 p-2 bg-white rounded lr-card">
+  <div>
+    <h5 class="mb-1">📋 刊登草稿审核</h5>
+    <small class="text-muted">{{ draft.title_ru or (draft.source.title_cn if draft.source else '') or '' }}</small>
+  </div>
+  <div class="d-flex gap-2 align-items-center flex-wrap">
+    <span class="badge {% if draft.status=='draft' %}bg-secondary{% elif draft.status=='needs_review' %}bg-warning text-dark{% elif draft.status=='approved' %}bg-success{% else %}bg-info{% endif %}">{{ draft.status or 'draft' }}</span>
+  </div>
+  <div class="d-flex gap-1 flex-wrap mt-1">
+    <button class="btn btn-sm btn-outline-secondary" onclick="saveDraftForm()">💾 保存</button>
+    <button class="btn btn-sm btn-success" onclick="autoFillDraftAll()">🤖 根据采集资料自动填写</button>
+    <button class="btn btn-sm btn-primary" onclick="validateDraft()">🔍 发布前校验</button>
   </div>
 </div>
 
-<!-- Category -->
-<div class="card mb-3">
-  <div class="card-header fw-bold d-flex justify-content-between">📂 类目 & 属性
-    <button type="button" class="btn btn-outline-primary btn-sm" onclick="openCategorySelector(onCategorySelected)">选择类目</button>
-  </div>
-  <div class="card-body">
-    <div id="categoryInfo">
-      {% if draft.category_path_ru or draft.ozon_category_path %}
-      <div style="font-size:13px">
-        <strong>路径：</strong>{{ draft.category_path_cn or draft.category_path_ru or draft.ozon_category_path }}
+<div class="row g-2" style="min-height:calc(100vh - 180px)">
+  <!-- ★ 左栏：源资料对照 -->
+  <div class="col-lg-2">
+    <div class="card lr-card h-100">
+      <div class="card-header py-1 d-flex justify-content-between">
+        <strong style="font-size:12px">📥 源资料</strong>
       </div>
-      {% endif %}
-      {% if draft.ozon_category_id %}
-      <div style="font-size:12px" class="mt-1">
-        <code>dcid: {{ draft.ozon_category_id }}</code>
-        {% if draft.type_id %}<code class="ms-2">type_id: {{ draft.type_id }}</code>{% endif %}
-        {% if draft.type_name_ru %}<span class="ms-2 badge bg-info">{{ draft.type_name_ru[:30] }}</span>{% endif %}
+      <div class="card-body p-1 overflow-auto" style="font-size:10px">
+        <div class="lr-source-item"><b>标题:</b> {{ (draft.source.title_cn if draft.source else '')[:80] }}</div>
+        <div class="lr-source-item"><b>参考价:</b> {% if pricing %}{% if pricing.reference_price_rub %}₽{{ '{:,.0f}'.format(pricing.reference_price_rub) }}{% endif %}{% endif %}</div>
+        {% set src_attrs = (raw.get('source_attributes') or raw.get('specs_json') or []) if raw else [] %}
+        <div class="mt-2"><b>属性字典 ({{ src_attrs|length }})</b></div>
+        {% for a in src_attrs[:10] %}
+        <div class="lr-source-item">{{ a.get('name','') }} = {{ a.get('value','') }}</div>
+        {% endfor %}
       </div>
-      {% endif %}
     </div>
-    {% if not draft.type_id %}
-    <p class="text-muted small mt-2 mb-0">请点击"选择类目"绑定 OZON 类目类型。发布前必须完成。</p>
-    {% endif %}
-    <!-- 属性实时展示区 -->
-    <div id="attrSection" class="mt-3 d-none">
-      <div class="d-flex justify-content-between align-items-center mb-1">
-        <strong style="font-size:12px">📋 属性 Schema</strong>
-        <span class="badge bg-secondary" id="attrCount" style="font-size:10px"></span>
-      </div>
-      <div id="attrPanel" style="max-height:300px;overflow-y:auto;font-size:11px"></div>
-    </div>
-    <input type="hidden" name="ozon_category_id" value="{{ draft.ozon_category_id or '' }}">
-    <input type="hidden" name="type_id" value="{{ draft.type_id or '' }}">
   </div>
-</div>
 
-<!-- SKU -->
-<div class="card mb-3">
-  <div class="card-header fw-bold d-flex justify-content-between">
-    📦 SKU
-    <span class="badge bg-success">顺序与源一致 ✓</span>
-  </div>
-  <div class="card-body p-0">
-    <div class="table-responsive-mobile">
-      <table class="table table-bordered table-sm mb-0">
-        <thead class="table-light"><tr><th>#</th><th>源名称</th><th>颜色 (RU)</th><th>款式 (RU)</th><th>套装量</th><th>采购价 ¥</th><th>图片</th></tr></thead>
-        <tbody>
-          {% for item in skus_with_images %}
-          {% set sku = item.sku %}
-          <tr>
-            <td>{{ sku.source_order }}</td>
-            <td>{{ sku.source_sku_name }}</td>
-            <td><input class="form-control form-control-sm" value="{{ sku.color_ru or '' }}" style="width:100px" name="color_ru_{{ sku.id }}"></td>
-            <td><input class="form-control form-control-sm" value="{{ sku.style_ru or '' }}" style="width:100px" name="style_ru_{{ sku.id }}"></td>
-            <td>{{ sku.bundle_quantity }}</td>
-            <td>{{ '%.2f'|format(sku.purchase_price_cny) if sku.purchase_price_cny else '' }}</td>
-            <td>{{ item.approved_img }} / {{ item.total_img }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-</div>
+  <!-- ★ 中栏：4 Tab 编辑区 -->
+  <div class="col-lg-7">
+    <div class="card lr-card h-100">
+      <div class="card-header py-1">
+        <ul class="nav nav-tabs card-header-tabs" style="font-size:12px">
+          <li class="nav-item"><button class="nav-link active lr-tab-btn" data-tab="tab-content">📝 内容</button></li>
+          <li class="nav-item"><button class="nav-link lr-tab-btn" data-tab="tab-category">📂 类目与属性</button></li>
+          <li class="nav-item"><button class="nav-link lr-tab-btn" data-tab="tab-sku">💰 SKU/价格</button></li>
+        </ul>
+      </div>
+      <div class="card-body p-2 overflow-auto" id="tabContent">
 
-<!-- Pricing -->
-<div class="card mb-3">
-  <div class="card-header fw-bold d-flex justify-content-between">
-    💰 定价
-    {% if not draft.price_manual_confirmed %}<span class="badge bg-danger">⚠ 需人工确认</span>
-    {% else %}<span class="badge bg-success">✓ 已确认</span>{% endif %}
-  </div>
-  <div class="card-body">
-    <div class="bg-light rounded p-3 small mb-3">
-      <div class="mb-2">成本明细（从定价规则自动计算）</div>
-      {% if draft.pricing_json %}
-        {% set pricing = draft.pricing_json %}
-        <div class="text-muted">{{ pricing }}</div>
-      {% else %}
-        <div class="text-muted">暂未计算，请先配置<a href="{{ url_for('ozon.pricing') }}">定价规则</a></div>
-      {% endif %}
-      <div class="mt-2 pt-2 border-top">
-        建议 RUB 售价：<span class="fs-4 fw-bold text-primary">{{ draft.pricing_json or '—' }}</span>
+        <!-- Tab 1: 内容 -->
+        <div id="tab-content">
+          <form method="POST" action="{{ url_for('ozon.listing_save', draft_id=draft.id) }}" id="draftForm">
+          <div class="mb-2"><label class="form-label" style="font-size:11px"><b>俄语标题</b> <small>(≤150字符)</small></label>
+            <textarea name="title_ru" class="form-control form-control-sm" rows="2" style="font-size:11px">{{ draft.title_ru or '' }}</textarea>
+            <button type="button" class="btn btn-sm btn-outline-info mt-1" style="font-size:9px" onclick="fillFromSource('title')">📋 从采集原文填充</button>
+          </div>
+          <div class="mb-2"><label class="form-label" style="font-size:11px"><b>卖点</b> <small>(每行一条,3-5条)</small></label>
+            <textarea name="bullets_ru" class="form-control form-control-sm" rows="3" style="font-size:11px">{{ draft.bullets_ru or '' }}</textarea>
+            <button type="button" class="btn btn-sm btn-outline-info mt-1" style="font-size:9px" onclick="fillFromSource('bullets')">📋 从属性字典生成卖点</button>
+          </div>
+          <div class="mb-2"><label class="form-label" style="font-size:11px"><b>俄语描述</b></label>
+            <textarea name="description_ru" class="form-control form-control-sm" rows="6" style="font-size:11px">{{ draft.description_ru or '' }}</textarea>
+            <button type="button" class="btn btn-sm btn-outline-info mt-1" style="font-size:9px" onclick="fillFromSource('desc')">📋 从采集富文本填充</button>
+          </div>
+          </form>
+        </div>
+
+        <!-- Tab 2: 类目与属性 -->
+        <div id="tab-category" class="d-none">
+          <div class="mb-2 p-2 bg-light rounded">
+            <div class="d-flex justify-content-between align-items-center">
+              <div><b>已选类目:</b> <span id="catName">{% if draft.type_name_cn %}{{ draft.type_name_cn }}{% elif draft.ozon_category_id %}dcid={{ draft.ozon_category_id }}{% else %}未选择{% endif %}</span><br>
+                {% if draft.ozon_category_id %}<small class="text-muted">dcid={{ draft.ozon_category_id }} type_id={{ draft.type_id }}</small>{% endif %}</div>
+              <div class="d-flex gap-1">
+                <button class="btn btn-sm btn-outline-success" onclick="recommendCategoryDraft()">🤖 推荐类目</button>
+                <button class="btn btn-sm btn-outline-primary" onclick="openCategoryForAdaptation()">📂 类目树选择</button>
+                <button class="btn btn-sm btn-outline-warning" onclick="syncAttributesDraft()">🔄 同步属性</button>
+              </div>
+            </div>
+          </div>
+          <div class="mb-2"><b style="font-size:11px">属性字典</b></div>
+          <div id="attrFormDraft" style="font-size:10px">
+            <div class="text-muted p-2">请先选择类目和 type，然后点击"同步属性"</div>
+          </div>
+          <div class="d-flex gap-1 mt-2">
+            <button class="btn btn-sm btn-success" onclick="autoFillAttrsDraft()">🤖 根据采集属性自动填写</button>
+            <button class="btn btn-sm btn-outline-primary" onclick="saveAttrsDraft()">💾 保存属性</button>
+          </div>
+        </div>
+
+        <!-- Tab 3: SKU/价格 -->
+        <div id="tab-sku" class="d-none">
+          <table class="table table-sm" style="font-size:11px">
+            <tr><th>SKU</th><th>颜色</th><th>数量</th><th>采购价</th></tr>
+            {% for sku in draft.draft_skus if draft.draft_skus else [] %}
+            <tr><td>{{ sku.source_sku_name[:40] }}</td><td>{{ sku.color_ru or '-' }}</td><td>{{ sku.bundle_quantity or 1 }}</td><td>{% if sku.purchase_price_cny %}¥{{ '{:,.2f}'.format(sku.purchase_price_cny) }}{% else %}-{% endif %}</td></tr>
+            {% else %}
+            <tr><td colspan="4" class="text-muted">暂无 SKU 数据</td></tr>
+            {% endfor %}
+          </table>
+          <div class="p-2 bg-light rounded mt-2" style="font-size:11px">
+            <b>OZON参考价:</b> {% if pricing and pricing.reference_price_rub %}₽{{ '{:,.0f}'.format(pricing.reference_price_rub) }}{% else %}未识别{% endif %}
+          </div>
+        </div>
+
       </div>
     </div>
-    <div class="d-flex gap-3 align-items-center">
-      <div>
-        <label class="form-label fw-bold">手动售价 RUB（发布用）</label>
-        <input type="number" name="manual_price_rub" class="form-control" placeholder="输入最终售价" style="width:200px;font-size:18px;font-weight:600">
-      </div>
-      <div class="form-check mt-4">
-        <input class="form-check-input" type="checkbox" name="price_manual_confirmed" value="1" id="priceConfirmed" {{ 'checked' if draft.price_manual_confirmed }}>
-        <label class="form-check-label fw-bold" for="priceConfirmed">价格已人工确认</label>
-      </div>
-    </div>
   </div>
-</div>
 
-<!-- Validation -->
-<div class="card mb-3 {% if validation and validation.blocking_count > 0 %}border-danger{% else %}border-success{% endif %}">
-  <div class="card-header fw-bold d-flex justify-content-between
-    {% if validation and validation.blocking_count > 0 %}bg-danger bg-opacity-10{% else %}bg-success bg-opacity-10{% endif %}">
-    ✅ 发布前校验
-    {% if validation and validation.blocking_count > 0 %}
-    <span class="badge bg-danger">{{ validation.blocking_count }} 项阻断</span>
-    {% elif validation %}
-    <span class="badge bg-success">全部通过</span>
-    {% endif %}
-  </div>
-  <div class="card-body">
-    {% if validation and validation.checks %}
-    <ul class="list-unstyled mb-0">
-      {% for check in validation.checks %}
-      <li class="mb-1 {% if check.pass %}text-success{% elif check.blocking %}text-danger{% else %}text-warning{% endif %}">
-        {{ '✓' if check.pass else '✗' if check.blocking else '⚠' }} {{ check.label }}
-        {% if check.blocking %}<b>— 阻断</b>{% endif %}
-      </li>
-      {% endfor %}
-    </ul>
-    {% else %}
-    <p class="text-muted mb-0 small">点击"发布前校验"按钮执行检查</p>
-    {% endif %}
-  </div>
-</div>
-
-<!-- Image Status -->
-<div class="card mb-3">
-  <div class="card-header fw-bold d-flex justify-content-between">
-    🖼 图片
-    <a href="{{ url_for('ozon.image_plan', draft_id=draft.id) }}" class="btn btn-sm btn-outline-primary">管理图片方案</a>
-  </div>
-  <div class="card-body">
-    <div class="d-flex align-items-center gap-2">
-      <div class="progress flex-grow-1" style="height:20px">
-        <div class="progress-bar bg-success" style="width:{{ (approved_slots / total_slots * 100) if total_slots > 0 else 0 }}%">
-          {{ approved_slots }}/{{ total_slots }}
+  <!-- ★ 右栏：审核状态 -->
+  <div class="col-lg-3">
+    <div class="card lr-card h-100">
+      <div class="card-header py-1"><strong style="font-size:12px">✅ 审核状态</strong></div>
+      <div class="card-body p-2" style="font-size:11px">
+        <div class="mb-2"><b>发布前校验</b></div>
+        {% if validation %}
+        {% for item in validation.get('checks', [])[:10] %}
+        <div class="mb-1 {% if item.pass %}text-success{% elif item.blocking %}text-danger{% else %}text-warning{% endif %}">
+          {% if item.pass %}✅{% elif item.blocking %}❌{% else %}⚠️{% endif %} {{ item.label }}
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="text-muted">点击"发布前校验"查看</div>
+        {% endif %}
+        <hr>
+        <div class="d-flex gap-2">
+          <button class="btn btn-sm btn-warning flex-grow-1" onclick="validateDraft()">🔍 校验</button>
+          <form method="POST" action="{{ url_for('ozon.listing_approve', draft_id=draft.id) }}" class="flex-grow-1">
+            <button class="btn btn-sm btn-success w-100">✅ 审核通过</button>
+          </form>
         </div>
       </div>
-      <small class="text-muted">已审核通过</small>
     </div>
   </div>
 </div>
 
-<!-- Actions -->
-<div class="d-flex gap-2 justify-content-end mb-4">
-  <button type="submit" class="btn btn-outline-secondary">💾 保存</button>
-  <a href="{{ url_for('ozon.listing_validate', draft_id=draft.id) }}" class="btn btn-outline-secondary">🔍 发布前校验</a>
-  <a href="{{ url_for('ozon.listing_approve', draft_id=draft.id) }}" class="btn btn-warning btn-lg">✅ 审核通过</a>
-  {% if draft.status == 'approved' %}
-  <button type="submit" formaction="{{ url_for('ozon.listing_publish', draft_id=draft.id) }}" class="btn btn-primary btn-lg">🚀 提交测试店发布</button>
-  {% else %}
-  <button type="button" class="btn btn-primary btn-lg" disabled>🚀 提交测试店发布</button>
-  {% endif %}
-</div>
-</form>
-
-{% include 'ozon/_category_selector.html' %}
-
 <script>
-function onCategorySelected(sel) {
-  var info = document.getElementById('categoryInfo');
-  info.innerHTML = '<div style="font-size:13px"><strong>路径：</strong>' + sel.path + '</div>' +
-    '<div style="font-size:12px" class="mt-1"><code>dcid: ' + sel.description_category_id + '</code> <code class="ms-2">type_id: ' + sel.type_id + '</code>' +
-    '<span class="ms-2 badge bg-info">' + sel.type_name + '</span></div>' +
-    '<p class="text-success small mt-2">✅ 已选择，属性已自动加载。</p>';
+// Tab 切换
+document.querySelectorAll('.lr-tab-btn').forEach(function(b){b.onclick=function(){
+  document.querySelectorAll('.lr-tab-btn').forEach(function(x){x.classList.remove('active')});
+  this.classList.add('active');
+  document.querySelectorAll('#tabContent > div').forEach(function(d){d.classList.add('d-none')});
+  document.getElementById(this.dataset.tab).classList.remove('d-none');
+}});
 
-  fetch('/ozon/api/draft/{{ draft.id }}/set-category-type', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      description_category_id: sel.description_category_id,
-      type_id: sel.type_id,
-      type_name_cn: sel.type_name
-    })
-  }).then(function(r){return r.json()}).then(function(d){
-    if (d.ok) {
-      document.querySelector('input[name="ozon_category_id"]').value = d.description_category_id;
-      document.querySelector('input[name="type_id"]').value = d.type_id;
-    }
-  });
+var DRAFT_ID = {{ draft.id }};
+{% if draft.ozon_category_id %}var DRAFT_DCID = '{{ draft.ozon_category_id }}';{% endif %}
+{% if draft.type_id %}var DRAFT_TID = '{{ draft.type_id }}';{% endif %}
 
-  // 自动加载属性（从本地数据库）
-  loadAttributes(sel.description_category_id, sel.type_id);
+function saveDraftForm(){ document.getElementById('draftForm').submit(); }
+
+function autoFillDraftAll(){
+  if(!confirm('将根据采集资料自动填写标题/卖点/描述/属性,确认?')) return;
+  fetch('/ozon/api/draft/'+DRAFT_ID+'/auto-fill-apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({apply_all:true})})
+  .then(r=>r.json()).then(d=>{ if(d.ok){alert('已应用 '+d.filled_count+' 项');location.reload();}else alert(d.error||'失败'); }).catch(e=>alert(e.message));
 }
 
-function loadAttributes(dcid, typeId) {
-  var section = document.getElementById('attrSection');
-  var panel = document.getElementById('attrPanel');
-  section.classList.remove('d-none');
-  panel.innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm"></div></div>';
+function fillFromSource(type){
+  fetch('/ozon/api/draft/'+DRAFT_ID+'/fill-from-source',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:type})})
+  .then(r=>r.json()).then(d=>{ if(d.ok){alert(d.message);location.reload();}else alert(d.error); }).catch(e=>alert(e.message));
+}
 
-  fetch('/ozon/api/category/' + dcid + '/get-attributes?type_id=' + typeId)
-    .then(function(r){return r.json()})
-    .then(function(d){
-      if (!d.ok || !d.attrs.length) {
-        panel.innerHTML = '<div class="text-muted">该 type 暂无属性数据</div>';
-        document.getElementById('attrCount').textContent = '0';
-        return;
-      }
-      document.getElementById('attrCount').textContent = d.attrs.length + ' 个';
-      var html = '<table class="table table-sm table-borderless mb-0" style="font-size:11px">';
-      // 先必填再选填
-      d.attrs.sort(function(a, b){ return (b.is_required ? 1 : 0) - (a.is_required ? 1 : 0); });
-      d.attrs.forEach(function(a){
-        html += '<tr>';
-        html += '<td style="width:40%"><strong>' + (a.name_cn || a.name) + '</strong>';
-        if (a.is_required) html += ' <span class="badge bg-danger" style="font-size:9px">必填</span>';
-        html += '</td>';
-        html += '<td style="width:30%">';
-        if (a.is_dictionary) {
-          if (a.values && a.values.length > 0) {
-            html += '<span class="text-success">' + a.values.length + ' 个选项</span>';
-          } else {
-            html += '<span class="text-warning">字典值未拉取</span>';
-          }
-        } else {
-          html += '<span class="text-muted">' + (a.data_type || 'string') + '</span>';
-        }
-        html += '</td>';
-        html += '<td style="width:30%"><small class="text-muted">' + (a.name || '') + '</small></td>';
-        html += '</tr>';
-      });
-      html += '</table>';
-      panel.innerHTML = html;
-    })
-    .catch(function(){
-      panel.innerHTML = '<div class="text-danger">加载失败</div>';
+function recommendCategoryDraft(){
+  var btn=event.target;btn.disabled=true;btn.textContent='分析中...';
+  fetch('/ozon/api/draft/'+DRAFT_ID+'/recommend-category',{method:'POST',headers:{'Accept':'application/json'}})
+  .then(r=>r.json()).then(function(d){
+    if(!d.ok||!d.categories||!d.categories.length){alert('未找到匹配类目');return;}
+    var cats=d.categories.slice(0,3),h='';
+    cats.forEach(function(c,i){
+      h+='<div class="border rounded p-1 mb-1" style="font-size:10px"><b>'+(i+1)+'. '+(c.type_name_cn||c.name_ru||'')+'</b> '+Math.round((c.confidence||0)*100)+'%<br><small>'+c.reason+'</small><br><button class="btn btn-sm btn-outline-primary" style="font-size:9px" onclick="applyDraftCategory(\''+(c.description_category_id||c.category_id||'')+'\',\''+(c.type_id||'')+'\',\''+(c.type_name_cn||c.type_name||c.name_ru||'')+'\')">选择</button></div>';
     });
+    showDraftModal('推荐类目',h+'<button class="btn btn-sm btn-secondary" onclick="closeDraftModal()">取消</button>');
+  }).catch(e=>alert(e.message)).finally(function(){btn.disabled=false;btn.textContent='🤖 推荐类目';});
 }
 
-// 页面初始化：已有类目则自动加载属性
-(function(){
-  var dcid = document.querySelector('input[name="ozon_category_id"]').value;
-  var tid = document.querySelector('input[name="type_id"]').value;
-  if (dcid && tid) {
-    loadAttributes(dcid, tid);
-  }
-})();
+function applyDraftCategory(dcid,tid,tname){
+  fetch('/ozon/api/draft/'+DRAFT_ID+'/set-category-type',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({description_category_id:dcid,type_id:tid,type_name:tname})})
+  .then(r=>r.json()).then(d=>{if(d.ok)location.reload();else alert(d.error);});
+}
+
+function validateDraft(){ location.href='/ozon/listings/'+DRAFT_ID+'/validate'; }
+
+function showDraftModal(title,body){var m=document.createElement('div');m.id='draftModal';m.innerHTML='<div style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1050;display:flex;align-items:center;justify-content:center" onclick="if(event.target===this)closeDraftModal()"><div style="background:#fff;border-radius:8px;padding:16px;max-width:500px;width:90%"><h6>'+title+'</h6>'+body+'</div></div>';document.body.appendChild(m);}
+function closeDraftModal(){var m=document.getElementById('draftModal');if(m)m.remove();}
+
+function syncAttributesDraft(){
+  if(typeof DRAFT_DCID==='undefined'||typeof DRAFT_TID==='undefined'){alert('请先选择类目和type');return;}
+  var btn=event.target;btn.disabled=true;btn.textContent='同步中...';
+  fetch('/ozon/api/category/'+DRAFT_DCID+'/sync-current-type-full?type_id='+DRAFT_TID,{method:'POST'})
+  .then(r=>r.json()).then(d=>{if(d.ok){alert('同步完成');loadDraftAttrs();}else alert(d.error);}).finally(function(){btn.disabled=false;btn.textContent='🔄 同步属性';});
+}
+
+function loadDraftAttrs(){
+  if(typeof DRAFT_DCID==='undefined')return;
+  var panel=document.getElementById('attrFormDraft');
+  panel.innerHTML='<div class="text-muted">加载中...</div>';
+  fetch('/ozon/api/category/'+DRAFT_DCID+'/get-attributes?type_id='+(typeof DRAFT_TID!=='undefined'?DRAFT_TID:''))
+  .then(r=>r.json()).then(d=>{
+    if(!d.ok||!d.attrs){panel.innerHTML='<div class="alert alert-warning">暂无属性,请同步</div>';return;}
+    var h='',saved={};
+    try{saved=JSON.parse('{{ draft.attributes_json or "{}" | safe }}');}catch(e){}
+    if(saved.attributes) saved=saved.attributes;
+    d.attrs.forEach(function(a){
+      var aid=String(a.attribute_id),sv=saved[aid]||{},sVal=typeof sv==='object'?sv.value||'':sv,sVid=typeof sv==='object'?sv.value_id||'':'';
+      h+='<div class="mb-1"><label style="font-size:10px">'+(a.name_cn||a.name)+(a.is_required?' <span class="text-danger">*</span>':'')+'</label>';
+      if(a.is_dictionary&&a.values&&a.values.length){h+='<select class="form-select form-select-sm draft-attr" data-aid="'+aid+'" style="font-size:10px"><option value="">--</option>';
+        a.values.forEach(function(v){h+='<option value="'+v.value_id+'"'+(v.value_id==sVid?' selected':'')+'>'+(v.value_cn||v.value)+'</option>';});
+        h+='</select>';
+      }else{h+='<input class="form-control form-control-sm draft-attr" data-aid="'+aid+'" value="'+sVal.replace(/"/g,'&quot;')+'" style="font-size:10px">';}
+      h+='</div>';
+    });
+    panel.innerHTML=h;
+  });
+}
+{% if draft.ozon_category_id and draft.type_id %}document.addEventListener('DOMContentLoaded',loadDraftAttrs);{% endif %}
+
+function saveAttrsDraft(){
+  var attrs={};document.querySelectorAll('.draft-attr').forEach(function(e){attrs[e.dataset.aid]=e.value;});
+  fetch('/ozon/api/draft/'+DRAFT_ID+'/save-attributes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({attributes:attrs})})
+  .then(r=>r.json()).then(d=>{alert(d.message||'已保存');}).catch(e=>alert(e.message));
+}
+
+function autoFillAttrsDraft(){
+  if(!confirm('根据采集资料自动填写属性?'))return;
+  fetch('/ozon/api/draft/'+DRAFT_ID+'/auto-fill-apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({apply_all:true})})
+  .then(r=>r.json()).then(d=>{if(d.ok){alert('已应用 '+d.filled_count+' 项');loadDraftAttrs();}else alert(d.error);}).catch(e=>alert(e.message));
+}
 </script>
 {% endblock %}
