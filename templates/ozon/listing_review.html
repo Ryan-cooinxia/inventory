@@ -99,11 +99,13 @@
         <div id="tab-sku" class="d-none">
           <table class="table table-sm" style="font-size:11px">
             <tr><th>SKU</th><th>颜色</th><th>数量</th><th>采购价</th></tr>
-            {% for sku in draft.draft_skus if draft.draft_skus else [] %}
+            {% if draft.draft_skus.count() %}
+            {% for sku in draft.draft_skus %}
             <tr><td>{{ sku.source_sku_name[:40] }}</td><td>{{ sku.color_ru or '-' }}</td><td>{{ sku.bundle_quantity or 1 }}</td><td>{% if sku.purchase_price_cny %}¥{{ '{:,.2f}'.format(sku.purchase_price_cny) }}{% else %}-{% endif %}</td></tr>
+            {% endfor %}
             {% else %}
             <tr><td colspan="4" class="text-muted">暂无 SKU 数据</td></tr>
-            {% endfor %}
+            {% endif %}
           </table>
           <div class="p-2 bg-light rounded mt-2" style="font-size:11px">
             <b>OZON参考价:</b> {% if pricing and pricing.reference_price_rub %}₽{{ '{:,.0f}'.format(pricing.reference_price_rub) }}{% else %}未识别{% endif %}
