@@ -318,32 +318,6 @@
 
         <hr class="my-2">
 
-        <!-- 富文本JSON独立区域 -->
-        <div id="richContentSection" class="mt-2 d-none">
-          <div class="border rounded">
-            <div class="d-flex flex-wrap justify-content-between align-items-center px-2 py-1 bg-light border-bottom">
-              <strong style="font-size:11px">📄 富文本内容</strong>
-              <div class="btn-group btn-group-sm">
-                <button class="btn btn-sm btn-success" onclick="autoBuildRichContentFromSource()" style="font-size:9px">📝 根据采集生成</button>
-                <button class="btn btn-sm btn-outline-primary" onclick="validateRichContentJson()" style="font-size:9px">🔍 校验</button>
-                <button class="btn btn-sm btn-primary" onclick="applyRichContentToAttributes()" style="font-size:9px">💾 应用到草稿</button>
-              </div>
-            </div>
-            <ul class="nav nav-tabs px-2 pt-1" style="font-size:10px">
-              <li class="nav-item"><button class="nav-link active py-0 px-2" data-bs-toggle="tab" data-bs-target="#richSourcePreview">采集预览</button></li>
-              <li class="nav-item"><button class="nav-link py-0 px-2" data-bs-toggle="tab" data-bs-target="#richJsonEditor">OZON JSON</button></li>
-              <li class="nav-item"><button class="nav-link py-0 px-2" data-bs-toggle="tab" data-bs-target="#richImages">图片素材</button></li>
-              <li class="nav-item"><button class="nav-link py-0 px-2" data-bs-toggle="tab" data-bs-target="#richRawHtml">原始HTML</button></li>
-            </ul>
-            <div class="tab-content p-2">
-              <div class="tab-pane fade show active" id="richSourcePreview"><div id="richSourcePreviewBox" class="ozon-rich-preview" style="max-height:250px;overflow:auto"></div></div>
-              <div class="tab-pane fade" id="richJsonEditor"><textarea id="richContentJsonInput" class="form-control form-control-sm" rows="8" style="font-size:10px;font-family:monospace" placeholder="点击'根据采集生成'自动生成"></textarea><div id="richJsonStatus" class="small text-muted mt-1"></div></div>
-              <div class="tab-pane fade" id="richImages"><div id="richImageList" class="d-flex flex-wrap"></div></div>
-              <div class="tab-pane fade" id="richRawHtml"><textarea id="richRawHtmlInput" class="form-control form-control-sm" rows="6" readonly style="font-size:9px"></textarea></div>
-            </div>
-          </div>
-        </div>
-
         <!-- 俄语标题/描述（保留） -->
         <div class="mb-2"><strong style="font-size:11px">俄语标题</strong></div>
         <input type="text" class="form-control form-control-sm mb-2" id="adaptTitleRu" value="{{ adaptation.title_ru if adaptation else '' }}">
@@ -531,23 +505,14 @@ function loadAttributeForm(dcid, typeId, savedAttrs) {
 function renderAttributeForm(attrs, savedAttrs) {
   savedAttrs = savedAttrs || {};
   var h='';
-  window.__richContentAttr = null;
   attrs.forEach(function(a){
     var aid = String(a.attribute_id);
-    var name = (a.name_cn||a.name||'').toLowerCase();
-    // 跳过富文本JSON属性(单独渲染)
-    if (/富文本json|rich.content|rich_content|json内容/.test(name)){
-      window.__richContentAttr = a;
-      if(savedAttrs && savedAttrs[aid]) a._savedValue = savedAttrs[aid].value||'';
-      renderRichContentSection(a);
-      return;
-    }
     var sv = savedAttrs[aid] || {};
     var sVal = typeof sv==='object' ? (sv.value||'') : String(sv||'');
     var sVid = typeof sv==='object' ? (sv.value_id||'') : '';
-    var label = a.name_cn || a.name || a.attribute_id;
+    var name = a.name_cn || a.name || a.attribute_id;
     var req = a.is_required ? ' <span class="text-danger">*</span>' : '';
-    h += '<div class="mb-1"><label style="font-size:10px">'+label+req+'</label>';
+    h += '<div class="mb-1"><label style="font-size:10px">'+name+req+'</label>';
     if (a.is_dictionary && a.values && a.values.length) {
       h += '<select class="form-select form-select-sm attr-input" data-attr-id="'+aid+'" style="font-size:10px">';
       h += '<option value="">--</option>';
@@ -564,57 +529,6 @@ function renderAttributeForm(attrs, savedAttrs) {
     h += '</div>';
   });
   document.getElementById('attributeForm').innerHTML = h;
-  if(!window.__richContentAttr) document.getElementById('richContentSection').classList.add('d-none');
-  else document.getElementById('richContentSection').classList.remove('d-none');
-}
-
-// ═══ 富文本JSON独立区域 ═══
-function renderRichContentSection(attr){
-  var sec = document.getElementById('richContentSection');
-  sec.classList.remove('d-none');
-  // 回填已保存值
-  var sv = attr._savedValue||'';
-  if(sv) document.getElementById('richContentJsonInput').value = sv;
-  // 从采集资料加载预览
-  var rich = window.__sourceRichText||{};
-  var preview = document.getElementById('richSourcePreviewBox');
-  if(rich.html) preview.innerHTML = rich.html;
-  else if(rich.plain_text) preview.innerHTML = rich.plain_text.replace(/\\n/g,'<br>');
-  else preview.innerHTML = '<div class=\"text-muted\">暂无采集富文本</div>';
-  if(rich.image_urls&&rich.image_urls.length){
-    var imgs='';
-    rich.image_urls.slice(0,20).forEach(function(u){imgs+='<img src=\"'+u+'\" style=\"max-width:120px;max-height:120px;object-fit:contain;margin:4px;border:1px solid #ddd;border-radius:4px\" onerror=\"this.style.display=\\'none\\'\">';});
-    document.getElementById('richImageList').innerHTML=imgs;
-  }
-  if(rich.html) document.getElementById('richRawHtmlInput').value = rich.html.slice(0,10000);
-}
-
-function autoBuildRichContentFromSource(){
-  var rich = window.__sourceRichText||{};
-  var blocks=[];
-  if(rich.plain_text){
-    rich.plain_text.split(/\\n+/).forEach(function(p){p=p.trim();if(p)blocks.push({type:'text',content:p});});
-  }
-  (rich.image_urls||[]).forEach(function(u){blocks.push({type:'image',url:u});});
-  document.getElementById('richContentJsonInput').value = JSON.stringify({version:'1.0',blocks:blocks}, null, 2);
-  validateRichContentJson();
-}
-
-function validateRichContentJson(){
-  var status = document.getElementById('richJsonStatus');
-  try{ JSON.parse(document.getElementById('richContentJsonInput').value||''); status.innerHTML='<span class=\"text-success\">✅ JSON格式正确</span>'; }
-  catch(e){ status.innerHTML='<span class=\"text-danger\">❌ 格式错误: '+escapeHtml(e.message)+'</span>'; }
-}
-
-function applyRichContentToAttributes(){
-  var attr = window.__richContentAttr;
-  if(!attr){alert('当前类目无富文本JSON属性');return;}
-  var json = document.getElementById('richContentJsonInput').value||'';
-  try{JSON.parse(json);}catch(e){alert('JSON格式错误');return;}
-  var input = document.querySelector('.attr-input[data-attr-id=\"'+attr.attribute_id+'\"]');
-  if(!input){ input=document.createElement('input');input.type='hidden';input.className='attr-input';input.dataset.attrId=attr.attribute_id;document.getElementById('attributeForm').appendChild(input); }
-  input.value=json;
-  alert('富文本JSON已应用,请点击保存属性');
 }
 
 // 推荐类目
@@ -788,7 +702,6 @@ function generateDraft() {
 
 var allSourceMedia = {{ source_media_list_json | tojson | safe }};
 var hiddenSourceMedia = {{ hidden_source_media_list_json | tojson | safe }};
-window.__sourceRichText = {{ rich_text | tojson | safe }};
 var STATUS_LABELS = {'usable': '可用', 'needs_review': '待审核', 'rejected': '已过滤'};
 var STATUS_COLORS = {'usable': '#28a745', 'needs_review': '#ffc107', 'rejected': '#dc3545', 'pending': '#6c757d', 'approved': '#28a745'};
 var AREA_LABELS = {'main_gallery': '主图区', 'sku_panel': 'SKU区', 'detail_content': '详情区', 'manual_upload': '手动上传', 'shop_header': '店铺头部', 'floating': '浮动元素', 'sidebar': '侧栏', 'footer': '页脚', 'nav': '导航栏', 'ad': '广告位', 'certification': '认证标识', 'unknown': '未知来源'};
