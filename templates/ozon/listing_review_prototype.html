@@ -12,10 +12,10 @@
 <div class="d-flex flex-wrap justify-content-between align-items-center mb-2 p-2 bg-white rounded lr-card">
   <div>
     <h5 class="mb-1">📋 刊登草稿审核</h5>
-    <small class="text-muted">{{ draft.title_ru or source.title_cn or 'DJI Микрофон универсальный DJI Mic Mini 2' }}</small>
+    <small class="text-muted">DJI Микрофон универсальный DJI Mic Mini 2</small>
   </div>
   <div class="d-flex gap-2 align-items-center flex-wrap">
-    <span class="badge bg-{% if draft.status=='draft' %}secondary{% elif draft.status=='needs_review' %}warning text-dark{% elif draft.status=='ready' %}info{% elif draft.status=='published' %}success{% else %}secondary{% endif %}">{{ draft.status or 'draft' }}</span>
+    <span class="badge bg-{% if draft.status=='draft' %}secondary{% elif draft.status=='needs_review' %}warning text-dark{% elif draft.status=='ready' %}info{% elif draft.status=='published' %}success{% else %}secondary{% endif %}">draft</span>
     <span class="text-muted" style="font-size:11px">采集完整度: 77分</span>
     <span class="text-muted" style="font-size:11px">校验: <span class="text-warning">3项待处理</span></span>
   </div>
@@ -71,18 +71,20 @@
         <!-- Tab 1: 内容 -->
         <div id="tab-content">
           <div class="mb-2"><label class="form-label" style="font-size:11px"><b>俄语标题</b> <small class="text-muted">(≤150字符)</small></label>
-            <textarea class="form-control form-control-sm" rows="2" style="font-size:11px">{{ draft.title_ru or 'DJI Микрофон универсальный DJI Mic Mini 2 (2TX+1RX+Charging Case)' }}</textarea>
+            <textarea class="form-control form-control-sm" rows="2" style="font-size:11px">DJI Микрофон универсальный DJI Mic Mini 2 (2TX+1RX+Charging Case)</textarea>
             <div class="d-flex gap-1 mt-1">
               <button class="btn btn-sm btn-outline-info" style="font-size:9px" onclick="fillFromSource('title')">📋 从采集原文填充</button>
               <small class="text-muted align-self-center">长度: <span id="titleLen">0</span>/150</small>
             </div>
           </div>
           <div class="mb-2"><label class="form-label" style="font-size:11px"><b>卖点</b> <small class="text-muted">(3-5条,每行一条)</small></label>
-            <textarea class="form-control form-control-sm" rows="3" style="font-size:11px">{{ draft.bullets_ru or '' }}</textarea>
+            <textarea class="form-control form-control-sm" rows="3" style="font-size:11px">• Тип: Микрофон
+• Цвет: Прозрачный, черный
+• Гарантия: 3 месяца</textarea>
             <button class="btn btn-sm btn-outline-info mt-1" style="font-size:9px" onclick="fillFromSource('bullets')">📋 从属性生成卖点</button>
           </div>
           <div class="mb-2"><label class="form-label" style="font-size:11px"><b>俄语描述</b></label>
-            <textarea class="form-control form-control-sm" rows="6" style="font-size:11px">{{ draft.description_ru or '' }}</textarea>
+            <textarea class="form-control form-control-sm" rows="6" style="font-size:11px">DJI Mic Mini — портативная беспроводная микрофонная система...</textarea>
             <button class="btn btn-sm btn-outline-info mt-1" style="font-size:9px" onclick="fillFromSource('desc')">📋 从采集富文本填充</button>
           </div>
         </div>

@@ -3083,7 +3083,7 @@ def listings():
 @login_required
 def listing_prototype():
     """刊登草稿审核页 — 产品原型预览"""
-    return render_template('ozon/listing_review_prototype.html')
+    return render_template('ozon/listing_review_prototype.html', draft={}, source={})
 
 @ozon_bp.route('/listings/<int:draft_id>')
 @login_required
