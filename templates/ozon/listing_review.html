@@ -145,33 +145,53 @@
 
         <!-- Tab 4: 图片/视频 -->
         <div id="tab-images" class="d-none">
-          <div class="mb-2"><b>📷 采集图片 ({{ source_media|length if source_media is defined else 0 }})</b></div>
+          <div class="mb-2"><b>📷 图片素材池</b></div>
           <div class="d-flex flex-wrap gap-1 mb-2" style="max-height:200px;overflow-y:auto">
             {% if source_media is defined %}
-            {% for m in source_media[:12] %}
-            <img src="{{ m.source_url }}" style="width:60px;height:60px;object-fit:cover;border-radius:4px;border:1px solid #ddd" onerror="this.style.display='none'" title="{{ m.role }}">
+            {% for m in source_media[:16] %}
+            <div class="text-center" style="position:relative">
+              <img src="{{ m.source_url }}" style="width:70px;height:70px;object-fit:cover;border-radius:4px;border:2px solid #ddd" onerror="this.style.display='none'" title="{{ m.role }} — 点查看大图" onclick="showDraftModal('图片预览','<img src=\\'{{ m.source_url }}\\' style=\\'max-width:90vw;max-height:90vh\\'>'+'<br><small>role: {{ m.role }}</small><br><button class=\\'btn btn-sm btn-secondary\\' onclick=\\'closeDraftModal()\\'>关闭</button>')">
+              <div style="font-size:8px;color:#666">{{ m.role }}</div>
+            </div>
             {% endfor %}
             {% endif %}
           </div>
-          <div class="mb-2"><b>🎬 采集视频 ({{ video_media_parsed|length if video_media_parsed is defined else 0 }})</b></div>
-          {% if video_media_parsed is defined %}
-          {% for vm in video_media_parsed[:3] %}
-          <div class="mb-1" style="font-size:10px">🎬 {{ vm.media_id }} {% if vm.video_url %}<a href="{{ vm.video_url }}" target="_blank">查看</a>{% endif %}</div>
+          <button class="btn btn-sm btn-outline-secondary mb-2" style="font-size:9px" onclick="document.getElementById('imgUploadInput').click()">📤 上传本地图片</button>
+          <input type="file" id="imgUploadInput" style="display:none" accept="image/*" multiple onchange="uploadDraftImages(this.files)">
+
+          <div class="mb-2"><b>🎬 草稿视频</b></div>
+          {% set videos = raw.get('videos', []) or raw.get('product_videos', []) or [] %}
+          {% for v in videos[:3] %}
+          <div class="mb-1 p-1 border rounded" style="font-size:10px">
+            🎬 {{ v.get('media_id','video-'+loop.index|string) }}
+            {% if v.get('video_url') or v.get('url') %}<a href="{{ v.video_url or v.url }}" target="_blank">▶ 播放</a>{% endif %}
+            {% if v.get('duration_text') %}<span class="text-muted ms-1">⏱ {{ v.duration_text }}</span>{% endif %}
+          </div>
+          {% else %}
+          <div class="text-muted" style="font-size:10px">暂无视频（采集视频将自动导入）</div>
           {% endfor %}
-          {% endif %}
-          <div class="mt-2"><button class="btn btn-sm btn-outline-info" onclick="alert('图片方案管理 (后续版本)')">📷 进入图片方案管理</button></div>
+          <div class="mt-2"><button class="btn btn-sm btn-outline-info" style="font-size:10px" onclick="alert('图片方案管理')">📷 进入图片方案管理</button></div>
         </div>
 
         <!-- Tab 5: 富文本 -->
         <div id="tab-rich" class="d-none">
-          <!-- 默认摘要卡片 -->
+          <!-- 默认摘要卡片 + 预览 -->
           <div id="richSummary">
             <div class="border rounded p-2" style="font-size:11px">
               <b>📄 富文本内容</b><br>
               采集富文本: {% if raw and raw.rich_text %}<span class="text-success">已采集 ({{ raw.rich_text.plain_text[:50] if raw.rich_text.plain_text else '' }}...)</span> | 图片: {{ raw.rich_text.image_count or 0 }} 张{% else %}<span class="text-muted">未采集</span>{% endif %}<br>
-              OZON JSON: <span id="richStatus">未生成</span>
-              <div class="mt-2"><button class="btn btn-sm btn-outline-primary" onclick="expandRichEditor()">📝 展开编辑</button></div>
+              OZON JSON: <span id="richStatus">{% if draft_attrs and draft_attrs.attributes %}{% if draft_attrs.attributes|length %}已保存{% else %}未生成{% endif %}{% else %}未生成{% endif %}</span>
             </div>
+            {% if raw and raw.rich_text and raw.rich_text.html %}
+            <div class="rich-preview-collapsed mt-1" style="max-height:180px;overflow:hidden;position:relative;border:1px solid #ddd;border-radius:6px;padding:12px;background:#fff;font-size:11px">
+              {{ raw.rich_text.html[:3000] | safe }}
+              {% if raw.rich_text.html|length > 3000 %}
+              <div style="position:absolute;bottom:0;left:0;right:0;height:40px;background:linear-gradient(transparent,#fff)"></div>
+              {% endif %}
+            </div>
+            <div class="mt-1"><button class="btn btn-sm btn-outline-info" onclick="previewFullRich()" style="font-size:9px">🔍 查看完整预览</button></div>
+            {% endif %}
+            <div class="mt-2"><button class="btn btn-sm btn-outline-primary" onclick="expandRichEditor()">📝 展开编辑</button></div>
           </div>
           <!-- 展开后编辑器 -->
           <div id="richEditor" class="rich-editor" style="display:none">
@@ -418,9 +438,52 @@ function saveRichJson(){
   }).catch(e=>alert(e.message));
 }
 
+function previewFullRich(){
+  var rich = {% if raw and raw.rich_text %}{{ raw.rich_text|tojson }}{% else %}{}{% endif %};
+  var h = rich.html || rich.plain_text || '无内容';
+  showDraftModal('富文本完整预览', '<div class=\"ozon-rich-preview\" style=\"max-height:70vh;overflow:auto\">'+h+'</div>');
+}
+
 function previewRich(){
   generateOzonJson();
-  alert('点击校验JSON查看详情,或在OZON JSON编辑区查看');
+  var blocks = RICH_BLOCKS;
+  var h = '<div class=\"ozon-rich-preview\" style=\"max-height:60vh;overflow:auto;font-size:13px\">';
+  blocks.forEach(function(b){
+    if(b.type==='text') h += '<p>'+b.content+'</p>';
+    else h += '<img src=\"'+b.url+'\" style=\"max-width:100%;margin:8px 0\" onerror=\"this.style.display=\\'none\\'\">';
+  });
+  h += '</div>';
+  showDraftModal('富文本预览', h+'<button class=\"btn btn-sm btn-secondary mt-2\" onclick=\"closeDraftModal()\">关闭</button>');
+}
+
+// 图片素材选择（给富文本块用）
+function selectImageForRichBlock(blockId){
+  var imgs = [];
+  {% if source_media is defined %}
+  {% for m in source_media[:20] %}
+  imgs.push({url:'{{ m.source_url }}',role:'{{ m.role }}'});
+  {% endfor %}
+  {% endif %}
+  if(!imgs.length){alert('暂无可用图片素材,请先采集或上传图片');return;}
+  var h='<div style=\"max-height:50vh;overflow-y:auto\"><b>选择图片素材:</b><div class=\"d-flex flex-wrap gap-1 mt-1\">';
+  imgs.forEach(function(img,i){
+    h+='<img src=\"'+img.url+'\" style=\"width:80px;height:80px;object-fit:cover;border-radius:4px;cursor:pointer;border:2px solid #ddd\" onclick=\"applyImageToBlock(\\''+blockId+'\\',\\''+img.url+'\\');closeDraftModal()\" title=\"'+img.role+'\">';
+  });
+  h+='</div></div>';
+  showDraftModal('选择图片', h+'<button class=\"btn btn-sm btn-secondary mt-2\" onclick=\"closeDraftModal()\">取消</button>');
+}
+
+function uploadDraftImages(files){
+  if(!files||!files.length)return;
+  var form=new FormData();
+  for(var i=0;i<Math.min(files.length,5);i++) form.append('images',files[i]);
+  fetch('/ozon/api/draft/'+DRAFT_ID+'/media/upload-image',{method:'POST',body:form})
+  .then(r=>r.json()).then(d=>{alert(d.message||'上传完成');if(d.ok)location.reload();}).catch(e=>alert(e.message));
+}
+
+function applyImageToBlock(blockId,url){
+  var b = RICH_BLOCKS.find(function(x){return x.id===blockId;});
+  if(b){b.url=url;renderRichBlocks();}
 }
 
 function autoFillAttrsDraft(){

@@ -6618,6 +6618,26 @@ def api_draft_fill_from_source(draft_id):
         return jsonify({"ok": True, "message": f"已生成 {len(bullets)} 条卖点"})
     return jsonify({"ok": False, "error": "未知填充类型"})
 
+@ozon_bp.route('/api/draft/<int:draft_id>/media/upload-image', methods=['POST'])
+@login_required
+def api_draft_upload_image(draft_id):
+    """上传草稿图片"""
+    draft = OzonDraft.get_or_none((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
+    if not draft: return jsonify({"ok": False, "error": "草稿不存在"}), 404
+    files = request.files.getlist('images')
+    if not files: return jsonify({"ok": False, "error": "无文件"}), 400
+    saved = []
+    import os
+    save_dir = os.path.join('static', 'uploads', 'ozon_drafts', str(draft_id))
+    os.makedirs(save_dir, exist_ok=True)
+    for f in files[:5]:
+        if not f.filename: continue
+        fname = f'{int(time.time())}_{f.filename}'
+        fpath = os.path.join(save_dir, fname)
+        f.save(fpath)
+        saved.append({'id': f'img_{int(time.time())}', 'local_path': fpath, 'public_url': '/' + fpath.replace('\\', '/'), 'source': 'uploaded'})
+    return jsonify({"ok": True, "message": f"已上传 {len(saved)} 张", "images": saved})
+
 @ozon_bp.route('/api/draft/<int:draft_id>/save-rich-content', methods=['POST'])
 @login_required
 def api_draft_save_rich_content(draft_id):
