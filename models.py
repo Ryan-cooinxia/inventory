@@ -1392,3 +1392,51 @@ class OzonOnlineProductAction(BaseModel):
             (('user', 'action_type'), False),
             (('online_product', 'created_at'), False),
         )
+
+
+class OzonExcelTemplate(BaseModel):
+    """OZON 官方 Excel 模板 — 绑定 dcid + type_id 对"""
+    user = ForeignKeyField(User, backref='ozon_excel_templates')
+    account = ForeignKeyField(OzonAccount, null=True, backref='excel_templates')
+    dcid = CharField(max_length=50)                          # description_category_id
+    type_id = CharField(max_length=50)                       # OZON type_id
+    type_name = CharField(max_length=200, null=True)         # type 名称
+    original_filename = CharField(max_length=300)            # 原始上传文件名
+    stored_path = CharField(max_length=500)                  # 服务端存储路径
+    file_size_bytes = IntegerField(null=True)                # 文件大小
+    schema_hash = CharField(max_length=64)                   # 表头结构哈希（版本追踪）
+    headers_json = TextField(null=True)                      # 解析出的列头 JSON
+    required_columns_json = TextField(null=True)             # 必填列 JSON
+    data_validations_json = TextField(null=True)             # 数据验证规则 JSON
+    sheet_names_json = TextField(null=True)                  # 所有 Sheet 名称 JSON
+    data_start_row = IntegerField(default=5)                 # 数据起始行号
+    header_row = IntegerField(default=2)                     # 表头行号
+    status = CharField(max_length=20, default='active')      # active / outdated
+    notes = TextField(null=True)                             # 备注
+    created_at = DateTimeField(default=datetime.datetime.now)
+    updated_at = DateTimeField(default=datetime.datetime.now)
+
+    class Meta:
+        indexes = (
+            (('user', 'dcid', 'type_id'), False),
+            (('user', 'status'), False),
+        )
+
+
+class OzonTemplateExportJob(BaseModel):
+    """OZON 模板 Excel 导出任务"""
+    user = ForeignKeyField(User, backref='ozon_template_export_jobs')
+    draft = ForeignKeyField(OzonDraft, backref='template_exports')
+    template = ForeignKeyField(OzonExcelTemplate, backref='exports')
+    export_path = CharField(max_length=500)                  # 生成的 Excel 文件路径
+    field_mapping_json = TextField(null=True)                # 字段映射快照 JSON
+    filled_rows_count = IntegerField(default=0)              # 填充的行数
+    ozon_upload_result = CharField(max_length=20, null=True) # validated / errors / published / needs_fix
+    ozon_upload_notes = TextField(null=True)                 # 上传结果备注
+    created_at = DateTimeField(default=datetime.datetime.now)
+
+    class Meta:
+        indexes = (
+            (('user', 'draft'), False),
+            (('draft', 'created_at'), False),
+        )

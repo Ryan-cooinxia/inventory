@@ -58,6 +58,7 @@
         <th class="text-center">SKU</th>
         <th>店铺</th>
         <th>状态</th>
+        <th>模板</th>
         <th>更新时间</th>
         <th style="width:180px">操作</th>
       </tr>
@@ -91,6 +92,13 @@
           {% else %}<span class="badge bg-secondary">{{ d.status }}</span>
           {% endif %}
         </td>
+        <td>
+          {% if d.type_id and template_map.get(d.id) %}
+          <span class="badge bg-success" style="font-size:9px">📊 可导出</span>
+          {% elif d.type_id %}
+          <span class="badge bg-secondary" style="font-size:9px">📊 无模板</span>
+          {% endif %}
+        </td>
         <td>{{ d.updated_at.strftime('%m-%d %H:%M') if d.updated_at else '' }}</td>
         <td>
           <a href="{{ url_for('ozon.listing_review', draft_id=d.id) }}" class="btn btn-sm btn-primary">编辑审核</a>
@@ -108,7 +116,7 @@
       </tr>
       {% endfor %}
       {% if not drafts %}
-      <tr><td colspan="8" class="text-center text-muted py-4">
+      <tr><td colspan="9" class="text-center text-muted py-4">
         <p class="mb-2">暂无刊登草稿</p>
         <p class="small">请先在<a href="{{ url_for('ozon.sources') }}">采集列表</a>中对商品执行"生成草稿"</p>
       </td></tr>

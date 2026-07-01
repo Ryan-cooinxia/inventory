@@ -33,6 +33,8 @@ from models import (
     OzonCategorySyncJob, OzonFavoriteCategoryType,
     # 新增：产品母图
     OzonImagePlan, OzonImageReference, OzonProductCutout,
+    # 新增：Excel 模板发布通道
+    OzonExcelTemplate, OzonTemplateExportJob,
 )
 from services.ozon_api import (
     create_client, test_account,
@@ -2438,7 +2440,7 @@ def processing_save(source_id):
     draft.title_ru = request.form.get('title_ru', draft.title_ru)
     draft.bullets_ru = request.form.get('bullets_ru', draft.bullets_ru)
     draft.description_ru = request.form.get('description_ru', draft.description_ru)
-    draft.ozon_category_path = request.form.get('ozon_category_path') or draft.ozon_category_path
+    draft.category_path_ru = request.form.get('category_path_ru') or request.form.get('ozon_category_path') or draft.category_path_ru
     draft.status = 'needs_review'
     draft.updated_at = datetime.datetime.now()
     draft.save()
@@ -3072,8 +3074,21 @@ def listings():
     total_pages = max(1, (total + per_page - 1) // per_page)
     drafts = query.order_by(OzonDraft.updated_at.desc()).paginate(page, per_page)
 
+    # 预计算模板就绪状态（仅精确匹配 dcid+type_id）
+    template_map = {}
+    active_templates = list(OzonExcelTemplate.select().where(
+        (OzonExcelTemplate.user == current_user) &
+        (OzonExcelTemplate.status == 'active')))
+    template_keys = {(t.dcid, t.type_id) for t in active_templates}
+    for d in drafts:
+        if d.type_id and d.ozon_category_id:
+            template_map[d.id] = (str(d.ozon_category_id), str(d.type_id)) in template_keys
+        else:
+            template_map[d.id] = False
+
     return render_template('ozon/listings.html',
                            drafts=drafts,
+                           template_map=template_map,
                            page=page,
                            per_page=per_page,
                            total_pages=total_pages)
@@ -3140,11 +3155,8 @@ def listing_review(draft_id):
         except: raw = {}
         pricing = raw.get('pricing') or {}
 
-    # 解析已保存属性
-    draft_attrs = {}
-    try: draft_attrs = json.loads(draft.attributes_json or '{}')
-    except: draft_attrs = {}
-    if 'attributes' not in draft_attrs: draft_attrs = {'attributes': draft_attrs}
+    # 解析已保存属性（使用归一化层）
+    draft_attrs = _load_draft_attributes_map(draft)
 
     # 源属性双语显示
     src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
@@ -3154,17 +3166,35 @@ def listing_review(draft_id):
         v_ru = str(a.get('value','') or a.get('text',''))
         source_attrs_display.append({'name_ru':n_ru,'value_ru':v_ru,'source':a.get('source','')})
 
-    # 源图片
+    # 源图片（按 OZON 发布用途分类）
+    #   main           → 图片/视频 tab，直接上传 OZON 商品图片区（可多张）
+    #   sku            → SKU 图片区
+    #   detail/scene等 → 富文本 tab，随描述上传（不进图片/视频 tab）
+    #   buyer_review/unknown/other → 隐藏参考
+    RICH_TEXT_ROLES = {'detail', 'scene', 'gallery', 'selling_point', 'function', 'package', 'accessory'}
     source_media = []
+    source_media_main = []
+    source_media_sku = []
+    source_media_rich = []
+    source_media_other = []
     source_media_json = []
     if draft.source:
-        source_media = list(OzonSourceMedia.select().where(OzonSourceMedia.source == draft.source).limit(20))
+        source_media = list(OzonSourceMedia.select().where(OzonSourceMedia.source == draft.source).limit(100))
         for sm in source_media:
+            role = (sm.role or '').lower()
             source_media_json.append({
                 'url': (sm.source_url or sm.local_path or ''),
-                'role': (sm.role or ''),
+                'role': role,
                 'id': sm.id
             })
+            if role == 'main':
+                source_media_main.append(sm)
+            elif role == 'sku':
+                source_media_sku.append(sm)
+            elif role in RICH_TEXT_ROLES:
+                source_media_rich.append(sm)
+            else:
+                source_media_other.append(sm)
 
     # 颜色属性（由当前 type 的 Schema 决定是否必填）
     COLOR_ALIASES = ["商品颜色", "颜色", "Цвет", "Цвет товара", "color", "colour"]
@@ -3185,6 +3215,98 @@ def listing_review(draft_id):
     # 解析媒体池
     media = _load_media_json(draft)
 
+    # ── 第一步：按采集源真实 role 修正媒体池中的历史脏数据 ──
+    # 历史导入曾把多余 main 写成 gallery，这里用 source_media 的真实 role 覆盖
+    source_role_by_id = {}
+    for sm in source_media:
+        source_role_by_id[str(sm.id)] = (sm.role or '').lower()
+
+    for img in media.get('images', []):
+        sm_id = str(img.get('source_media_id') or '')
+        src_role = source_role_by_id.get(sm_id)
+        if not src_role:
+            continue
+        img['source_role'] = src_role
+        # 采集源判定是 main/sku，就以采集源为准纠正草稿
+        if src_role in ('main', 'sku'):
+            img['role'] = src_role
+            img['selected'] = True
+
+    # ── 第二步：合并采集主图中缺失的图片（仅按 source_media_id 去重）──
+    existing_source_media_ids = {
+        str(img.get('source_media_id'))
+        for img in media.get('images', [])
+        if img.get('source_media_id')
+    }
+
+    has_cover = any(
+        img.get('selected') and img.get('role') == 'main' and img.get('is_cover')
+        for img in media.get('images', [])
+    )
+
+    main_sort_orders = [
+        img.get('sort_order', 0)
+        for img in media.get('images', [])
+        if img.get('role') == 'main'
+    ]
+    next_sort = max(main_sort_orders) if main_sort_orders else 0
+
+    # ── 读取图片删除黑名单（用户手动删除的图片不自动补回）──
+    deleted_image_source_ids = {str(x) for x in media.get('deleted_image_source_ids', [])}
+    deleted_image_urls = set(media.get('deleted_image_urls', []))
+
+    for sm in source_media_main:
+        sm_id = str(sm.id)
+
+        # 仅按 source_media_id 判断重复，不用 URL/path（避免误杀变体URL）
+        if sm_id in existing_source_media_ids:
+            continue
+
+        # 图片删除黑名单：用户手动删除过的 source_media_id 不自动补回
+        if sm_id in deleted_image_source_ids:
+            continue
+        url = sm.source_url or sm.local_path or ''
+        if url and url in deleted_image_urls:
+            continue
+
+        next_sort += 1
+        is_cover = not has_cover
+
+        img_obj = {
+            'id': f'img_src_{sm.id}',
+            'source': 'collected',
+            'source_media_id': sm.id,
+            'local_path': sm.local_path or '',
+            'public_url': url,
+            'ozon_url': None,
+            'thumb_url': url,
+            'filename': url.rsplit('/', 1)[-1] if url else f'source_{sm.id}.jpg',
+            'role': 'main',
+            'source_role': 'main',
+            'is_cover': is_cover,
+            'selected': True,
+            'sort_order': next_sort,
+            'upload_status': 'public_ready' if url.startswith('http') else 'local',
+            'review_status': sm.review_status or 'pending',
+            'alt': '',
+            'width': sm.width,
+            'height': sm.height,
+        }
+        media['images'].append(img_obj)
+        existing_source_media_ids.add(sm_id)
+        if is_cover:
+            has_cover = True
+
+    # ── 第三步：整理主图封面和顺序 ──
+    main_imgs = [
+        img for img in media.get('images', [])
+        if img.get('selected') and img.get('role') == 'main'
+    ]
+    main_imgs.sort(key=lambda x: (x.get('sort_order') or 999999, str(x.get('id') or '')))
+    for idx, img in enumerate(main_imgs):
+        img['sort_order'] = idx + 1
+        img['is_cover'] = idx == 0
+
     return render_template('ozon/listing_review.html',
                            draft=draft,
                            validation=validation,
@@ -3196,8 +3318,16 @@ def listing_review(draft_id):
                            source_attrs_display=source_attrs_display,
                            source_media=source_media,
                            source_media_json=source_media_json,
+                           source_media_main=source_media_main,
+                           source_media_sku=source_media_sku,
+                           source_media_rich=source_media_rich,
+                           source_media_other=source_media_other,
                            color_attr=color_attr,
-                           media=media)
+                           media=media,
+                           accounts=list(OzonAccount.select()
+                                         .where((OzonAccount.user == current_user) &
+                                                (OzonAccount.is_active == True))
+                                         .order_by(OzonAccount.name.asc())))
 
 
 @ozon_bp.route('/listings/<int:draft_id>/save', methods=['POST'])
@@ -3214,7 +3344,8 @@ def listing_save(draft_id):
     draft.title_ru = request.form.get('title_ru', draft.title_ru)
     draft.bullets_ru = request.form.get('bullets_ru', draft.bullets_ru)
     draft.description_ru = request.form.get('description_ru', draft.description_ru)
-    draft.ozon_category_path = request.form.get('ozon_category_path') or draft.ozon_category_path
+    draft.category_path_ru = request.form.get('category_path_ru') or request.form.get('ozon_category_path') or draft.category_path_ru
+    draft.category_path_cn = request.form.get('category_path_cn') or draft.category_path_cn
     draft.price_manual_confirmed = request.form.get('price_manual_confirmed') == '1'
     draft.updated_at = datetime.datetime.now()
 
@@ -3264,7 +3395,7 @@ def listing_validate(draft_id):
 
     checks = []
     checks.append({'label': '俄语标题已填写', 'pass': bool(draft.title_ru), 'blocking': True, 'level': 'error' if not draft.title_ru else 'success'})
-    checks.append({'label': 'OZON 类目已选择', 'pass': bool(draft.ozon_category_id or draft.ozon_category_path), 'blocking': True, 'level': 'error' if not (draft.ozon_category_id or draft.ozon_category_path) else 'success'})
+    checks.append({'label': 'OZON 类目已选择', 'pass': bool(draft.ozon_category_id or draft.category_path_ru), 'blocking': True, 'level': 'error' if not (draft.ozon_category_id or draft.category_path_ru) else 'success'})
     checks.append({'label': '缺少 SKU 数据', 'pass': draft.draft_skus.count() > 0, 'blocking': True, 'level': 'error' if draft.draft_skus.count() == 0 else 'success'})
 
     # 价格校验
@@ -3281,9 +3412,48 @@ def listing_validate(draft_id):
                    'level': 'error' if not draft.price_manual_confirmed else 'success'})
 
     # SKU offer_id 校验
-    all_have_offer = all(sk.offer_id for sk in draft.draft_skus)
+    import re
+    OFFER_ID_PATTERN = re.compile(r'^[A-Za-z0-9_-]{3,80}$')
+    skus = list(draft.draft_skus)
+    all_have_offer = all(sk.offer_id for sk in skus)
+
+    # 格式校验
+    bad_format_ids = []
+    seen_ids = set()
+    dup_in_draft = set()
+    for sk in skus:
+        oid = (sk.offer_id or '').strip()
+        if not oid:
+            continue
+        if not OFFER_ID_PATTERN.match(oid):
+            bad_format_ids.append(oid)
+        if oid in seen_ids:
+            dup_in_draft.add(oid)
+        seen_ids.add(oid)
+
     checks.append({'label': '所有 SKU 已填 offer_id', 'pass': all_have_offer, 'blocking': True,
                    'level': 'error' if not all_have_offer else 'success'})
+    checks.append({'label': 'offer_id 格式正确（字母/数字/下划线/短横线）',
+                   'pass': len(bad_format_ids) == 0, 'blocking': True,
+                   'level': 'success' if not bad_format_ids else 'error',
+                   'detail': f'非法格式: {", ".join(bad_format_ids)}' if bad_format_ids else ''})
+    checks.append({'label': '当前草稿内 offer_id 无重复',
+                   'pass': len(dup_in_draft) == 0, 'blocking': True,
+                   'level': 'success' if not dup_in_draft else 'error',
+                   'detail': f'重复值: {", ".join(dup_in_draft)}' if dup_in_draft else ''})
+
+    # 跨草稿重复校验（同用户 + 同账号，排除当前草稿）
+    if seen_ids:
+        cross_dup = (OzonDraft
+                     .select()
+                     .where(
+                         (OzonDraft.user == current_user) &
+                         (OzonDraft.id != draft.id) &
+                         (OzonDraft.ozon_offer_id.in_(list(seen_ids)))
+                     ).exists())
+        checks.append({'label': 'offer_id 未与其他草稿/已发布商品重复',
+                       'pass': not cross_dup, 'blocking': True,
+                       'level': 'success' if not cross_dup else 'error'})
 
     # 颜色仅当 Schema 要求时才阻断
     COLOR_ALIASES = ["商品颜色", "颜色", "Цвет", "Цвет товара", "color", "colour"]
@@ -3400,43 +3570,50 @@ def listing_publish(draft_id):
              .where((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
              .first())
     if not draft:
-        flash('草稿不存在', 'danger')
-        return redirect(url_for('ozon.listings'))
+        return jsonify({"ok": False, "error": "草稿不存在"}), 404
 
     if draft.status != 'approved':
-        flash('只有审核通过的草稿才能发布', 'danger')
-        return redirect(url_for('ozon.listing_review', draft_id=draft_id))
+        return jsonify({"ok": False, "error": "只有审核通过的草稿才能发布"}), 400
 
     if not draft.account:
-        flash('请先选择目标店铺', 'danger')
-        return redirect(url_for('ozon.listing_review', draft_id=draft_id))
+        return jsonify({"ok": False, "error": "请先选择目标店铺"}), 400
 
     # type_id 校验：必须存在
-    category_id = str(draft.category_id or '')
+    category_id = str(draft.ozon_category_id or '')
     type_id = str(draft.type_id or '')
     if not category_id or not type_id:
-        flash('发布前必须绑定 description_category_id 和 type_id。请在类目属性页面同步 type_id。', 'danger')
-        return redirect(url_for('ozon.listing_review', draft_id=draft_id))
+        return jsonify({"ok": False, "error": "发布前必须绑定 description_category_id 和 type_id。请在类目属性页面同步 type_id。"}), 400
 
-    # 必填属性缺口检查
-    required_attrs = (OzonCategoryAttribute
-                      .select()
-                      .where((OzonCategoryAttribute.user == current_user) &
-                             (OzonCategoryAttribute.ozon_category_id == category_id) &
-                             (OzonCategoryAttribute.type_id == type_id) &
-                             (OzonCategoryAttribute.is_required == True)))
-    if required_attrs.exists():
-        draft_attrs = json.loads(draft.attributes_json or '[]')
-        draft_attr_ids = {str(a.get('id', '')) for a in draft_attrs}
-        missing = [a for a in required_attrs if str(a.attribute_id) not in draft_attr_ids]
+    # 必填属性缺口检查（使用归一化层）
+    required_attrs = list(OzonCategoryAttribute
+                          .select()
+                          .where((OzonCategoryAttribute.user == current_user) &
+                                 (OzonCategoryAttribute.ozon_category_id == category_id) &
+                                 (OzonCategoryAttribute.type_id == type_id) &
+                                 (OzonCategoryAttribute.is_required == True)))
+    if required_attrs:
+        filled_attr_ids = _filled_draft_attribute_ids(draft)
+        missing = [a for a in required_attrs if str(a.attribute_id) not in filled_attr_ids]
         if missing:
-            names = ', '.join(f'{a.name} (id:{a.attribute_id})' for a in missing[:5])
-            flash(f'必填属性缺失（{len(missing)} 项）：{names}', 'danger')
-            return redirect(url_for('ozon.listing_review', draft_id=draft_id))
+            missing_names = '、'.join(
+                (getattr(a, 'name_cn', None) or getattr(a, 'name', None) or str(a.attribute_id))
+                for a in missing[:10]
+            )
+            return jsonify({
+                "ok": False,
+                "error": f"缺少必填属性（{len(missing)} 项）：{missing_names}"
+            }), 400
 
     # 构建商品数据
-    product_data = _build_product_data(draft)
-    request_json_str = json.dumps(product_data, ensure_ascii=False, indent=2)
+    try:
+        product_data = _build_product_data(draft)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+    # 创建 OZON 客户端并构建实际请求体（含 sanitize）
+    client = create_client(draft.account)
+    request_body = client.build_import_body(product_data)
+    request_json_str = json.dumps(request_body, ensure_ascii=False, indent=2)
 
     # 创建发布任务
     job = OzonPublishJob.create(
@@ -3454,91 +3631,678 @@ def listing_publish(draft_id):
 
     # 调用 OZON API
     try:
-        client = create_client(draft.account)
         result = client.import_product(product_data)
 
-        # 成功
-        job.status = 'success'
+        # OZON 返回 task_id 仅代表异步任务已接收，不代表商品创建成功
+        task_id = str(result.get('task_id', ''))
+        offer_id = product_data.get('offer_id', '')
+
+        job.status = 'submitted'
         job.response_json = json.dumps(result, ensure_ascii=False, indent=2)
-        job.ozon_task_id = str(result.get('task_id', ''))
-        job.completed_at = datetime.datetime.now()
+        job.ozon_task_id = task_id
+        job.completed_at = None  # 未完成，等待异步结果
         job.save()
 
-        draft.status = 'published'
-        draft.ozon_product_id = job.ozon_task_id
-        draft.ozon_offer_id = product_data.get('offer_id', '')
+        draft.status = 'publishing'
+        draft.ozon_offer_id = offer_id
+        draft.ozon_product_id = None  # 等确认成功后再写入
         draft.updated_at = datetime.datetime.now()
         draft.save()
 
-        flash(f'发布成功！OZON Task ID: {job.ozon_task_id}', 'success')
+        return jsonify({
+            "ok": True,
+            "message": f"已提交 OZON 导入任务，Task ID: {task_id}。请稍后查询发布结果。",
+            "status": "publishing",
+            "task_id": task_id,
+            "offer_id": offer_id
+        })
 
     except OzonValidationError as e:
         _record_publish_failure(job, draft, e, request_json_str)
         errors_detail = '; '.join(err.get('message', '') for err in (e.errors or [])[:3])
-        flash(f'发布失败 — {e}{(": " + errors_detail) if errors_detail else ""}', 'danger')
+        return jsonify({"ok": False, "error": f"发布失败 — {e}{(': ' + errors_detail) if errors_detail else ''}"}), 400
 
     except OzonAuthError as e:
         _record_publish_failure(job, draft, e, request_json_str)
-        flash(f'发布失败 — 店铺认证无效，请检查 API 凭证', 'danger')
+        return jsonify({"ok": False, "error": "发布失败 — 店铺认证无效，请检查 API 凭证"}), 400
 
     except OzonAPIError as e:
         _record_publish_failure(job, draft, e, request_json_str)
-        flash(f'发布失败 — {e}', 'danger')
+        return jsonify({"ok": False, "error": f"发布失败 — {e}"}), 400
 
     except Exception as e:
+        current_app.logger.exception("Publish OZON listing failed: draft_id=%s", draft_id)
         _record_publish_failure(job, draft, e, request_json_str)
-        flash(f'发布失败 — 未知错误: {e}', 'danger')
+        return jsonify({"ok": False, "error": f"发布失败：{e}"}), 500
 
-    return redirect(url_for('ozon.publish_jobs'))
+
+@ozon_bp.route('/listings/<int:draft_id>/publish-status', methods=['POST'])
+@login_required
+def listing_publish_status(draft_id):
+    """查询 OZON 导入任务的实际结果，返回详细 item 信息"""
+    draft = OzonDraft.get_or_none((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
+    if not draft:
+        return jsonify({"ok": False, "error": "草稿不存在"}), 404
+
+    if not draft.account:
+        return jsonify({"ok": False, "error": "草稿未绑定目标店铺"}), 400
+
+    job = (OzonPublishJob
+           .select()
+           .where((OzonPublishJob.draft == draft) & (OzonPublishJob.user == current_user))
+           .order_by(OzonPublishJob.id.desc())
+           .first())
+
+    if not job or not job.ozon_task_id:
+        return jsonify({"ok": False, "error": "未找到 OZON 发布任务", "status": draft.status}), 400
+
+    client = create_client(draft.account)
+    try:
+        result = client.import_product_info(job.ozon_task_id)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"查询 OZON 任务状态失败：{e}", "status": draft.status}), 500
+
+    job.response_json = json.dumps(result, ensure_ascii=False, indent=2)
+
+    # 解析 OZON 返回的 items
+    items = result.get('items') or result.get('result', {}).get('items') or []
+    errors = []
+    extracted_offer_id = None
+    extracted_product_id = None
+    item_statuses = []
+
+    for item in items:
+        item_status = str(item.get('status', '') or item.get('state', '')).lower()
+        item_offer_id = item.get('offer_id', '')
+        item_product_id = item.get('product_id') or item.get('id')
+        item_errors = item.get('errors') or item.get('error') or []
+
+        item_statuses.append({
+            'offer_id': str(item_offer_id),
+            'product_id': str(item_product_id) if item_product_id else None,
+            'status': item_status,
+            'errors': item_errors if isinstance(item_errors, list) else [str(item_errors)] if item_errors else [],
+        })
+
+        if isinstance(item_errors, list):
+            errors.extend(item_errors)
+        elif item_errors:
+            errors.append(str(item_errors))
+
+        # 提取 OZON 返回的实际 offer_id / product_id
+        if item_offer_id:
+            extracted_offer_id = str(item_offer_id)
+        if item_product_id and not extracted_product_id:
+            extracted_product_id = str(item_product_id)
+
+    # 有错误 → failed
+    if errors:
+        job.status = 'failed'
+        job.error_message = json.dumps(errors, ensure_ascii=False)[:2000]
+        job.completed_at = datetime.datetime.now()
+        job.save()
+
+        draft.status = 'failed'
+        draft.validation_result = json.dumps({
+            'blocking_count': len(errors),
+            'errors': errors,
+        }, ensure_ascii=False)
+        draft.updated_at = datetime.datetime.now()
+        draft.save()
+
+        return jsonify({
+            "ok": False,
+            "status": "failed",
+            "error": f"OZON 导入失败（{len(errors)} 项错误）",
+            "items": item_statuses,
+            "errors": errors,
+        })
+
+    # 检查是否有商品成功导入（有 product_id 且状态为 imported）
+    has_imported = any(
+        s['status'] in ('imported', 'processed', 'success', 'created', 'ok')
+        and s.get('product_id')
+        for s in item_statuses
+    )
+
+    if has_imported:
+        # 保存 OZON 返回的 offer_id / product_id
+        if extracted_offer_id:
+            draft.ozon_offer_id = extracted_offer_id
+        if extracted_product_id:
+            draft.ozon_product_id = extracted_product_id
+
+        job.status = 'success'
+        job.completed_at = datetime.datetime.now()
+        job.save()
+
+        draft.status = 'published'
+        draft.updated_at = datetime.datetime.now()
+        draft.save()
+
+        return jsonify({
+            "ok": True,
+            "status": "published",
+            "message": "OZON 商品导入成功",
+            "items": item_statuses,
+            "offer_id": extracted_offer_id,
+            "product_id": extracted_product_id,
+        })
+
+    # 没有明确成功也没有错误 → validated（OZON 验证通过但尚未在商品列表可见）
+    # 此时状态为 pending 或类似中间态
+    if extracted_offer_id:
+        draft.ozon_offer_id = extracted_offer_id
+
+    job.status = 'validated'
+    job.save()
+
+    draft.status = 'publishing'  # 保持 publishing，用户可以稍后再查
+    draft.updated_at = datetime.datetime.now()
+    draft.save()
+
+    return jsonify({
+        "ok": True,
+        "status": "validated",
+        "message": "OZON 导入任务已通过验证，但商品暂未在列表出现。可能仍在同步或进入档案。请稍后重试，或用 offer_id 反查。",
+        "items": item_statuses,
+        "offer_id": extracted_offer_id,
+    })
+
+
+@ozon_bp.route('/listings/<int:draft_id>/lookup-product', methods=['POST'])
+@login_required
+def listing_lookup_product(draft_id):
+    """用草稿的 offer_id 反查 OZON 商品列表，确认商品是否真的上线"""
+    draft = OzonDraft.get_or_none((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
+    if not draft:
+        return jsonify({"ok": False, "error": "草稿不存在"}), 404
+
+    if not draft.account:
+        return jsonify({"ok": False, "error": "草稿未绑定目标店铺"}), 400
+
+    offer_id = draft.ozon_offer_id or ''
+    if not offer_id:
+        return jsonify({"ok": False, "error": "草稿没有 offer_id，请先提交发布"}), 400
+
+    client = create_client(draft.account)
+    try:
+        items = client.get_product_info(offer_ids=[offer_id])
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"查询 OZON 商品信息失败：{e}"}), 500
+
+    if not items:
+        # 查不到：可能仍在同步、进入档案、或被合并到已有商品
+        return jsonify({
+            "ok": True,
+            "found": False,
+            "offer_id": offer_id,
+            "message": (
+                "OZON 商品列表中暂未查到该 offer_id。"
+                "可能原因：商品仍在同步中、已进入档案/准备销售、或被合并到已有商品。"
+                f"请在 OZON 后台搜索 offer_id: {offer_id}"
+            ),
+        })
+
+    product = items[0] if isinstance(items, list) else items
+    product_id = product.get('id') or product.get('product_id', '')
+    product_name = product.get('name') or product.get('offer_id', '')
+    product_status = product.get('status') or product.get('state', '')
+
+    # 保存 product_id
+    if product_id and not draft.ozon_product_id:
+        draft.ozon_product_id = str(product_id)
+        draft.updated_at = datetime.datetime.now()
+        draft.save()
+
+    return jsonify({
+        "ok": True,
+        "found": True,
+        "product": {
+            "product_id": str(product_id),
+            "offer_id": offer_id,
+            "name": product_name,
+            "status": str(product_status),
+        },
+        "message": f"已查到商品: {product_name}",
+    })
+
+
+# ═══════════════════════════════════════════════════════════════
+# 官方 Excel 模板发布通道
+# ═══════════════════════════════════════════════════════════════
+
+@ozon_bp.route('/excel-templates')
+@login_required
+def excel_templates():
+    """OZON 官方 Excel 模板管理页"""
+    templates = (OzonExcelTemplate
+                 .select()
+                 .where(OzonExcelTemplate.user == current_user)
+                 .order_by(OzonExcelTemplate.updated_at.desc()))
+    return render_template('ozon/excel_templates.html', templates=templates)
+
+
+@ozon_bp.route('/api/excel-templates/upload', methods=['POST'])
+@login_required
+def api_upload_excel_template():
+    """上传 OZON 官方 Excel 模板，解析并绑定到 dcid+type_id"""
+    file = request.files.get('file')
+    if not file or not file.filename:
+        return jsonify({"ok": False, "error": "请选择文件"}), 400
+
+    dcid = request.form.get('dcid', '').strip()
+    type_id = request.form.get('type_id', '').strip()
+    type_name = request.form.get('type_name', '').strip()
+
+    safe_fname = secure_filename(file.filename)
+    if not safe_fname.lower().endswith(('.xlsx', '.xlsm')):
+        return jsonify({"ok": False, "error": "只支持 .xlsx 或 .xlsm 格式的 OZON 官方模板"}), 400
+
+    # 先保存到临时位置解析
+    tmp_dir = os.path.join('uploads', 'ozon_templates', str(current_user.id), '_tmp')
+    os.makedirs(tmp_dir, exist_ok=True)
+    ts = int(time.time())
+    tmp_path = os.path.join(tmp_dir, f'{ts}_{safe_fname}')
+    file.save(tmp_path)
+
+    # 解析模板结构
+    from services.ozon_template_excel import inspect_template
+    try:
+        inspection = inspect_template(tmp_path, file.filename)
+    except ValueError as e:
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+    # ── 自动识别（多策略优先级）──
+    auto_detected = False
+    detect_method = None
+    detect_confidence = None
+
+    if not dcid or not type_id:
+        # ① schema_hash 匹配已有模板（最可靠）
+        existing = (OzonExcelTemplate
+                    .select()
+                    .where((OzonExcelTemplate.user == current_user) &
+                           (OzonExcelTemplate.schema_hash == inspection['schema_hash']) &
+                           (OzonExcelTemplate.status == 'active'))
+                    .first())
+        if existing:
+            dcid = existing.dcid
+            type_id = existing.type_id
+            type_name = type_name or existing.type_name
+            auto_detected = True
+            detect_method = 'schema_hash'
+
+    if not dcid or not type_id:
+        # ② 从第 5 行「类型*」列读取示例值，查 OzonCategoryType（精确可靠）
+        type_hint = inspection.get('type_hint')
+        if type_hint:
+            from models import OzonCategoryType as OzonCatType
+            ct = (OzonCatType
+                  .select()
+                  .where((OzonCatType.user == current_user) &
+                         ((OzonCatType.type_name_cn == type_hint) |
+                          (OzonCatType.type_name == type_hint)))
+                  .first())
+            if ct:
+                dcid = ct.description_category_id
+                type_id = ct.type_id
+                type_name = type_name or ct.type_name_cn or ct.type_name
+                auto_detected = True
+                detect_method = 'type_hint'
+
+    if not dcid or not type_id:
+        # ③ 表头属性名匹配 OzonCategoryAttribute（低优先级，可能不精确）
+        from services.ozon_template_excel import identify_category_from_headers
+        result = identify_category_from_headers(inspection['headers'], current_user.id)
+        if result:
+            dcid = result['dcid']
+            type_id = result['type_id']
+            type_name = type_name or result.get('type_name') or ''
+            auto_detected = True
+            detect_method = 'attribute_match'
+            detect_confidence = result['confidence']
+
+    # 移动到正式目录
+    if dcid and type_id:
+        save_dir = os.path.join('uploads', 'ozon_templates', str(current_user.id),
+                                f'{dcid}_{type_id}', 'original')
+    else:
+        save_dir = os.path.join('uploads', 'ozon_templates', str(current_user.id), '_unbound')
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, f'{ts}_{safe_fname}')
+    os.rename(tmp_path, save_path)
+
+    # 同 dcid+type_id 旧模板标记为 outdated（仅当绑定了类目时）
+    if dcid and type_id:
+        (OzonExcelTemplate
+         .update(status='outdated', updated_at=datetime.datetime.now())
+         .where((OzonExcelTemplate.user == current_user) &
+                (OzonExcelTemplate.dcid == dcid) &
+                (OzonExcelTemplate.type_id == type_id) &
+                (OzonExcelTemplate.status == 'active'))
+         .execute())
+
+    # 创建模板记录
+    tmpl = OzonExcelTemplate.create(
+        user=current_user,
+        account_id=None,
+        dcid=dcid or '',
+        type_id=type_id or '',
+        type_name=type_name or None,
+        original_filename=file.filename,
+        stored_path=save_path,
+        file_size_bytes=os.path.getsize(save_path),
+        schema_hash=inspection['schema_hash'],
+        headers_json=json.dumps(inspection['headers'], ensure_ascii=False),
+        required_columns_json=json.dumps(inspection['required_columns'], ensure_ascii=False),
+        data_validations_json=json.dumps(inspection.get('validations', []), ensure_ascii=False),
+        sheet_names_json=json.dumps(inspection['sheet_names'], ensure_ascii=False),
+        data_start_row=inspection.get('data_start_row', 5),
+        header_row=inspection.get('header_row', 2),
+        status='active',
+    )
+
+    return jsonify({
+        "ok": True,
+        "message": "模板上传并解析成功" + ("（自动识别类目" + (f"，置信度 {detect_confidence}%" if detect_confidence else "") + "）" if auto_detected else ""),
+        "template_id": tmpl.id,
+        "schema_hash": inspection['schema_hash'],
+        "headers_count": len(inspection['headers']),
+        "required_count": len(inspection['required_columns']),
+        "auto_detected": auto_detected,
+        "detect_method": detect_method,
+        "detect_confidence": detect_confidence,
+        "dcid": dcid or '',
+        "type_id": type_id or '',
+        "type_name": type_name or '',
+        "is_unbound": not bool(dcid and type_id),
+    })
+
+
+@ozon_bp.route('/api/excel-templates/<int:template_id>/delete', methods=['POST'])
+@login_required
+def api_delete_excel_template(template_id):
+    tmpl = OzonExcelTemplate.get_or_none(
+        (OzonExcelTemplate.id == template_id) & (OzonExcelTemplate.user == current_user))
+    if not tmpl:
+        return jsonify({"ok": False, "error": "模板不存在"}), 404
+    tmpl.delete_instance()
+    return jsonify({"ok": True, "message": "模板已删除"})
+
+
+@ozon_bp.route('/api/excel-templates/<int:template_id>/bind', methods=['POST'])
+@login_required
+def api_bind_excel_template(template_id):
+    """为未绑定模板设置 dcid/type_id"""
+    tmpl = OzonExcelTemplate.get_or_none(
+        (OzonExcelTemplate.id == template_id) & (OzonExcelTemplate.user == current_user))
+    if not tmpl:
+        return jsonify({"ok": False, "error": "模板不存在"}), 404
+
+    data = request.get_json() or {}
+    dcid = (data.get('dcid') or '').strip()
+    type_id = (data.get('type_id') or '').strip()
+    type_name = (data.get('type_name') or '').strip()
+
+    if not dcid or not type_id:
+        return jsonify({"ok": False, "error": "dcid 和 type_id 不能为空"}), 400
+
+    # 移动文件到正确目录
+    old_path = tmpl.stored_path
+    new_dir = os.path.join('uploads', 'ozon_templates', str(current_user.id),
+                           f'{dcid}_{type_id}', 'original')
+    os.makedirs(new_dir, exist_ok=True)
+    fname = os.path.basename(old_path)
+    new_path = os.path.join(new_dir, fname)
+    if old_path != new_path and os.path.exists(old_path):
+        try:
+            os.rename(old_path, new_path)
+        except OSError:
+            import shutil
+            shutil.copy2(old_path, new_path)
+        tmpl.stored_path = new_path
+
+    # 同 dcid+type_id 旧模板标记为 outdated
+    (OzonExcelTemplate
+     .update(status='outdated', updated_at=datetime.datetime.now())
+     .where((OzonExcelTemplate.user == current_user) &
+            (OzonExcelTemplate.dcid == dcid) &
+            (OzonExcelTemplate.type_id == type_id) &
+            (OzonExcelTemplate.status == 'active') &
+            (OzonExcelTemplate.id != tmpl.id))
+     .execute())
+
+    # 更新记录
+    tmpl.dcid = dcid
+    tmpl.type_id = type_id
+    tmpl.type_name = type_name or tmpl.type_name
+    tmpl.updated_at = datetime.datetime.now()
+    tmpl.save()
+
+    return jsonify({
+        "ok": True,
+        "message": f"模板已绑定到 dcid={dcid} type_id={type_id}",
+        "dcid": dcid,
+        "type_id": type_id,
+    })
+
+
+@ozon_bp.route('/api/template-info/<dcid>/<type_id>')
+@login_required
+def api_template_info(dcid, type_id):
+    """查询指定 dcid+type_id 是否有活跃模板（仅精确匹配）"""
+    tmpl = (OzonExcelTemplate
+            .select()
+            .where((OzonExcelTemplate.user == current_user) &
+                   (OzonExcelTemplate.dcid == str(dcid)) &
+                   (OzonExcelTemplate.type_id == str(type_id)) &
+                   (OzonExcelTemplate.status == 'active'))
+            .first())
+    if tmpl:
+        return jsonify({
+            "ok": True,
+            "has_template": True,
+            "template_id": tmpl.id,
+            "schema_hash": tmpl.schema_hash,
+            "headers_count": len(json.loads(tmpl.headers_json or '[]')),
+            "created_at": tmpl.created_at.isoformat() if tmpl.created_at else None,
+        })
+    return jsonify({"ok": True, "has_template": False})
+
+
+@ozon_bp.route('/api/draft/<int:draft_id>/generate-template-excel', methods=['POST'])
+@login_required
+def api_generate_template_excel(draft_id):
+    """从草稿生成填充好的 OZON 模板 Excel"""
+    draft = OzonDraft.get_or_none(
+        (OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
+    if not draft:
+        return jsonify({"ok": False, "error": "草稿不存在"}), 404
+
+    if not draft.type_id or not draft.ozon_category_id:
+        return jsonify({"ok": False, "error": "草稿未绑定 dcid/type_id，无法选择模板。请先在适配工作台选择类目和类型。"}), 400
+
+    # 查找活跃模板（仅精确匹配 dcid+type_id，不用同dcid回退）
+    template = (OzonExcelTemplate
+                .select()
+                .where((OzonExcelTemplate.user == current_user) &
+                       (OzonExcelTemplate.dcid == str(draft.ozon_category_id)) &
+                       (OzonExcelTemplate.type_id == str(draft.type_id)) &
+                       (OzonExcelTemplate.status == 'active'))
+                .first())
+
+    if not template:
+        return jsonify({
+            "ok": False,
+            "error": f"未找到 dcid={draft.ozon_category_id} type_id={draft.type_id} 对应的活跃模板。请先在「模板管理」页上传 OZON 官方 Excel 模板。如已上传但 type 不匹配，请在模板列表点 🔗 按钮修正绑定。"
+        }), 400
+
+    from services.ozon_template_excel import build_field_mapping, generate_export_excel, get_public_image_url
+
+    # 检查主图外链
+    image_url = get_public_image_url(draft)
+    if not image_url:
+        return jsonify({
+            "ok": False,
+            "warning": "no_public_image",
+            "error": "未找到可公开访问的主图 URL（必须以 http/https 开头的外链，OZON CDN 或云存储链接）。本地路径 OZON 无法读取。请先将图片上传到 OZON 获取 CDN URL，或手动在生成的 Excel 中填写图片链接。"
+        }), 400
+
+    # 构建映射并生成（AttributeError 兜底，避免字段引用错误导致 500）
+    try:
+        field_mapping = build_field_mapping(draft)
+    except AttributeError as e:
+        return jsonify({"ok": False, "error": f"字段映射错误：{e}. 请检查草稿属性数据是否完整。"}), 500
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"字段映射失败：{e}"}), 500
+
+    try:
+        export_path, validation_errors = generate_export_excel(draft, template, field_mapping)
+    except AttributeError as e:
+        return jsonify({"ok": False, "error": f"模板生成字段引用错误：{e}. 请联系管理员检查模板导出代码。"}), 500
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"模板生成失败：{e}"}), 500
+
+    # 记录导出任务
+    sku_count = draft.draft_skus.count() or 1
+    job = OzonTemplateExportJob.create(
+        user=current_user,
+        draft=draft,
+        template=template,
+        export_path=export_path,
+        field_mapping_json=json.dumps(field_mapping, ensure_ascii=False),
+        filled_rows_count=sku_count,
+    )
+
+    if validation_errors:
+        return jsonify({
+            "ok": True,
+            "warning": "validation_failed",
+            "message": f"模板 Excel 已生成但校验发现问题（{sku_count} 行数据）",
+            "job_id": job.id,
+            "download_url": url_for('ozon.api_download_template_export', job_id=job.id),
+            "validation_errors": validation_errors,
+        })
+
+    return jsonify({
+        "ok": True,
+        "message": f"模板 Excel 已生成（{sku_count} 行数据），校验通过",
+        "job_id": job.id,
+        "download_url": url_for('ozon.api_download_template_export', job_id=job.id),
+    })
+
+
+@ozon_bp.route('/api/template-exports/<int:job_id>/download')
+@login_required
+def api_download_template_export(job_id):
+    """下载生成的模板 Excel 文件"""
+    job = OzonTemplateExportJob.get_or_none(
+        (OzonTemplateExportJob.id == job_id) & (OzonTemplateExportJob.user == current_user))
+    if not job:
+        flash('导出记录不存在', 'danger')
+        return redirect(url_for('ozon.listings'))
+    if not os.path.exists(job.export_path):
+        flash('文件已被清理，请重新生成', 'danger')
+        return redirect(url_for('ozon.listings'))
+
+    export_dir = os.path.dirname(job.export_path)
+    filename = os.path.basename(job.export_path)
+    return send_from_directory(os.path.abspath(export_dir), filename,
+                               as_attachment=True, download_name=filename)
+
+
+@ozon_bp.route('/api/template-exports/<int:job_id>/mark-result', methods=['POST'])
+@login_required
+def api_mark_template_export_result(job_id):
+    """标记 OZON 模板上传结果"""
+    job = OzonTemplateExportJob.get_or_none(
+        (OzonTemplateExportJob.id == job_id) & (OzonTemplateExportJob.user == current_user))
+    if not job:
+        return jsonify({"ok": False, "error": "导出记录不存在"}), 404
+
+    data = request.get_json(silent=True) or {}
+    result = str(data.get('result', '')).strip()
+    notes = str(data.get('notes', '')).strip()
+
+    if result not in ('validated', 'errors', 'published', 'needs_fix'):
+        return jsonify({"ok": False, "error": "无效的结果状态，可选: validated / errors / published / needs_fix"}), 400
+
+    job.ozon_upload_result = result
+    job.ozon_upload_notes = notes or None
+    job.save()
+
+    labels = {'validated': '已验证', 'errors': '有错误', 'published': '已发布', 'needs_fix': '需修复'}
+    return jsonify({
+        "ok": True,
+        "message": f"上传结果已标记为「{labels.get(result, result)}」",
+        "result": result,
+    })
 
 
 def _build_product_data(draft):
-    """从草稿构建 OZON import_product 请求体"""
-    offer_id = f"draft_{draft.id}"
+    """从草稿构建 OZON import_product 请求体（使用归一化层）"""
+    # ── offer_id：优先取第一个 SKU 保存的 offer_id ──
+    first_sku = draft.draft_skus.order_by(OzonDraftSku.source_order).first()
+    offer_id = (first_sku.offer_id.strip() if first_sku and first_sku.offer_id else None)
+    if not offer_id:
+        raise ValueError("缺少 OZON 卖家货号 offer_id，请先在 SKU/价格页填写")
 
-    # 收集已审核通过的图片 URL
+    # ── 价格：取用户在 SKU/价格页确认的刊登价 ──
+    pricing = _safe_json_loads(draft.pricing_json, {})
+    listing_price = pricing.get('listing_price') if isinstance(pricing, dict) else None
+    listing_currency = pricing.get('listing_currency', 'RUB') if isinstance(pricing, dict) else 'RUB'
+    if not listing_price:
+        raise ValueError("缺少 OZON 刊登价，请先在 SKU/价格页填写并确认价格")
+
+    # ── 图片：从 media_json 媒体池取主图（selected + role=main，按 sort_order 排序）──
     images = []
-    for slot in (OzonImageSlot
-                 .select()
-                 .where((OzonImageSlot.draft == draft) &
-                        (OzonImageSlot.status == 'approved'))
-                 .order_by(OzonImageSlot.slot_order)):
-        if slot.generated_url:
-            images.append(slot.generated_url)
+    media = _load_media_json(draft)
+    media_images = media.get('images', []) if isinstance(media, dict) else []
+    # 取已选中的主图
+    main_imgs = [i for i in media_images
+                 if i.get('selected') and i.get('role') == 'main']
+    main_imgs.sort(key=lambda i: i.get('sort_order', 0))
+    for img in main_imgs:
+        url = img.get('ozon_url') or img.get('public_url') or img.get('url') or ''
+        if url:
+            images.append(url)
 
     data = {
         "offer_id": offer_id,
         "name": draft.title_ru or "Untitled",
-        "category_id": int(draft.ozon_category_id) if draft.ozon_category_id else None,
-        "price": None,  # 将从 pricing_json 或手动售价取
+        "description_category_id": int(draft.ozon_category_id) if draft.ozon_category_id else None,
+        "type_id": int(draft.type_id) if draft.type_id else None,
+        "price": str(listing_price),
         "vat": "0",
+        "currency_code": str(listing_currency),
         "description": draft.description_ru or "",
     }
 
-    # 处理多 SKU
+    # 多 SKU（使用各自保存的 offer_id 和数量）
     skus_list = []
     for sku in draft.draft_skus.order_by(OzonDraftSku.source_order):
         skus_list.append({
-            "offer_id": f"{offer_id}_{sku.source_order}",
-            "sku_name": sku.source_sku_name,
-            "price": str(sku.purchase_price_cny or 0),
-            "quantity": sku.bundle_quantity,
+            "offer_id": (sku.offer_id or f"{offer_id}_{sku.source_order}").strip(),
+            "sku_name": sku.source_sku_name or '',
+            "price": str(listing_price),
+            "quantity": sku.bundle_quantity or 1,
         })
     if skus_list:
         data["skus"] = skus_list
 
-    # 图片（OZON 期望对象数组）
+    # 图片
     if images:
         data["images"] = images
 
-    # 属性
-    if draft.attributes_json:
-        try:
-            attrs = json.loads(draft.attributes_json)
-            if isinstance(attrs, list):
-                data["attributes"] = attrs
-        except (json.JSONDecodeError, TypeError):
-            pass
+    # 属性（归一化转换）
+    attrs = _build_ozon_attribute_list(draft)
+    if attrs:
+        data["attributes"] = attrs
 
     return data
 
@@ -3564,6 +4328,146 @@ def _record_publish_failure(job, draft, error, request_json_str):
     draft.updated_at = now
     draft.save()
 
+
+# ═══════════════════════════════════════════════════════════════
+# 属性归一化层 — 统一草稿属性存取格式
+# ═══════════════════════════════════════════════════════════════
+
+def _safe_json_loads(raw, default=None):
+    """安全 JSON 解析，失败返回 default"""
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return default
+
+
+def _load_draft_attributes_map(draft):
+    """
+    统一读取 draft.attributes_json，返回固定格式 dict:
+
+        {"attribute_id": {"value": "...", "value_id": "..."}}
+
+    兼容三种历史格式：
+      1. list:  [{"id": 8229, "value": "..."}, ...]
+      2. wrapper: {"attributes": {"8229": {"value": "..."}}}
+      3. map:    {"8229": {"value": "..."}}
+    """
+    raw = _safe_json_loads(getattr(draft, 'attributes_json', None), {})
+
+    # 展开 wrapper
+    if isinstance(raw, dict) and 'attributes' in raw:
+        raw = raw.get('attributes') or {}
+
+    result = {}
+
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            aid = item.get('attribute_id') or item.get('id')
+            if not aid:
+                continue
+            result[str(aid)] = item
+        return result
+
+    if isinstance(raw, dict):
+        for aid, value in raw.items():
+            if aid in ('type_id', 'category_id', 'diagnostics'):
+                continue
+            result[str(aid)] = value
+        return result
+
+    return result
+
+
+def _is_draft_attr_filled(value):
+    """判断一个属性值是否已填写"""
+    if value is None:
+        return False
+
+    if isinstance(value, dict):
+        if value.get('values'):
+            return True
+        for key in ('value', 'value_id', 'dictionary_value_id', 'target_value'):
+            v = value.get(key)
+            if v is not None and str(v).strip() not in ('', '--', 'None', 'null'):
+                return True
+        return False
+
+    if isinstance(value, list):
+        return len(value) > 0
+
+    return str(value).strip() not in ('', '--', 'None', 'null')
+
+
+def _filled_draft_attribute_ids(draft):
+    """返回草稿中已填写的属性 attribute_id 集合"""
+    attr_map = _load_draft_attributes_map(draft)
+    return {
+        str(aid)
+        for aid, value in attr_map.items()
+        if _is_draft_attr_filled(value)
+    }
+
+
+def _build_ozon_attribute_list(draft):
+    """
+    将草稿属性 map 转成 OZON API 需要的 attributes list:
+
+        [{"id": 8229, "values": [{"dictionary_value_id": 123, "value": "..."}]}]
+    """
+    attr_map = _load_draft_attributes_map(draft)
+    result = []
+
+    for aid, saved in attr_map.items():
+        if not _is_draft_attr_filled(saved):
+            continue
+
+        item = {
+            "id": int(aid) if str(aid).isdigit() else aid,
+            "values": []
+        }
+
+        if isinstance(saved, dict):
+            values = saved.get("values")
+            if isinstance(values, list) and values:
+                item["values"] = values
+            else:
+                value_obj = {}
+
+                value_id = (
+                    saved.get("value_id")
+                    or saved.get("dictionary_value_id")
+                    or saved.get("id_value")
+                )
+                value_text = (
+                    saved.get("value")
+                    or saved.get("target_value")
+                    or saved.get("text")
+                )
+
+                if value_id:
+                    value_obj["dictionary_value_id"] = (
+                        int(value_id) if str(value_id).isdigit() else value_id
+                    )
+
+                if value_text:
+                    value_obj["value"] = str(value_text)
+
+                if value_obj:
+                    item["values"].append(value_obj)
+        else:
+            item["values"].append({"value": str(saved)})
+
+        if item["values"]:
+            result.append(item)
+
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════
 
 @ozon_bp.route('/listings/batch-delete', methods=['POST'])
 @login_required
@@ -5471,7 +6375,7 @@ def api_generate_draft(group_id):
         if adaptation.ozon_category_id:
             draft.ozon_category_id = adaptation.ozon_category_id
         if adaptation.ozon_category_name:
-            draft.ozon_category_path = adaptation.ozon_category_name
+            draft.category_path_ru = adaptation.ozon_category_name
         if adaptation.category_path:
             draft.category_path_cn = adaptation.category_path
         if adaptation.type_id:
@@ -6652,14 +7556,9 @@ def api_draft_auto_fill_apply(draft_id):
         src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
         bullets = ['• ' + (a.get('name','') + ': ' + str(a.get('value',''))) for a in src_attrs[:8] if a.get('name') and a.get('value')]
         if bullets: draft.bullets_ru = json.dumps(bullets, ensure_ascii=False); filled += 1
-    # 属性（双语匹配+字典值匹配）
+    # 属性（双语匹配+字典值匹配）— 统一扁平 map 格式
     if draft.ozon_category_id and draft.type_id:
-        saved = {}
-        if draft.attributes_json:
-            try: saved = json.loads(draft.attributes_json)
-            except: saved = {}
-        if not isinstance(saved, dict) or 'attributes' not in saved:
-            saved = {'attributes': {}}
+        saved = _load_draft_attributes_map(draft)
         src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
         tgt_attrs = list(OzonCategoryAttribute.select().where((OzonCategoryAttribute.user == current_user) & (OzonCategoryAttribute.ozon_category_id == draft.ozon_category_id) & (OzonCategoryAttribute.type_id == draft.type_id)))
         # 字典值缓存
@@ -6670,7 +7569,7 @@ def api_draft_auto_fill_apply(draft_id):
                 tgt_vals.setdefault(v.attribute_id, []).append(v)
         for ta in tgt_attrs:
             aid = str(ta.attribute_id)
-            if aid in saved.get('attributes',{}): continue
+            if aid in saved: continue
             tname = (ta.name_cn + ' ' + ta.name).lower()
             for sa in src_attrs:
                 sname = ((sa.get('name_cn') or '') + ' ' + (sa.get('name') or '') + ' ' + (sa.get('key') or '')).lower()
@@ -6684,11 +7583,11 @@ def api_draft_auto_fill_apply(draft_id):
                                 entry['value_cn'] = tv.value_cn
                                 entry['value_ru'] = tv.value
                                 break
-                    saved['attributes'][aid] = entry; filled += 1
+                    saved[aid] = entry; filled += 1
                     break
         draft.attributes_json = json.dumps(saved, ensure_ascii=False)
     draft.save()
-    return jsonify({"ok": True, "filled_count": filled, "saved_attributes": saved.get('attributes',{}),
+    return jsonify({"ok": True, "filled_count": filled, "saved_attributes": saved,
                     "dcid": draft.ozon_category_id, "type_id": draft.type_id,
                     "message": f"已应用 {filled} 项"})
 
@@ -6699,12 +7598,13 @@ def api_draft_save_attributes(draft_id):
     if not draft: return jsonify({"ok": False, "error": "草稿不存在"}), 404
     data = request.get_json(silent=True) or {}
     attrs = data.get('attributes', {})
-    saved = {}
-    if draft.attributes_json:
-        try: saved = json.loads(draft.attributes_json)
-        except: saved = {}
-    if not isinstance(saved, dict) or 'attributes' not in saved: saved = {'attributes': {}}
-    for aid, val in attrs.items(): saved['attributes'][str(aid)] = str(val)
+    # 统一使用扁平 map 格式: {"aid": {"value": "..."}}
+    saved = _load_draft_attributes_map(draft)
+    for aid, val in attrs.items():
+        if isinstance(val, dict):
+            saved[str(aid)] = val
+        else:
+            saved[str(aid)] = {'value': str(val)}
     draft.attributes_json = json.dumps(saved, ensure_ascii=False)
     draft.save()
     return jsonify({"ok": True, "message": f"已保存 {len(attrs)} 个属性"})
@@ -6806,17 +7706,35 @@ def api_draft_upload_image(draft_id):
 @ozon_bp.route('/api/draft/<int:draft_id>/media/save', methods=['POST'])
 @login_required
 def api_draft_media_save(draft_id):
-    """统一保存草稿媒体池（图片+视频）"""
+    """统一保存草稿媒体池（图片+视频），保存前归一化主图 sort_order 和 is_cover"""
     draft = OzonDraft.get_or_none((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
     if not draft: return jsonify({"ok": False, "error": "草稿不存在"}), 404
     data = request.get_json(silent=True) or {}
     images = data.get('images')
     videos = data.get('videos')
+    deleted_video_urls = data.get('deleted_video_urls')
+    deleted_image_source_ids = data.get('deleted_image_source_ids')
+    deleted_image_urls = data.get('deleted_image_urls')
     media = _load_media_json(draft)
     if images is not None:
         media['images'] = images
     if videos is not None:
         media['videos'] = videos
+    if deleted_video_urls is not None:
+        media['deleted_video_urls'] = deleted_video_urls
+    if deleted_image_source_ids is not None:
+        media['deleted_image_source_ids'] = deleted_image_source_ids
+    if deleted_image_urls is not None:
+        media['deleted_image_urls'] = deleted_image_urls
+
+    # 归一化主图：按 sort_order 排序，重新编号，第一张 is_cover=true
+    mains = [img for img in media.get('images', [])
+             if img.get('selected') and img.get('role') == 'main']
+    mains.sort(key=lambda x: (x.get('sort_order', 9999), x.get('id', '')))
+    for idx, img in enumerate(mains):
+        img['sort_order'] = idx + 1
+        img['is_cover'] = idx == 0
+
     draft.media_json = json.dumps(media, ensure_ascii=False)
     draft.updated_at = datetime.datetime.now()
     draft.save()
@@ -6826,37 +7744,136 @@ def api_draft_media_save(draft_id):
 @ozon_bp.route('/api/draft/<int:draft_id>/media/import-from-source', methods=['POST'])
 @login_required
 def api_draft_media_import_from_source(draft_id):
-    """从采集源导入图片/视频到草稿媒体池"""
+    """从采集源导入图片/视频到草稿媒体池
+
+    导入规则：
+    - main：全量导入 role='main'，第一张 is_cover=true，其余 is_cover=false
+    - sku：全部导入 role='sku'
+    - detail/scene/gallery 等：不导入图片/视频 tab，跳过（由富文本模块处理）
+    - buyer_review/video/main_video/unknown/rejected：跳过
+    """
     draft = OzonDraft.get_or_none((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
     if not draft or not draft.source:
         return jsonify({"ok": False, "error": "草稿或源商品不存在"}), 404
 
-    media = _load_media_json(draft)
-    existing_paths = {img.get('local_path', '') for img in media['images']}
-    existing_urls = {img.get('public_url', '') for img in media['images']}
-    existing_video_urls = {v.get('url', '') for v in media['videos']}
-    imported_imgs = 0
-    imported_vids = 0
+    # 图片/视频 tab 只导入 main + sku（detail/scene 归富文本处理）
+    DIRECT_LISTING_ROLES = {'main', 'sku'}
+    # 以下角色明确跳过（不进图片池也不进富文本）
+    SKIP_ROLES = {'buyer_review', 'unknown', 'video', 'main_video'}
 
-    # 从 OzonSourceMedia 导入采集图片
+    media = _load_media_json(draft)
+
+    # 构建 source_media_id → 源角色 映射（用于修正历史脏数据）
     source_images = list(OzonSourceMedia.select().where(
         OzonSourceMedia.source == draft.source
     ).order_by(OzonSourceMedia.id))
+
+    source_role_by_id = {}
     for sm in source_images:
-        url = sm.source_url or sm.local_path or ''
-        if url in existing_urls or sm.local_path in existing_paths:
-            continue
-        ts = int(time.time() * 1000) + imported_imgs
+        source_role_by_id[str(sm.id)] = (sm.role or '').lower()
+
+    # 构建 source_media_id → 已有图片对象 映射（用于去重+修正）
+    existing_by_source_id = {}
+    for img in media.get('images', []):
+        sm_id = str(img.get('source_media_id') or '')
+        if sm_id:
+            existing_by_source_id[sm_id] = img
+
+    existing_ids = {img.get('id') for img in media.get('images', []) if img.get('id')}
+    existing_video_urls = {v.get('url', '') for v in media['videos']}
+    # 黑名单：用户手动删除过的视频/图片，不再重新导入
+    deleted_video_urls = set(media.get('deleted_video_urls', []))
+    deleted_image_source_ids = set(media.get('deleted_image_source_ids', []))
+    deleted_image_urls = set(media.get('deleted_image_urls', []))
+
+    # 轻度清理：只移除明显无效的图片
+    dirty_before = len(media['images'])
+    valid_imgs = []
+    seen_sm_ids = set()
+    for img in media.get('images', []):
+        if img.get('source') == 'collected':
+            if not img.get('public_url') and not img.get('local_path'):
+                continue
+            if img.get('review_status') == 'rejected':
+                continue
+            sm_id = str(img.get('source_media_id', ''))
+            if sm_id and sm_id in seen_sm_ids:
+                continue
+            if sm_id:
+                seen_sm_ids.add(sm_id)
+        valid_imgs.append(img)
+    dirty_cleaned = dirty_before - len(valid_imgs)
+    media['images'] = valid_imgs
+    # 清理后重建映射
+    existing_by_source_id = {}
+    for img in media.get('images', []):
+        sm_id = str(img.get('source_media_id') or '')
+        if sm_id:
+            existing_by_source_id[sm_id] = img
+
+    imported_imgs = 0
+    imported_vids = 0
+    skipped_role = 0
+    skipped_duplicate = 0
+    skipped_rejected = 0
+    images_fixed_role = 0
+
+    for sm in source_images:
+        src_role = source_role_by_id.get(str(sm.id), '')
+        source_media_id = str(sm.id)
         img_id = f'img_src_{sm.id}'
+
+        # 明确排除的角色
+        if src_role in SKIP_ROLES:
+            skipped_role += 1
+            continue
+
+        # 合规过滤
+        if sm.compliance_status and sm.compliance_status == 'rejected':
+            skipped_rejected += 1
+            continue
+
+        # 图片删除黑名单：用户手动删除过的 source_media_id 不重新导入
+        if source_media_id in deleted_image_source_ids:
+            continue
+        img_url = sm.image_url or sm.public_url or ''
+        if img_url and img_url in deleted_image_urls:
+            continue
+
+        # ── 已存在：检查 role 是否需要修正 ──
+        if source_media_id in existing_by_source_id:
+            existing_img = existing_by_source_id[source_media_id]
+
+            # 采集源是 main/sku 但草稿里 role 错了 → 修正
+            if src_role in DIRECT_LISTING_ROLES:
+                if existing_img.get('role') != src_role:
+                    existing_img['role'] = src_role
+                    existing_img['source_role'] = src_role
+                    existing_img['selected'] = True
+                    images_fixed_role += 1
+
+            skipped_duplicate += 1
+            continue
+
+        # ── 不导入 detail/scene 等（归富文本）──
+        if src_role not in DIRECT_LISTING_ROLES:
+            skipped_role += 1
+            continue
+
+        # ── 新增导入 ──
+        url = sm.source_url or sm.local_path or ''
         img_obj = {
             'id': img_id,
             'source': 'collected',
+            'source_media_id': sm.id,
             'local_path': sm.local_path or '',
             'public_url': url,
             'ozon_url': None,
             'thumb_url': url,
             'filename': url.rsplit('/', 1)[-1] if url else f'source_{sm.id}.jpg',
-            'role': sm.role or 'gallery',
+            'role': src_role,    # 直接取采集源真实 role
+            'source_role': src_role,
+            'is_cover': False,   # 统一整理时再设
             'selected': True,
             'sort_order': len(media['images']) + imported_imgs + 1,
             'upload_status': 'public_ready' if url.startswith('http') else 'local',
@@ -6864,15 +7881,23 @@ def api_draft_media_import_from_source(draft_id):
             'alt': '',
             'width': sm.width,
             'height': sm.height,
-            'source_media_id': sm.id
         }
         media['images'].append(img_obj)
-        existing_urls.add(url)
-        if sm.local_path:
-            existing_paths.add(sm.local_path)
+        existing_by_source_id[source_media_id] = img_obj
+        existing_ids.add(img_id)
         imported_imgs += 1
 
-    # 从 raw_json 导入采集视频
+    # ── 导入完成后统一整理主图顺序和封面 ──
+    main_imgs = [
+        img for img in media.get('images', [])
+        if img.get('selected') and img.get('role') == 'main'
+    ]
+    main_imgs.sort(key=lambda x: (x.get('sort_order') or 999999, str(x.get('id') or '')))
+    for idx, img in enumerate(main_imgs):
+        img['sort_order'] = idx + 1
+        img['is_cover'] = idx == 0
+
+    # 从 raw_json 导入采集视频（不变）
     raw = {}
     try:
         raw = json.loads(draft.source.raw_json or '{}')
@@ -6881,7 +7906,7 @@ def api_draft_media_import_from_source(draft_id):
     source_videos = raw.get('videos', []) or raw.get('product_videos', []) or []
     for vi, v in enumerate(source_videos):
         v_url = v.get('video_url') or v.get('url') or ''
-        if not v_url or v_url in existing_video_urls:
+        if not v_url or v_url in existing_video_urls or v_url in deleted_video_urls:
             continue
         vid = {
             'id': f'video_src_{vi}_{int(time.time())}',
@@ -6903,9 +7928,14 @@ def api_draft_media_import_from_source(draft_id):
 
     return jsonify({
         "ok": True,
-        "message": f"已导入 {imported_imgs} 张图片, {imported_vids} 个视频",
+        "message": f"已导入 {imported_imgs} 张图片, 修正主图角色 {images_fixed_role} 张, {imported_vids} 个视频",
         "images_imported": imported_imgs,
+        "images_fixed_role": images_fixed_role,
         "videos_imported": imported_vids,
+        "skipped_role": skipped_role,
+        "skipped_duplicate": skipped_duplicate,
+        "skipped_rejected": skipped_rejected,
+        "dirty_cleaned": dirty_cleaned,
         "media": media
     })
 
@@ -6923,6 +7953,202 @@ def api_draft_save_rich_content(draft_id):
     draft.updated_at = datetime.datetime.now()
     draft.save()
     return jsonify({"ok": True, "message": f"富文本已保存 ({len(blocks)} 块)"})
+
+
+@ozon_bp.route('/api/draft/<int:draft_id>/save-all', methods=['POST'])
+@login_required
+def api_draft_save_all(draft_id):
+    """一次性保存草稿所有数据（内容+SKU+价格+媒体+富文本）"""
+    draft = OzonDraft.get_or_none((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
+    if not draft:
+        return jsonify({"ok": False, "error": "草稿不存在"}), 404
+
+    data = request.get_json(silent=True) or {}
+
+    # 目标店铺
+    account_id = data.get('account_id')
+    if account_id:
+        try:
+            account = OzonAccount.get((OzonAccount.id == int(account_id)) &
+                                      (OzonAccount.user == current_user) &
+                                      (OzonAccount.is_active == True))
+            draft.account = account
+        except OzonAccount.DoesNotExist:
+            pass  # 忽略无效的 account_id，不阻断保存
+
+    # 内容
+    content = data.get('content') or {}
+    if content.get('title_ru') is not None:
+        draft.title_ru = content.get('title_ru', draft.title_ru)
+    if content.get('description_ru') is not None:
+        draft.description_ru = content.get('description_ru', draft.description_ru)
+    if content.get('bullets_ru') is not None:
+        draft.bullets_ru = content.get('bullets_ru', draft.bullets_ru)
+    if content.get('ozon_category_path') is not None:
+        draft.category_path_ru = content.get('ozon_category_path') or draft.category_path_ru
+
+    # 价格
+    pricing = data.get('pricing') or {}
+    existing_pricing = {}
+    try:
+        existing_pricing = json.loads(draft.pricing_json or '{}')
+    except (json.JSONDecodeError, TypeError):
+        pass
+    if pricing.get('currency'):
+        existing_pricing['listing_currency'] = pricing['currency']
+    if pricing.get('ozon_price'):
+        existing_pricing['listing_price'] = pricing['ozon_price']
+    if 'price_manual_confirmed' in pricing:
+        draft.price_manual_confirmed = bool(pricing.get('price_manual_confirmed'))
+    draft.pricing_json = json.dumps(existing_pricing, ensure_ascii=False)
+
+    # SKU
+    skus_data = data.get('skus') or []
+    for sd in skus_data:
+        sku_id = sd.get('sku_id')
+        if not sku_id:
+            continue
+        try:
+            sku = OzonDraftSku.get((OzonDraftSku.id == int(sku_id)) & (OzonDraftSku.draft == draft))
+        except (OzonDraftSku.DoesNotExist, ValueError):
+            continue
+        if sd.get('offer_id') is not None:
+            sku.offer_id = sd['offer_id'] or None
+        if sd.get('color') is not None:
+            sku.color_ru = sd['color'] or None
+        if sd.get('style') is not None:
+            sku.style_ru = sd['style'] or None
+        if sd.get('barcode') is not None:
+            sku.barcode = sd['barcode'] or None
+        if sd.get('quantity'):
+            try:
+                sku.bundle_quantity = int(sd['quantity'])
+            except ValueError:
+                pass
+        sku.save()
+
+    # 媒体池（含删除黑名单）
+    media = data.get('media')
+    if media:
+        existing_media = _load_media_json(draft)
+        if isinstance(media, dict):
+            if 'images' in media:
+                existing_media['images'] = media['images']
+            if 'videos' in media:
+                existing_media['videos'] = media['videos']
+            # 持久化删除黑名单
+            for key in ('deleted_video_urls', 'deleted_image_source_ids', 'deleted_image_urls'):
+                if key in media:
+                    existing_media[key] = media[key]
+            draft.media_json = json.dumps(existing_media, ensure_ascii=False)
+
+    # 富文本
+    rich = data.get('rich_content')
+    if rich is not None:
+        blocks = rich if isinstance(rich, list) else rich.get('blocks', [])
+        draft.rich_content_json = json.dumps({'version': '1.0', 'blocks': blocks}, ensure_ascii=False)
+
+    draft.updated_at = datetime.datetime.now()
+    draft.save()
+
+    return jsonify({"ok": True, "message": "草稿数据已保存"})
+
+
+@ozon_bp.route('/api/draft/<int:draft_id>/approve', methods=['POST'])
+@login_required
+def api_draft_approve(draft_id):
+    """审核通过：执行校验，通过则改状态为 approved。返回 JSON，不重定向。"""
+    draft = OzonDraft.get_or_none((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
+    if not draft:
+        return jsonify({"ok": False, "error": "草稿不存在"}), 404
+
+    import re
+    OFFER_ID_PATTERN = re.compile(r'^[A-Za-z0-9_-]{3,80}$')
+
+    checks = []
+    # 内容校验
+    checks.append({'label': '俄语标题已填写', 'pass': bool(draft.title_ru), 'blocking': True,
+                   'level': 'error' if not draft.title_ru else 'success'})
+    checks.append({'label': 'OZON 类目已选择', 'pass': bool(draft.ozon_category_id or draft.category_path_ru),
+                   'blocking': True, 'level': 'error' if not (draft.ozon_category_id or draft.category_path_ru) else 'success'})
+    checks.append({'label': '缺少 SKU 数据', 'pass': draft.draft_skus.count() > 0, 'blocking': True,
+                   'level': 'error' if draft.draft_skus.count() == 0 else 'success'})
+    checks.append({'label': '目标店铺已选择', 'pass': draft.account is not None, 'blocking': True,
+                   'level': 'error' if not draft.account else 'success'})
+
+    # 价格校验
+    existing_pricing = {}
+    try:
+        existing_pricing = json.loads(draft.pricing_json or '{}')
+    except (json.JSONDecodeError, TypeError):
+        pass
+    checks.append({'label': '刊登价已填写', 'pass': bool(existing_pricing.get('listing_price')), 'blocking': True,
+                   'level': 'error' if not existing_pricing.get('listing_price') else 'success'})
+    checks.append({'label': '刊登币种已选择', 'pass': bool(existing_pricing.get('listing_currency')), 'blocking': True,
+                   'level': 'error' if not existing_pricing.get('listing_currency') else 'success'})
+    checks.append({'label': '价格已人工确认', 'pass': draft.price_manual_confirmed, 'blocking': True,
+                   'level': 'error' if not draft.price_manual_confirmed else 'success'})
+
+    # SKU offer_id 校验
+    skus = list(draft.draft_skus)
+    all_have_offer = all(sk.offer_id for sk in skus)
+    bad_format_ids = []
+    seen_ids = set()
+    dup_in_draft = set()
+    for sk in skus:
+        oid = (sk.offer_id or '').strip()
+        if not oid:
+            continue
+        if not OFFER_ID_PATTERN.match(oid):
+            bad_format_ids.append(oid)
+        if oid in seen_ids:
+            dup_in_draft.add(oid)
+        seen_ids.add(oid)
+
+    checks.append({'label': '所有 SKU 已填 offer_id', 'pass': all_have_offer, 'blocking': True,
+                   'level': 'error' if not all_have_offer else 'success'})
+    checks.append({'label': 'offer_id 格式正确（字母/数字/下划线/短横线）',
+                   'pass': len(bad_format_ids) == 0, 'blocking': True,
+                   'level': 'success' if not bad_format_ids else 'error',
+                   'detail': f'非法格式: {", ".join(bad_format_ids)}' if bad_format_ids else ''})
+    checks.append({'label': '当前草稿内 offer_id 无重复',
+                   'pass': len(dup_in_draft) == 0, 'blocking': True,
+                   'level': 'success' if not dup_in_draft else 'error',
+                   'detail': f'重复值: {", ".join(dup_in_draft)}' if dup_in_draft else ''})
+
+    # 媒体校验
+    media = _load_media_json(draft)
+    images = media.get('images', [])
+    selected_imgs = [i for i in images if i.get('selected')]
+    has_main = any(i.get('role') == 'main' for i in selected_imgs)
+    checks.append({'label': '至少有 1 张已选图片', 'pass': len(selected_imgs) > 0, 'blocking': True,
+                   'level': 'success' if selected_imgs else 'error'})
+    checks.append({'label': '已指定主图', 'pass': has_main, 'blocking': True,
+                   'level': 'success' if has_main else 'error'})
+
+    blocking_count = sum(1 for c in checks if not c['pass'] and c['blocking'])
+    validation = {'blocking_count': blocking_count, 'checks': checks}
+
+    draft.validation_result = json.dumps(validation, ensure_ascii=False)
+    draft.updated_at = datetime.datetime.now()
+
+    if blocking_count > 0:
+        draft.save()
+        return jsonify({
+            "ok": False,
+            "error": f"存在 {blocking_count} 项阻断错误",
+            "validation": validation
+        })
+
+    draft.status = 'approved'
+    draft.save()
+
+    return jsonify({
+        "ok": True,
+        "status": draft.status,
+        "validation": validation
+    })
+
 
 @ozon_bp.route('/api/draft/<int:draft_id>/set-category-type', methods=['POST'])
 @login_required

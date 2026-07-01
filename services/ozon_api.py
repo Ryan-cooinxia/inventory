@@ -475,7 +475,8 @@ class OzonAPIClient:
             product_data: 商品数据字典，包含:
                 - offer_id (str): 本地商品标识（必填）
                 - name (str): 俄语标题（必填）
-                - category_id (int): OZON 类目 ID（必填）
+                - description_category_id (int): OZON 类目 ID（必填）
+                - type_id (int): OZON 商品类型 ID（必填）
                 - price (str): 售价 RUB
                 - vat (str): 增值税，默认 "0"
                 - barcode (str): 条码
@@ -487,8 +488,8 @@ class OzonAPIClient:
         返回: {"task_id": ..., "status": "created"}
         """
         # OZON 要求某些字段必须是字符串
-        body = self._sanitize_product_data(product_data)
-        result, _, _ = self._request("POST", "/v3/product/import", {"items": [body]})
+        body = self.build_import_body(product_data)
+        result, _, _ = self._request("POST", "/v3/product/import", body)
         return result.get("result", result)
 
     def import_product_info(self, task_id):
@@ -657,16 +658,42 @@ class OzonAPIClient:
                 self._sanitize_product_data(sku) for sku in clean['skus']
             ]
 
-        # 处理图片 — OZON 期望对象数组
+        # 处理图片 — /v3/product/import 的 images 字段必须是 URL 字符串数组，不是 {file_name, link} 对象数组
         if 'images' in clean:
             clean['images'] = [
-                self._normalize_image(img) for img in clean['images']
+                self._normalize_image_url(img) for img in clean['images']
             ]
+            clean['images'] = [u for u in clean['images'] if u]
 
         return clean
 
+    def _normalize_image_url(self, img):
+        """
+        /v3/product/import 的 images 字段要求是字符串 URL 数组。
+        本函数只返回 URL 字符串，不返回对象。
+        """
+        if isinstance(img, str):
+            return img.strip()
+
+        if isinstance(img, dict):
+            return (
+                img.get("url")
+                or img.get("link")
+                or img.get("public_url")
+                or img.get("ozon_url")
+                or img.get("src")
+                or ""
+            ).strip()
+
+        return ""
+
+    def build_import_body(self, product_data):
+        """构建 /v3/product/import 的完整请求体（含 sanitize），供发布日志记录使用"""
+        body = self._sanitize_product_data(product_data)
+        return {"items": [body]}
+
     def _normalize_image(self, img):
-        """将图片输入统一为 OZON API 格式"""
+        """将图片输入统一为 OZON API 格式（保留向后兼容）"""
         if isinstance(img, str):
             return {"file_name": "", "link": img}
         if isinstance(img, dict):

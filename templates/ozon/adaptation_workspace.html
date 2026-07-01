@@ -216,6 +216,12 @@
             <div>
               <strong>已选:</strong> <span id="catPathDisplay">{{ adaptation.type_name_cn or adaptation.type_name_ru or adaptation.category_path or '' }}</span>
               <code class="ms-1" id="catIdDisplay" style="font-size:9px">{% if adaptation %}dcid={{ adaptation.ozon_category_id }} type_id={{ adaptation.type_id }}{% endif %}</code>
+              <span id="templateStatusBadge" class="ms-2 small" style="display:none"></span>
+              <button class="btn btn-sm btn-outline-secondary ms-1" id="btnUploadTemplate"
+                      style="font-size:9px; padding:1px 4px; display:none"
+                      onclick="openTemplateManager()">
+                📤 模板管理
+              </button>
             </div>
             <button class="btn btn-sm btn-outline-secondary" style="font-size:9px;padding:1px 4px" onclick="openCategoryForAdaptation()">更改</button>
           </div>
@@ -486,6 +492,7 @@ function renderSelectedCategory(d, sel) {
   info.classList.remove('d-none');
   document.getElementById('catPathDisplay').textContent = nameCn;
   document.getElementById('catIdDisplay').textContent = 'dcid='+dcid+' type_id='+tid;
+  checkTemplateStatus(dcid, tid);
   var sti = document.getElementById('selectedTypeInfo');
   if(sti) sti.innerHTML = '已选: '+escapeHtml(nameCn)+' <code>'+tid+'</code>';
 }
@@ -501,6 +508,44 @@ function loadAttributeForm(dcid, typeId, savedAttrs) {
     renderAttributeForm(d.attrs, savedAttrs||window.__savedAttrs||{});
   }).catch(e=>{ panel.innerHTML='<div class="text-danger p-2">加载失败: '+e.message+'</div>'; });
 }
+
+function checkTemplateStatus(dcid, tid){
+  if(!dcid || !tid) return;
+  fetch('/ozon/api/template-info/' + encodeURIComponent(dcid) + '/' + encodeURIComponent(tid))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var badge = document.getElementById('templateStatusBadge');
+      var btn = document.getElementById('btnUploadTemplate');
+      if(!badge || !btn) return;
+      badge.style.display = '';
+      btn.style.display = 'inline-block';
+      if(d.has_template){
+        badge.innerHTML = '<span class="text-success">✅ 模板就绪</span> <small class="text-muted">(' + d.headers_count + '列)</small>';
+        btn.textContent = '📤 更新模板';
+      } else {
+        badge.innerHTML = '<span class="text-warning">⚠️ 未上传模板</span>';
+        btn.textContent = '📤 上传模板';
+      }
+    });
+}
+
+function openTemplateManager(){
+  var dcid = window.__adaptationDcid || '{{ adaptation.ozon_category_id if adaptation else "" }}';
+  var tid = window.__adaptationTypeId || '{{ adaptation.type_id if adaptation else "" }}';
+  var name = document.getElementById('catPathDisplay') ? document.getElementById('catPathDisplay').textContent : '';
+  var url = '/ozon/excel-templates';
+  if(dcid && tid){
+    url += '?dcid=' + encodeURIComponent(dcid) + '&type_id=' + encodeURIComponent(tid);
+    if(name) url += '&type_name=' + encodeURIComponent(name);
+  }
+  window.open(url, '_blank');
+}
+// 页面加载时如果已有适配数据，检测模板状态
+(function(){
+  var dcid = '{{ adaptation.ozon_category_id if adaptation else "" }}';
+  var tid = '{{ adaptation.type_id if adaptation else "" }}';
+  if(dcid && tid){ checkTemplateStatus(dcid, tid); }
+})();
 
 function renderAttributeForm(attrs, savedAttrs) {
   savedAttrs = savedAttrs || {};

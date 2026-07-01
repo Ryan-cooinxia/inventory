@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block title %}OZON 官方模板管理{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <h5 class="mb-2">📊 OZON 官方 Excel 模板管理</h5>
+  <p class="text-muted small">上传 OZON 官方 Excel 模板，按类目+类型绑定。生成刊登 Excel 时自动匹配对应模板。</p>
+
+  <!-- 上传区域 -->
+  <div class="card mb-3">
+    <div class="card-header py-1"><strong>📤 上传新模板</strong></div>
+    <div class="card-body py-2">
+      <form id="uploadForm" enctype="multipart/form-data">
+        <div class="row g-2 align-items-end">
+          <div class="col-auto">
+            <label class="form-label small mb-0">模板文件 (.xlsx)</label>
+            <input type="file" name="file" class="form-control form-control-sm" accept=".xlsx,.xlsm" required>
+          </div>
+          <div class="col-auto">
+            <label class="form-label small mb-0">dcid <span class="text-muted">(自动识别)</span></label>
+            <input type="text" name="dcid" class="form-control form-control-sm" placeholder="上传后自动匹配" style="width:130px">
+          </div>
+          <div class="col-auto">
+            <label class="form-label small mb-0">type_id <span class="text-muted">(自动识别)</span></label>
+            <input type="text" name="type_id" class="form-control form-control-sm" placeholder="上传后自动匹配" style="width:130px">
+          </div>
+          <div class="col-auto">
+            <label class="form-label small mb-0">类型名称</label>
+            <input type="text" name="type_name" class="form-control form-control-sm" placeholder="自动匹配" style="width:130px">
+          </div>
+          <div class="col-auto">
+            <button type="submit" class="btn btn-sm btn-primary" id="btnUpload">📤 上传并解析</button>
+          </div>
+        </div>
+      </form>
+      <div id="uploadStatus" class="mt-2 small" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- 模板列表 -->
+  <div class="card">
+    <div class="card-header py-1"><strong>📋 已上传模板</strong> <span class="badge bg-secondary" id="templateCount">{{ templates|length }}</span></div>
+    <div class="card-body p-0">
+      <table class="table table-sm table-hover mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>dcid</th>
+            <th>type_id</th>
+            <th>类型名称</th>
+            <th>文件名</th>
+            <th>大小</th>
+            <th>Schema Hash</th>
+            <th>状态</th>
+            <th>上传日期</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in templates %}
+          <tr>
+            <td>{% if t.dcid %}<code>{{ t.dcid }}</code>{% else %}<span class="badge bg-warning text-dark">未绑定</span>{% endif %}</td>
+            <td>{% if t.type_id %}<code>{{ t.type_id }}</code>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+            <td>{{ t.type_name or '-' }}</td>
+            <td><small>{{ t.original_filename }}</small></td>
+            <td>{{ (t.file_size_bytes // 1024) if t.file_size_bytes else '-' }} KB</td>
+            <td><small class="text-muted" title="{{ t.schema_hash }}">{{ t.schema_hash }}</small></td>
+            <td>
+              {% if t.status == 'active' %}
+              <span class="badge bg-success">active</span>
+              {% else %}
+              <span class="badge bg-secondary">outdated</span>
+              {% endif %}
+            </td>
+            <td><small>{{ t.created_at.strftime('%m-%d %H:%M') if t.created_at else '' }}</small></td>
+            <td>
+              {% if not t.dcid and not t.type_id %}
+              <button class="btn btn-sm btn-outline-primary" style="font-size:10px;padding:0 4px"
+                      onclick="showBindForm({{ t.id }}, this)" title="绑定类目">🔗</button>
+              {% endif %}
+              <button class="btn btn-sm btn-outline-danger" style="font-size:10px;padding:0 4px"
+                      onclick="deleteTemplate({{ t.id }}, '{{ t.original_filename }}')">🗑</button>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="9" class="text-muted text-center py-3">暂无模板。请上传 OZON 官方 Excel 模板。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 从 URL 参数自动填充 dcid / type_id（适配工作台跳转时带入）
+(function(){
+  var params = new URLSearchParams(window.location.search);
+  var dcid = params.get('dcid');
+  var typeId = params.get('type_id');
+  var typeName = params.get('type_name');
+  if(dcid) document.querySelector('input[name="dcid"]').value = dcid;
+  if(typeId) document.querySelector('input[name="type_id"]').value = typeId;
+  if(typeName) document.querySelector('input[name="type_name"]').value = typeName;
+})();
+
+document.getElementById('uploadForm').addEventListener('submit', function(e){
+  e.preventDefault();
+  var btn = document.getElementById('btnUpload');
+  var status = document.getElementById('uploadStatus');
+  btn.disabled = true; btn.textContent = '上传解析中...';
+  status.style.display = 'none';
+
+  var fd = new FormData(this);
+  fetch('/ozon/api/excel-templates/upload', {
+    method: 'POST',
+    body: fd
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    status.style.display = '';
+    if(d.ok){
+      var msg = '✅ ' + d.message + ' — 表头 ' + d.headers_count + ' 列，必填 ' + d.required_count + ' 列，Hash: ' + d.schema_hash;
+      if(d.auto_detected){
+        var methodLabel = d.detect_method === 'schema_hash' ? '📋 已有模板匹配' : '🧠 属性名智能识别';
+        var confStr = d.detect_confidence ? '（置信度 ' + d.detect_confidence + '%）' : '';
+        msg += '<br>🔍 ' + methodLabel + confStr + '：dcid=<code>' + d.dcid + '</code> type_id=<code>' + d.type_id + '</code>';
+        if(d.type_name) msg += ' (' + d.type_name + ')';
+      } else if(d.is_unbound){
+        msg += '<br>⚠️ 未能自动识别类目。可从<a href="/ozon/adaptation">适配工作台</a>跳转重新上传以绑定，或点击列表中的 🔗 按钮手动绑定。';
+      }
+      status.innerHTML = '<div class="alert alert-success py-1 mb-0">' + msg + '</div>';
+      setTimeout(function(){ location.reload(); }, d.is_unbound ? 3000 : 1500);
+    } else {
+      status.innerHTML = '<div class="alert alert-danger py-1 mb-0">❌ ' + (d.error || '上传失败') + '</div>';
+    }
+  })
+  .catch(function(err){
+    status.style.display = '';
+    status.innerHTML = '<div class="alert alert-danger py-1 mb-0">❌ 上传失败：' + (err.message || err) + '</div>';
+  })
+  .finally(function(){
+    btn.disabled = false; btn.textContent = '📤 上传并解析';
+  });
+});
+
+function deleteTemplate(id, name){
+  if(!confirm('确认删除模板「' + name + '」？')) return;
+  fetch('/ozon/api/excel-templates/' + id + '/delete', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'}
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if(d.ok){ location.reload(); }
+    else { alert(d.error || '删除失败'); }
+  });
+}
+
+// ── 绑定类目（未绑定模板）──
+var bindRow = null;
+var bindTmplId = null;
+
+function showBindForm(tmplId, btn){
+  // 移除旧表单
+  if(bindRow){ bindRow.remove(); bindRow = null; }
+  bindTmplId = tmplId;
+  var tr = btn.closest('tr');
+  bindRow = document.createElement('tr');
+  bindRow.id = 'bindRow';
+  bindRow.innerHTML =
+    '<td colspan="9" style="background:#fff3cd;padding:6px 8px">' +
+      '<div class="d-flex align-items-center gap-2">' +
+        '<strong class="small text-nowrap">🔗 绑定类目：</strong>' +
+        '<input type="text" id="bindDcid" class="form-control form-control-sm" placeholder="dcid" style="width:110px">' +
+        '<input type="text" id="bindTypeId" class="form-control form-control-sm" placeholder="type_id" style="width:110px">' +
+        '<input type="text" id="bindTypeName" class="form-control form-control-sm" placeholder="类型名称(可选)" style="width:130px">' +
+        '<button class="btn btn-sm btn-success" onclick="doBind()">✅ 保存</button>' +
+        '<button class="btn btn-sm btn-outline-secondary" onclick="cancelBind()">取消</button>' +
+        '<span class="text-muted" style="font-size:10px">从<a href="/ozon/adaptation" target="_blank">适配工作台</a>选类目可查看 dcid/type_id</span>' +
+      '</div>' +
+    '</td>';
+  tr.parentNode.insertBefore(bindRow, tr.nextSibling);
+}
+
+function cancelBind(){
+  if(bindRow){ bindRow.remove(); bindRow = null; }
+  bindTmplId = null;
+}
+
+function doBind(){
+  var dcid = document.getElementById('bindDcid').value.trim();
+  var typeId = document.getElementById('bindTypeId').value.trim();
+  var typeName = document.getElementById('bindTypeName').value.trim();
+  if(!dcid || !typeId){ alert('请填写 dcid 和 type_id'); return; }
+  fetch('/ozon/api/excel-templates/' + bindTmplId + '/bind', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({dcid: dcid, type_id: typeId, type_name: typeName})
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if(d.ok){ location.reload(); }
+    else { alert(d.error || '绑定失败'); }
+  })
+  .catch(function(err){ alert('请求失败：' + (err.message || err)); });
+}
+</script>
+{% endblock %}

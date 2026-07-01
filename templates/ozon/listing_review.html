@@ -28,6 +28,11 @@
 .video-item input { font-size:10px; }
 /* 预览折叠 */
 .rich-preview-collapsed::after { content:"";position:absolute;left:0;right:0;bottom:0;height:36px;background:linear-gradient(to bottom,transparent,#fff);pointer-events:none; }
+/* 视频内联预览 */
+.video-preview-panel { border: 1px solid #dee2e6; border-radius: 6px; padding: 8px; background: #f8f9fa; }
+.video-preview-cover { display: block; max-width: 180px; max-height: 100px; object-fit: cover; border-radius: 4px; margin-bottom: 6px; }
+.video-preview-player { display: block; width: 100%; max-height: 260px; background: #000; border-radius: 4px; }
+.video-preview-fallback { margin-top: 4px; font-size: 10px; }
 </style>
 
 <!-- 顶部状态栏 -->
@@ -38,13 +43,37 @@
   </div>
   <div class="d-flex gap-2 align-items-center flex-wrap">
     <span class="badge {% if draft.status=='draft' %}bg-secondary{% elif draft.status=='needs_review' %}bg-warning text-dark{% elif draft.status=='approved' %}bg-success{% else %}bg-info{% endif %}">{{ draft.status or 'draft' }}</span>
+    <select id="targetAccountId" class="form-select form-select-sm" style="width:160px;font-size:11px">
+      <option value="">🏪 选择目标店铺</option>
+      {% for acc in accounts %}
+      <option value="{{ acc.id }}" {% if draft.account and draft.account.id == acc.id %}selected{% elif accounts|length == 1 and not draft.account %}selected{% endif %}>{{ acc.name }}</option>
+      {% endfor %}
+    </select>
   </div>
   <div class="d-flex gap-1 flex-wrap mt-1">
     <button class="btn btn-sm btn-outline-secondary" onclick="saveDraftForm()">💾 保存草稿</button>
     <button class="btn btn-sm btn-outline-primary" onclick="saveDraftAndReturn()">📋 保存并返回</button>
     <button class="btn btn-sm btn-success" onclick="autoFillDraftAll()">🤖 根据采集资料自动填写</button>
-    <button class="btn btn-sm btn-warning" onclick="validateDraft()">🔍 发布前校验</button>
+    <button class="btn btn-sm btn-primary" onclick="approveDraft()" id="btnApproveTop">✅ 审核通过</button>
     <button class="btn btn-sm btn-danger" onclick="publishToOzon()" id="btnPublish" disabled>🚀 发布到OZON</button>
+  </div>
+  <div id="publishStatus" class="mt-2 small" style="display:none"></div>
+  <div id="templateExportSection" class="d-none border-top pt-2 mt-2">
+    <small class="text-muted d-block mb-1">📊 OZON 官方模板 Excel 发布通道（备选）</small>
+    <button class="btn btn-sm btn-outline-success me-1" onclick="generateTemplateExcel()" id="btnGenerateExcel">
+      📥 生成 OZON 模板 Excel
+    </button>
+    <span id="templateExportStatus" class="small" style="display:none"></span>
+    <button class="btn btn-sm btn-outline-info me-1 d-none" id="btnDownloadExcel" onclick="downloadLastExport()">
+      ⬇️ 下载上次导出
+    </button>
+    <div id="exportResultMarkSection" class="mt-1 d-none">
+      <span class="small me-1">标记结果：</span>
+      <button class="btn btn-sm btn-outline-success me-1" style="font-size:10px" onclick="markExportResult('published')">✅ 已发布</button>
+      <button class="btn btn-sm btn-outline-warning me-1" style="font-size:10px" onclick="markExportResult('validated')">🔍 已验证</button>
+      <button class="btn btn-sm btn-outline-danger me-1" style="font-size:10px" onclick="markExportResult('errors')">❌ 有错误</button>
+      <button class="btn btn-sm btn-outline-secondary" style="font-size:10px" onclick="markExportResult('needs_fix')">🔧 需修复</button>
+    </div>
   </div>
 </div>
 
@@ -125,7 +154,10 @@
         <!-- Tab 3: SKU/价格 -->
         <div id="tab-sku" class="d-none">
           <!-- 第一层：SKU 基础信息 -->
-          <div class="mb-2"><b style="font-size:11px">📦 SKU 基础信息</b></div>
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <b style="font-size:11px">📦 SKU 基础信息</b>
+            <button type="button" class="btn btn-sm btn-outline-primary" id="btnBatchGenerateOfferId" style="font-size:9px">🎲 批量生成 offer_id</button>
+          </div>
           <table class="table table-sm" style="font-size:11px">
             <thead>
               <tr>
@@ -141,14 +173,19 @@
             <tbody>
             {% if draft.draft_skus.count() %}
             {% for sku in draft.draft_skus %}
-              <tr>
-                <td><input type="checkbox" checked title="刊登此SKU"></td>
-                <td><input class="form-control form-control-sm" value="{{ sku.source_sku_name }}" readonly style="font-size:10px;width:150px"></td>
-                <td><input class="form-control form-control-sm" name="offer_id_{{ sku.id }}" value="{{ sku.offer_id or '' }}" style="font-size:10px;width:100px" placeholder="offer_id"></td>
-                <td><input class="form-control form-control-sm" name="bundle_qty_{{ sku.id }}" value="{{ sku.bundle_quantity or 1 }}" type="number" style="font-size:10px;width:60px"></td>
-                <td><input class="form-control form-control-sm" name="barcode_{{ sku.id }}" value="{{ sku.barcode or '' }}" style="font-size:10px;width:100px" placeholder="条码"></td>
-                {% if color_attr %}<td><input class="form-control form-control-sm" name="color_ru_{{ sku.id }}" value="{{ sku.color_ru or '' }}" style="font-size:10px;width:80px"></td>{% endif %}
-                <td><input class="form-control form-control-sm" name="style_ru_{{ sku.id }}" value="{{ sku.style_ru or '' }}" style="font-size:10px;width:80px"></td>
+              <tr class="sku-row" data-sku-id="{{ sku.id }}">
+                <td><input type="checkbox" class="sku-publish-checkbox" checked title="刊登此SKU"></td>
+                <td><input class="form-control form-control-sm source-sku-input" value="{{ sku.source_sku_name }}" readonly style="font-size:10px;width:150px"></td>
+                <td>
+                  <div class="input-group input-group-sm">
+                    <input class="form-control form-control-sm offer-id-input" name="offer_id_{{ sku.id }}" value="{{ sku.offer_id or '' }}" style="font-size:10px;width:80px" placeholder="offer_id">
+                    <button type="button" class="btn btn-outline-primary btn-generate-offer-id" style="font-size:9px;padding:1px 3px" title="随机生成">🎲</button>
+                  </div>
+                </td>
+                <td><input class="form-control form-control-sm sku-quantity-input" name="bundle_qty_{{ sku.id }}" value="{{ sku.bundle_quantity or 1 }}" type="number" style="font-size:10px;width:60px"></td>
+                <td><input class="form-control form-control-sm sku-barcode-input" name="barcode_{{ sku.id }}" value="{{ sku.barcode or '' }}" style="font-size:10px;width:100px" placeholder="条码"></td>
+                {% if color_attr %}<td><input class="form-control form-control-sm sku-color-input" name="color_ru_{{ sku.id }}" value="{{ sku.color_ru or '' }}" style="font-size:10px;width:80px"></td>{% endif %}
+                <td><input class="form-control form-control-sm sku-style-input" name="style_ru_{{ sku.id }}" value="{{ sku.style_ru or '' }}" style="font-size:10px;width:80px"></td>
               </tr>
             {% endfor %}
             {% else %}
@@ -162,7 +199,7 @@
             <div class="row mb-2">
               <div class="col-4">
                 <b>OZON刊登币种:</b>
-                <select class="form-select form-select-sm d-inline" style="width:100px;font-size:10px" name="listing_currency">
+                <select class="form-select form-select-sm d-inline" id="ozonCurrency" style="width:100px;font-size:10px" name="listing_currency">
                   {% set saved_currency = (pricing or {}).get('listing_currency', 'RUB') if pricing else 'RUB' %}
                   <option value="RUB" {% if saved_currency == 'RUB' %}selected{% endif %}>₽ RUB</option>
                   <option value="CNY" {% if saved_currency == 'CNY' %}selected{% endif %}>¥ CNY</option>
@@ -176,12 +213,12 @@
               </div>
               <div class="col-4">
                 <b>OZON刊登价:</b><br>
-                <input class="form-control form-control-sm" name="listing_price" value="{{ (pricing or {}).get('listing_price', '') if pricing else '' }}" placeholder="请输入刊登价" style="font-size:10px;width:100px">
+                <input class="form-control form-control-sm" id="ozonListingPrice" name="listing_price" value="{{ (pricing or {}).get('listing_price', '') if pricing else '' }}" placeholder="请输入刊登价" style="font-size:10px;width:100px">
               </div>
             </div>
             <div class="form-check">
-              <input class="form-check-input" type="checkbox" name="price_manual_confirmed" value="1" id="chkPriceConfirm" {% if draft.price_manual_confirmed %}checked{% endif %}>
-              <label class="form-check-label" for="chkPriceConfirm" style="font-size:10px">我已确认价格</label>
+              <input class="form-check-input" type="checkbox" name="price_manual_confirmed" value="1" id="priceManualConfirmed" {% if draft.price_manual_confirmed %}checked{% endif %}>
+              <label class="form-check-label" for="priceManualConfirmed" style="font-size:10px">我已确认价格</label>
             </div>
             <small class="text-muted">采集价仅作参考，刊登价为实际上传OZON价格</small>
           </div>
@@ -206,38 +243,65 @@
           </div>
           <input type="file" id="imgUploadInput" style="display:none" accept="image/*" multiple onchange="uploadDraftImages(this.files)">
 
-          <!-- 采集图片网格（可折叠） -->
-          <div class="mb-2">
-            <div class="d-flex justify-content-between align-items-center" onclick="toggleSection('srcImgGrid')" style="cursor:pointer">
-              <b style="font-size:11px">📷 采集图片 ({{ source_media|length if source_media else 0 }})</b>
-              <small class="text-muted">▼</small>
+          <!-- 商品主图图集 — 全部 role=main，封面仅 1 张 -->
+          <div class="mb-3">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <b style="font-size:12px">📷 商品主图图集 <span id="mainImgCount">({% if media.images %}{{ media.images|selectattr('selected','equalto',true)|selectattr('role','equalto','main')|list|length }}{% else %}{{ source_media_main|length }}{% endif %})</span></b>
+              <small class="text-muted" style="font-size:9px">拖动调整顺序，第一张为封面图</small>
             </div>
-            <div id="srcImgGrid" class="d-flex flex-wrap gap-1 mt-1" style="max-height:200px;overflow-y:auto">
-              {% if source_media is defined %}
-              {% for m in source_media[:16] %}
-              <div class="text-center src-img-card" style="position:relative;cursor:pointer" onclick="toggleSrcImageSelect(this,'{{ m.source_url or m.local_path or '' }}','{{ m.role or 'gallery' }}')">
-                <img src="{{ m.source_url or m.local_path }}" style="width:70px;height:70px;object-fit:cover;border-radius:4px;border:2px solid #ddd" onerror="this.style.display='none'" title="{{ m.role }}">
-                <div style="font-size:8px;color:#666">{{ m.role }}</div>
+            <div id="mainImageGrid" class="d-flex flex-wrap gap-2">
+              {% if not media.images %}
+              {% for m in source_media_main %}
+              <div class="media-img-card{{ ' is-main' if loop.first else '' }}" style="width:90px">
+                <img src="{{ m.source_url or m.local_path }}" style="width:80px;height:80px;object-fit:cover;display:block" onerror="this.style.display='none'">
+                <span class="media-badge">采集</span>
+                <span class="media-badge" style="right:auto;left:2px;background:#0d6efd">主图</span>{% if loop.first %}<span class="media-badge" style="right:auto;left:32px;background:#fd7e14">封面</span>{% endif %}
+                <div class="media-actions">
+                  <button type="button" style="font-size:7px;padding:1px 4px;line-height:1.2" onclick="quickImportImage('{{ m.source_url or m.local_path or '' }}','main',{{ m.id }},{{ 'true' if loop.first else 'false' }})">✓ 选用</button>
+                </div>
               </div>
               {% endfor %}
+              {% if not source_media_main %}<div class="text-muted" style="font-size:10px">暂无主图，请导入或上传</div>{% endif %}
               {% endif %}
             </div>
           </div>
 
-          <!-- 草稿已选图片 -->
-          <div class="mb-2">
-            <b style="font-size:11px">✅ 草稿已选图片 <span id="selectedImgCount">(0)</span></b>
-            <div id="draftImagePool" class="d-flex flex-wrap gap-2 mt-1">
-              <!-- JS 动态渲染 -->
-              <div class="text-muted" style="font-size:10px" id="noImgPlaceholder">暂无已选图片，请从上方导入或上传</div>
+          <!-- SKU 图片 -->
+          <div class="mb-3">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <b style="font-size:12px">🎨 SKU 图片 <span id="skuImgCount">({% if media.images %}{{ media.images|selectattr('selected','equalto',true)|selectattr('role','equalto','sku')|list|length }}{% else %}{{ source_media_sku|length }}{% endif %})</span></b>
+            </div>
+            <div id="skuImageGrid" class="d-flex flex-wrap gap-2">
+              {% if not media.images %}
+              {% for m in source_media_sku %}
+              <div class="media-img-card" style="width:90px">
+                <img src="{{ m.source_url or m.local_path }}" style="width:80px;height:80px;object-fit:cover;display:block" onerror="this.style.display='none'">
+                <span class="media-badge">采集</span>
+                <span class="media-badge" style="right:auto;left:2px;background:#198754">SKU</span>
+                <div class="media-actions">
+                  <button type="button" style="font-size:7px;padding:1px 4px;line-height:1.2" onclick="quickImportImage('{{ m.source_url or m.local_path or '' }}','sku',{{ m.id }},false)">✓ 选用</button>
+                </div>
+              </div>
+              {% endfor %}
+              {% if not source_media_sku %}<div class="text-muted" style="font-size:10px">暂无 SKU 图</div>{% endif %}
+              {% endif %}
             </div>
           </div>
+
+          <!-- 富文本详情图提示 -->
+          {% if source_media_rich|length %}
+          <div class="mb-2 p-1 rounded" style="font-size:10px;background:#f0f7ff;border:1px solid #b6d4fe">
+            📄 详情图 ({{ source_media_rich|length }} 张) 已交由<a href="#" onclick="document.querySelector('.lr-tab-btn[data-tab=tab-rich]').click()">富文本 tab</a>使用，不在此展示
+          </div>
+          {% endif %}
 
           <!-- 草稿视频 -->
           <div class="mb-2">
             <div class="d-flex justify-content-between align-items-center">
               <b style="font-size:11px">🎬 草稿视频 <span id="videoCount">(0)</span></b>
-              <button class="btn btn-sm btn-outline-secondary" style="font-size:9px" onclick="addVideo()">+ 添加视频</button>
+              <span id="videoSaveStatus" style="font-size:9px;color:#28a745;display:none"></span>
+              <button type="button" class="btn btn-sm btn-outline-secondary" style="font-size:9px" onclick="addVideo()">+ 添加视频</button>
+              <button type="button" class="btn btn-sm btn-outline-primary" style="font-size:9px" onclick="saveMediaPool()">💾 保存视频设置</button>
             </div>
             <div id="draftVideoPool" class="mt-1">
               <!-- JS 动态渲染 -->
@@ -312,22 +376,22 @@
       <div class="card-header py-1"><strong style="font-size:12px">✅ 审核状态</strong></div>
       <div class="card-body p-2" style="font-size:11px">
         <div class="mb-2"><b>发布前校验</b></div>
-        {% if validation %}
-        {% for item in validation.get('checks', [])[:10] %}
+        <div id="validationChecks">
+        {% if validation and validation.get('checks') %}
+        {% for item in validation.get('checks', [])[:20] %}
         <div class="mb-1 {% if item.pass %}text-success{% elif item.blocking %}text-danger{% else %}text-warning{% endif %}">
           {% if item.pass %}✅{% elif item.blocking %}❌{% else %}⚠️{% endif %} {{ item.label }}
         </div>
         {% endfor %}
         {% else %}
-        <div class="text-muted">点击"发布前校验"查看</div>
+        <div class="text-muted">点击"审核通过"自动校验</div>
         {% endif %}
+        </div>
         <hr>
         <div class="d-flex gap-2">
-          <button class="btn btn-sm btn-warning flex-grow-1" onclick="validateDraft()">🔍 校验</button>
-          <form method="POST" action="{{ url_for('ozon.listing_approve', draft_id=draft.id) }}" class="flex-grow-1">
-            <button class="btn btn-sm btn-success w-100">✅ 审核通过</button>
-          </form>
+          <button class="btn btn-sm btn-success flex-grow-1" onclick="approveDraft()" id="btnApproveDraft">✅ 审核通过</button>
         </div>
+        <div id="validationResult" class="mt-2"></div>
       </div>
     </div>
   </div>
@@ -387,6 +451,12 @@ function escapeAttr(v) {
 function jsArg(v) {
   return JSON.stringify(String(v || ''));
 }
+async function safeJson(resp){
+  var text = await resp.text();
+  try { return JSON.parse(text); } catch(e) {
+    return { ok: false, error: text.indexOf('<!doctype')!==-1 || text.indexOf('<html')!==-1 ? '服务器内部错误，请查看后台日志' : text };
+  }
+}
 var DRAFT_ID = {{ draft.id }};
 var RICH_SOURCE = {{ raw.rich_text|tojson if raw and raw.rich_text else '{}' }};
 var SOURCE_MEDIA_IMGS = {{ source_media_json|tojson }};
@@ -396,17 +466,399 @@ var MEDIA_POOL = {{ media|tojson }};
 {% if color_attr %}var DRAFT_COLOR_ATTR = {{ color_attr|tojson }};{% else %}var DRAFT_COLOR_ATTR = null;{% endif %}
 
 // ═══ 通用 ═══
-function saveDraftForm(){ document.getElementById('draftForm').submit(); }
+async function saveDraftForm(){
+  await saveMediaPoolQuiet();
+  await saveAllDraftData();
+  location.reload();
+}
 function showDraftModal(title,body){var m=document.createElement('div');m.id='draftModal';m.innerHTML='<div style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1050;display:flex;align-items:center;justify-content:center" onclick="if(event.target===this)closeDraftModal()"><div style="background:#fff;border-radius:8px;padding:16px;max-width:700px;width:95%;max-height:90vh;overflow:auto"><h6>'+title+'</h6>'+body+'</div></div>';document.body.appendChild(m);}
 function closeDraftModal(){var m=document.getElementById('draftModal');if(m)m.remove();}
 function toggleSection(id){var el=document.getElementById(id);if(el)el.style.display=el.style.display==='none'?'':'none';}
 
 function saveDraftAndReturn(){ saveDraftForm(); setTimeout(function(){ window.location.href='/ozon/adaptation'; },800); }
-function publishToOzon(){
-  if(!confirm('确认发布到OZON?请确保已完成发布前校验'))return;
-  location.href='/ozon/listings/'+DRAFT_ID+'/publish';
+
+// ═══ 审核通过 — 先保存再校验，不刷新页面 ═══
+function collectSkuData(){
+  var rows = document.querySelectorAll('.sku-row');
+  var skus = [];
+  rows.forEach(function(row){
+    skus.push({
+      sku_id: row.dataset.skuId || '',
+      publish: row.querySelector('.sku-publish-checkbox') ? row.querySelector('.sku-publish-checkbox').checked : true,
+      source_sku: row.querySelector('.source-sku-input') ? row.querySelector('.source-sku-input').value : '',
+      offer_id: row.querySelector('.offer-id-input') ? row.querySelector('.offer-id-input').value.trim() : '',
+      quantity: row.querySelector('.sku-quantity-input') ? row.querySelector('.sku-quantity-input').value : '',
+      barcode: row.querySelector('.sku-barcode-input') ? row.querySelector('.sku-barcode-input').value : '',
+      color: row.querySelector('.sku-color-input') ? row.querySelector('.sku-color-input').value : '',
+      style: row.querySelector('.sku-style-input') ? row.querySelector('.sku-style-input').value : ''
+    });
+  });
+  return skus;
 }
-function validateDraft(){ location.href='/ozon/listings/'+DRAFT_ID+'/validate'; }
+
+function collectPricingData(){
+  return {
+    currency: document.getElementById('ozonCurrency') ? document.getElementById('ozonCurrency').value : '',
+    ozon_price: document.getElementById('ozonListingPrice') ? document.getElementById('ozonListingPrice').value : '',
+    price_manual_confirmed: document.getElementById('priceManualConfirmed') ? document.getElementById('priceManualConfirmed').checked : false
+  };
+}
+
+function collectContentData(){
+  var form = document.getElementById('draftForm');
+  if(!form) return {};
+  var fd = new FormData(form);
+  var data = {};
+  for(var pair of fd.entries()){
+    data[pair[0]] = pair[1];
+  }
+  return data;
+}
+
+function collectFullDraftPayload(){
+  return {
+    account_id: document.getElementById('targetAccountId') ? document.getElementById('targetAccountId').value : '',
+    content: collectContentData(),
+    skus: collectSkuData(),
+    pricing: collectPricingData(),
+    media: MEDIA_POOL || {},
+    rich_content: RICH_BLOCKS || []
+  };
+}
+
+async function saveAllDraftData(){
+  var payload = collectFullDraftPayload();
+  var resp = await fetch('/ozon/api/draft/' + DRAFT_ID + '/save-all', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+  var data = await safeJson(resp);
+  if(!data.ok) throw new Error(data.error || '保存草稿失败');
+  return data;
+}
+
+function renderValidationResult(validation){
+  var container = document.getElementById('validationChecks');
+  if(!container) return;
+  var checks = (validation && validation.checks) ? validation.checks : [];
+  if(!checks.length){
+    container.innerHTML = '<div class="text-muted">无校验项</div>';
+    return;
+  }
+  var h = '';
+  for(var i=0;i<checks.length;i++){
+    var c = checks[i];
+    var icon = c.pass ? '✅' : (c.blocking ? '❌' : '⚠️');
+    var cls = c.pass ? 'text-success' : (c.blocking ? 'text-danger' : 'text-warning');
+    h += '<div class="mb-1 ' + cls + '">' + icon + ' ' + c.label;
+    if(c.detail) h += '<br><small>' + c.detail + '</small>';
+    h += '</div>';
+  }
+  container.innerHTML = h;
+}
+
+function updateDraftStatusBadge(status){
+  var badges = document.querySelectorAll('.badge');
+  badges.forEach(function(b){
+    if(status === 'approved'){ b.className = 'badge bg-success'; b.textContent = 'approved'; }
+    else if(status === 'published'){ b.className = 'badge bg-info'; b.textContent = 'published'; }
+    else if(status === 'publishing'){ b.className = 'badge bg-info text-dark'; b.textContent = 'publishing'; }
+    else if(status === 'needs_review'){ b.className = 'badge bg-warning text-dark'; b.textContent = 'needs_review'; }
+  });
+}
+
+async function approveDraft(){
+  var topBtn = document.getElementById('btnApproveTop');
+  var rightBtn = document.getElementById('btnApproveDraft');
+  function setBtns(disabled, text){
+    if(topBtn){ topBtn.disabled = disabled; if(text) topBtn.textContent = text; }
+    if(rightBtn){ rightBtn.disabled = disabled; if(text) rightBtn.textContent = text; }
+  }
+  setBtns(true, '保存并校验中...');
+
+  try {
+    // 1. 先保存所有页面数据
+    await saveAllDraftData();
+
+    // 2. 再执行审核通过（后端会校验）
+    var resp = await fetch('/ozon/api/draft/' + DRAFT_ID + '/approve', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'}
+    });
+    var data = await safeJson(resp);
+
+    // 3. 渲染校验结果
+    renderValidationResult(data.validation);
+
+    if(!data.ok){
+      alert(data.error || '还有必填项未完成，请按右侧提示补齐');
+      setBtns(false, '✅ 审核通过');
+      return;
+    }
+
+    updateDraftStatusBadge(data.status || 'approved');
+    // 启用发布按钮
+    var pubBtn = document.getElementById('btnPublish');
+    if(pubBtn) pubBtn.disabled = false;
+    alert('审核通过！草稿已保存，可以发布到 OZON。');
+
+  } catch(err){
+    alert(err.message || '审核失败');
+  } finally {
+    setBtns(false, '✅ 审核通过');
+  }
+}
+
+function publishToOzon(){
+  if(!document.getElementById('targetAccountId') || !document.getElementById('targetAccountId').value){
+    alert('请先在顶部选择目标店铺');
+    return;
+  }
+  if(!confirm('确认发布到OZON？发布前将自动保存并校验。')) return;
+  var btn = document.getElementById('btnPublish');
+  if(btn){ btn.disabled = true; btn.textContent = '保存并发布中...'; }
+
+  saveAllDraftData().then(function(){
+    return fetch('/ozon/api/draft/' + DRAFT_ID + '/approve', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'}
+    });
+  }).then(function(r){ return safeJson(r); }).then(function(data){
+    if(!data.ok){
+      renderValidationResult(data.validation);
+      alert(data.error || '校验未通过，无法发布');
+      if(btn){ btn.disabled = false; btn.textContent = '🚀 发布到OZON'; }
+      return;
+    }
+    // 校验通过，POST 调用发布接口
+    return fetch('/ozon/listings/' + DRAFT_ID + '/publish', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'}
+    });
+  }).then(function(r){
+    if(!r) return;
+    return safeJson(r);
+  }).then(function(data){
+    if(!data) return;
+    if(data.ok){
+      updateDraftStatusBadge('publishing');
+      if(btn){ btn.disabled = false; btn.textContent = '🔄 查询发布结果'; btn.onclick = checkPublishStatus; }
+      var accountSel = document.getElementById('targetAccountId');
+      var accountName = accountSel ? accountSel.options[accountSel.selectedIndex].text : '未选择';
+      var statusDiv = document.getElementById('publishStatus');
+      if(statusDiv){
+        statusDiv.style.display = '';
+        statusDiv.innerHTML = '<div class="alert alert-info py-1 mb-1">'
+          + '<strong>已提交 OZON 导入任务</strong><br>'
+          + '目标店铺：' + accountName + '<br>'
+          + 'Task ID: <code>' + (data.task_id || '') + '</code><br>'
+          + 'offer_id: <code>' + (data.offer_id || '') + '</code><br>'
+          + '<small>请确认店铺一致。可在 OZON 后台搜索 offer_id。</small>'
+          + '<div class="mt-1"><button class="btn btn-sm btn-outline-info me-1" onclick="checkPublishStatus()">🔍 查询处理结果</button>'
+          + '<button class="btn btn-sm btn-outline-secondary" onclick="lookupProduct()">🔎 按 offer_id 查商品</button></div>'
+          + '</div>';
+      }
+      alert(data.message || '已提交 OZON 导入任务');
+    } else {
+      renderValidationResult(data.validation);
+      alert(data.error || '发布失败');
+      if(btn){ btn.disabled = false; btn.textContent = '🚀 发布到OZON'; }
+    }
+  }).catch(function(err){
+    alert(err.message || '发布失败');
+    if(btn){ btn.disabled = false; btn.textContent = '🚀 发布到OZON'; }
+  });
+}
+
+// 保留旧 validateDraft 兼容性（已不再暴露按钮）
+function validateDraft(){ approveDraft(); }
+
+function checkPublishStatus(){
+  var btn = document.getElementById('btnPublish');
+  if(btn){ btn.disabled = true; btn.textContent = '查询中...'; }
+  fetch('/ozon/listings/' + DRAFT_ID + '/publish-status', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'}
+  })
+  .then(function(r){ return safeJson(r); })
+  .then(function(d){
+    var statusDiv = document.getElementById('publishStatus');
+    if(d.ok && d.status === 'published'){
+      updateDraftStatusBadge('published');
+      if(btn){ btn.disabled = true; btn.textContent = '已发布'; }
+      if(statusDiv){
+        var h = '<div class="alert alert-success py-1 mb-1">'
+          + '✅ <strong>OZON 商品导入成功</strong>'
+          + (d.offer_id ? '<br>offer_id: <code>' + d.offer_id + '</code>' : '')
+          + (d.product_id ? '<br>product_id: <code>' + d.product_id + '</code>' : '');
+        if(d.items){ h += renderItemStatusList(d.items); }
+        h += '<div class="mt-1"><button class="btn btn-sm btn-outline-secondary" onclick="lookupProduct()">🔎 按 offer_id 查商品</button></div></div>';
+        statusDiv.innerHTML = h;
+      }
+      alert(d.message || 'OZON 商品导入成功！');
+    } else if(d.ok && d.status === 'validated'){
+      if(btn){ btn.disabled = false; btn.textContent = '🔄 再次查询'; }
+      if(statusDiv){
+        var h = '<div class="alert alert-warning py-1 mb-1">'
+          + '⚠️ <strong>OZON 已验证通过，但商品暂未在列表出现</strong>'
+          + (d.offer_id ? '<br>offer_id: <code>' + d.offer_id + '</code>' : '')
+          + '<br><small>可能仍在同步、进入档案/准备销售、或被合并到已有商品。请稍后重试。</small>';
+        if(d.items){ h += renderItemStatusList(d.items); }
+        h += '<div class="mt-1"><button class="btn btn-sm btn-outline-info me-1" onclick="checkPublishStatus()">🔄 再次查询</button>'
+          + '<button class="btn btn-sm btn-outline-secondary" onclick="lookupProduct()">🔎 按 offer_id 查商品</button></div></div>';
+        statusDiv.innerHTML = h;
+      }
+      alert(d.message || 'OZON 验证通过，等待商品列表同步');
+    } else if(d.ok && d.status === 'processing'){
+      if(btn){ btn.disabled = false; btn.textContent = '🔄 再次查询'; }
+      if(statusDiv){
+        statusDiv.innerHTML = (statusDiv.innerHTML || '') + '<div class="alert alert-warning py-1 mb-1">⏳ OZON 仍在处理中</div>';
+      }
+      alert(d.message || '仍在处理中');
+    } else {
+      if(btn){ btn.disabled = false; btn.textContent = '🔄 再次查询'; }
+      if(statusDiv && d.errors){
+        var errList = d.errors.map(function(e){ return '<li>' + (typeof e==='string' ? (''+e).replace(/</g,'&lt;') : ((e.message||e.code||JSON.stringify(e))+'').replace(/</g,'&lt;')) + '</li>'; }).join('');
+        statusDiv.innerHTML += '<div class="alert alert-danger py-1 mb-1"><strong>❌ OZON 导入失败</strong><ul class="mb-0 small">' + errList + '</ul></div>';
+      }
+      alert(d.error || '查询失败');
+      console.log('publish-status:', d);
+    }
+  })
+  .catch(function(err){
+    if(btn){ btn.disabled = false; btn.textContent = '🔄 再次查询'; }
+    alert('查询失败：' + (err.message || err));
+  });
+}
+
+function renderItemStatusList(items){
+  if(!items || !items.length) return '';
+  var h = '<div class="mt-1 small"><strong>任务明细：</strong>';
+  for(var i=0;i<items.length;i++){
+    var it = items[i];
+    var icon = it.status==='imported'||it.status==='success'?'✅':(it.errors&&it.errors.length?'❌':'⏳');
+    h += '<br>' + icon + ' <code>' + (it.offer_id||'?') + '</code> → ' + it.status;
+    if(it.product_id) h += ' (pid:' + it.product_id + ')';
+  }
+  h += '</div>';
+  return h;
+}
+
+function lookupProduct(){
+  var statusDiv = document.getElementById('publishStatus');
+  if(statusDiv){
+    statusDiv.innerHTML += '<div class="text-muted small">查询 OZON 商品列表中...</div>';
+  }
+  fetch('/ozon/listings/' + DRAFT_ID + '/lookup-product', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'}
+  })
+  .then(function(r){ return safeJson(r); })
+  .then(function(d){
+    if(!d.ok){ alert(d.error); return; }
+    var sd = document.getElementById('publishStatus');
+    if(d.found && d.product){
+      var p = d.product;
+      if(sd){
+        sd.innerHTML += '<div class="alert alert-success py-1 mb-1 mt-1">'
+          + '🔍 <strong>OZON 商品列表已查到</strong><br>'
+          + '名称: ' + (p.name||'') + '<br>'
+          + 'offer_id: <code>' + (p.offer_id||'') + '</code><br>'
+          + 'product_id: <code>' + (p.product_id||'') + '</code><br>'
+          + '状态: ' + (p.status||'')
+          + '</div>';
+      }
+      alert(d.message);
+    } else {
+      if(sd){
+        sd.innerHTML += '<div class="alert alert-warning py-1 mb-1 mt-1">'
+          + '🔍 <strong>暂未查到</strong><br><small>' + (d.message||'') + '</small>'
+          + '</div>';
+      }
+      alert(d.message);
+    }
+  })
+  .catch(function(err){
+    alert('查询失败：' + (err.message || err));
+  });
+}
+
+
+var lastExportJobId = null;
+
+function showTemplateExportSection(){
+  // Show template export section when draft has type_id
+  if(typeof DRAFT_TID !== 'undefined' && DRAFT_TID){
+    var section = document.getElementById('templateExportSection');
+    if(section) section.classList.remove('d-none');
+  }
+}
+
+function generateTemplateExcel(){
+  var btn = document.getElementById('btnGenerateExcel');
+  if(btn){ btn.disabled = true; btn.textContent = '生成中...'; }
+  // First save all draft data
+  saveAllDraftData().then(function(){
+    return fetch('/ozon/api/draft/' + DRAFT_ID + '/generate-template-excel', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'}
+    });
+  })
+  .then(function(r){ return safeJson(r); })
+  .then(function(data){
+    if(data.ok){
+      lastExportJobId = data.job_id;
+      var statusSpan = document.getElementById('templateExportStatus');
+      if(statusSpan){
+        statusSpan.style.display = '';
+        if(data.validation_errors && data.validation_errors.length > 0){
+          statusSpan.innerHTML = '<span class="text-warning">⚠️ ' + data.message
+            + '<br><small>缺失字段：' + data.validation_errors.join('；') + '</small></span>';
+        } else {
+          statusSpan.innerHTML = '<span class="text-success">✅ ' + data.message + '</span>';
+        }
+      }
+      var dlBtn = document.getElementById('btnDownloadExcel');
+      if(dlBtn){
+        dlBtn.classList.remove('d-none');
+        dlBtn.setAttribute('data-url', data.download_url);
+      }
+      document.getElementById('exportResultMarkSection').classList.remove('d-none');
+      // Auto-download
+      window.open(data.download_url, '_blank');
+      if(btn){ btn.textContent = '📥 再次生成'; }
+    } else {
+      alert(data.error || '生成失败');
+    }
+  })
+  .catch(function(err){
+    alert('生成失败：' + (err.message || err));
+  })
+  .finally(function(){
+    if(btn){ btn.disabled = false; }
+  });
+}
+
+function downloadLastExport(){
+  var btn = document.getElementById('btnDownloadExcel');
+  var url = btn.getAttribute('data-url');
+  if(url) window.open(url, '_blank');
+}
+
+function markExportResult(result){
+  if(!lastExportJobId){ alert('请先生成模板 Excel'); return; }
+  fetch('/ozon/api/template-exports/' + lastExportJobId + '/mark-result', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({result: result})
+  })
+  .then(function(r){ return safeJson(r); })
+  .then(function(data){
+    if(data.ok){ alert(data.message); }
+    else { alert(data.error || '标记失败'); }
+  });
+}
 
 function autoFillDraftAll(){
   if(!confirm('将根据采集资料自动填写标题/卖点/描述/属性/媒体,确认?')) return;
@@ -492,153 +944,241 @@ function autoFillAttrsDraft(){
   .then(r=>r.json()).then(d=>{if(d.ok){alert('已应用 '+d.filled_count+' 项');loadDraftAttrs();}else alert(d.error);}).catch(e=>alert(e.message));
 }
 
-// ═══ 媒体池渲染 ═══
+// ═══ 媒体池渲染 — main(全部) + sku ═══
 function renderMediaPool(){
   var images = MEDIA_POOL.images || [];
   var videos = MEDIA_POOL.videos || [];
-  var selected = images.filter(function(i){ return i.selected; });
-  var selCountEl = document.getElementById('selectedImgCount');
-  var vidCountEl = document.getElementById('videoCount');
-  if(selCountEl) selCountEl.textContent = '('+selected.length+')';
-  if(vidCountEl) vidCountEl.textContent = '('+videos.length+')';
 
-  // ---- 已选图片：用 DOM API 避免 JS 字符串内嵌引号 ----
-  var pool = document.getElementById('draftImagePool');
-  if(!pool) return;
-  pool.innerHTML = '';
-  if(!selected.length){
-    pool.innerHTML = '<div class="text-muted" style="font-size:10px" id="noImgPlaceholder">暂无已选图片，请从上方导入或上传</div>';
-  } else {
-    selected.forEach(function(img,i){
-      var url = img.thumb_url || img.public_url || img.local_path || '';
-      var isMain = img.role === 'main';
-      var srcLabel = ({collected:'采集',uploaded:'上传',generated:'生成',external_url:'URL'})[img.source]||img.source;
+  var mainImgs = images.filter(function(i){ return i.selected && i.role === 'main'; })
+    .sort(function(a,b){ return (a.sort_order||0) - (b.sort_order||0); });
+  var skuImgs = images.filter(function(i){ return i.selected && i.role === 'sku'; });
 
-      var card = document.createElement('div');
-      card.className = 'media-img-card' + (isMain?' is-main':'') + ' selected';
-      card.style.width = '90px';
+  var mc = document.getElementById('mainImgCount');
+  var sc = document.getElementById('skuImgCount');
+  var vc = document.getElementById('videoCount');
+  if(mc) mc.textContent = '('+mainImgs.length+')';
+  if(sc) sc.textContent = '('+skuImgs.length+')';
+  if(vc) vc.textContent = '('+videos.length+')';
 
-      var imgEl = document.createElement('img');
-      imgEl.src = url;
-      imgEl.onerror = function(){ this.style.display = 'none'; };
-      (function(id){ imgEl.onclick = function(){ previewMediaImage(id); }; })(img.id);
-      card.appendChild(imgEl);
+  renderImageGrid('mainImageGrid', mainImgs);
+  renderImageGrid('skuImageGrid', skuImgs);
+  renderVideoPool();
+}
 
-      var b1 = document.createElement('span');
-      b1.className = 'media-badge';
-      b1.textContent = srcLabel;
-      card.appendChild(b1);
+function renderImageGrid(gridId, imgList){
+  var grid = document.getElementById(gridId);
+  if(!grid) return;
+  grid.innerHTML = '';
 
-      if(isMain){
-        var b2 = document.createElement('span');
-        b2.className = 'media-badge';
-        b2.style.cssText = 'right:auto;left:2px;background:#fd7e14';
-        b2.textContent = '★主图';
-        card.appendChild(b2);
-      }
+  var isMainGrid = gridId === 'mainImageGrid';
+  var emptyMsg = isMainGrid ? '暂无主图，请导入或上传' : '暂无 SKU 图';
 
-      var actions = document.createElement('div');
-      actions.className = 'media-actions';
-
-      function mkBtn(text,title,fn){
-        var b = document.createElement('button');
-        b.textContent = text;
-        b.title = title;
-        b.onclick = function(e){ e.stopPropagation(); fn(); };
-        return b;
-      }
-
-      actions.appendChild(mkBtn('★主图','设为主图',function(){ setMainImage(img.id); }));
-      actions.appendChild(mkBtn('✕','取消选择',function(){ toggleImageSelect(img.id); }));
-      actions.appendChild(mkBtn('附图','设为附图',function(){ setImageRole(img.id,'gallery'); }));
-      actions.appendChild(mkBtn('📄','用于富文本',function(){ useInRichText(img.id); }));
-
-      card.appendChild(actions);
-      pool.appendChild(card);
-    });
+  if(!imgList.length){
+    grid.innerHTML = '<div class="text-muted" style="font-size:10px">'+emptyMsg+'</div>';
+    return;
   }
 
-  // ---- 视频：用 DOM API ----
+  imgList.forEach(function(img,i){
+    var url = img.thumb_url || img.public_url || img.local_path || '';
+    var srcLabel = ({collected:'采集',uploaded:'上传',generated:'生成',external_url:'URL'})[img.source]||img.source;
+    var isCover = img.is_cover === true;
+    var isMainRole = img.role === 'main';
+
+    var card = document.createElement('div');
+    card.className = 'media-img-card' + (isCover?' is-main':'') + ' selected';
+    card.style.width = '90px';
+
+    // 主图支持拖动排序
+    if(isMainGrid){
+      card.draggable = true;
+      card.dataset.imgId = img.id;
+      card.style.cursor = 'grab';
+      card.addEventListener('dragstart', function(e){ onMainDragStart(e, img.id); });
+      card.addEventListener('dragover', function(e){ onMainDragOver(e); });
+      card.addEventListener('drop', function(e){ onMainDrop(e, img.id); });
+    }
+
+    var imgEl = document.createElement('img');
+    imgEl.src = url;
+    imgEl.onerror = function(){ this.style.display = 'none'; };
+    (function(id){ imgEl.onclick = function(){ previewMediaImage(id); }; })(img.id);
+    card.appendChild(imgEl);
+
+    // 来源标签
+    var bSrc = document.createElement('span');
+    bSrc.className = 'media-badge';
+    bSrc.textContent = srcLabel;
+    card.appendChild(bSrc);
+
+    // 主图标签（蓝色）
+    if(isMainRole){
+      var bMain = document.createElement('span');
+      bMain.className = 'media-badge';
+      bMain.style.cssText = 'right:auto;left:2px;background:#0d6efd';
+      bMain.textContent = '主图';
+      card.appendChild(bMain);
+    }
+
+    // 封面标签（橙色，覆盖在主图标签上方）
+    if(isCover){
+      var bCover = document.createElement('span');
+      bCover.className = 'media-badge';
+      bCover.style.cssText = 'right:auto;left:2px;background:#fd7e14';
+      bCover.textContent = '封面';
+      card.appendChild(bCover);
+    }
+
+    var actions = document.createElement('div');
+    actions.className = 'media-actions';
+
+    function mkBtn(text,title,fn){
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = text;
+      b.title = title;
+      b.onclick = function(e){ e.stopPropagation(); fn(); };
+      return b;
+    }
+
+    if(isMainGrid && !isCover){
+      actions.appendChild(mkBtn('封面','设为封面',function(){ setCoverImage(img.id); }));
+    }
+    actions.appendChild(mkBtn('⊘','停用',function(){ disableImage(img.id); }));
+    actions.appendChild(mkBtn('✕','删除',function(){ deleteImage(img.id); }));
+    actions.appendChild(mkBtn('📄','富文本',function(){ useInRichText(img.id); }));
+
+    card.appendChild(actions);
+    grid.appendChild(card);
+  });
+}
+
+function renderVideoPool(){
+  var videos = MEDIA_POOL.videos || [];
   var vpool = document.getElementById('draftVideoPool');
   if(!vpool) return;
   vpool.innerHTML = '';
   if(!videos.length){
     vpool.innerHTML = '<div class="text-muted" style="font-size:10px">暂无视频，点击"+ 添加视频"或使用"根据采集资料自动填写"导入</div>';
-  } else {
-    videos.forEach(function(v,i){
-      var item = document.createElement('div');
-      item.className = 'video-item';
-
-      var row = document.createElement('div');
-      row.className = 'row g-1 align-items-end';
-
-      function addInputCol(label, width, field){
-        var col = document.createElement('div');
-        col.className = 'col-'+width;
-        var lbl = document.createElement('label');
-        lbl.style.fontSize = '9px';
-        lbl.textContent = label;
-        col.appendChild(lbl);
-        var inp = document.createElement('input');
-        inp.className = 'form-control form-control-sm';
-        inp.style.fontSize = '10px';
-        inp.value = v[field] || '';
-        inp.onchange = function(){ updateVideoField(v.id, field, this.value); };
-        col.appendChild(inp);
-        return col;
-      }
-
-      row.appendChild(addInputCol('名称',3,'name'));
-      row.appendChild(addInputCol('链接',4,'url'));
-      row.appendChild(addInputCol('封面',3,'cover_url'));
-
-      var col4 = document.createElement('div');
-      col4.className = 'col-2';
-      var fc = document.createElement('div');
-      fc.className = 'form-check form-switch';
-      var cb = document.createElement('input');
-      cb.className = 'form-check-input';
-      cb.type = 'checkbox';
-      cb.id = 'vchk_'+v.id;
-      if(v.selected !== false) cb.checked = true;
-      cb.onchange = function(){ updateVideoField(v.id,'selected',this.checked); };
-      fc.appendChild(cb);
-      var cbl = document.createElement('label');
-      cbl.className = 'form-check-label';
-      cbl.style.fontSize = '9px';
-      cbl.setAttribute('for','vchk_'+v.id);
-      cbl.textContent = '使用';
-      fc.appendChild(cbl);
-      col4.appendChild(fc);
-      row.appendChild(col4);
-      item.appendChild(row);
-
-      var ar = document.createElement('div');
-      ar.className = 'mt-1 d-flex gap-1';
-      if(v.url){
-        var a = document.createElement('a');
-        a.href = v.url;
-        a.target = '_blank';
-        a.className = 'btn btn-sm btn-outline-info';
-        a.style.cssText = 'font-size:8px;padding:1px 4px';
-        a.textContent = '▶ 预览';
-        ar.appendChild(a);
-      }
-      var db = document.createElement('button');
-      db.className = 'btn btn-sm btn-outline-danger';
-      db.style.cssText = 'font-size:8px;padding:1px 4px';
-      db.textContent = '删除';
-      db.onclick = function(){ deleteVideo(v.id); };
-      ar.appendChild(db);
-      var si = document.createElement('small');
-      si.className = 'text-muted ms-1';
-      si.textContent = '来源:'+(v.source||'unknown');
-      ar.appendChild(si);
-      item.appendChild(ar);
-
-      vpool.appendChild(item);
-    });
+    return;
   }
+  videos.forEach(function(v,i){
+    var item = document.createElement('div');
+    item.className = 'video-item';
+
+    var row = document.createElement('div');
+    row.className = 'row g-1 align-items-end';
+
+    function addInputCol(label, width, field){
+      var col = document.createElement('div');
+      col.className = 'col-'+width;
+      var lbl = document.createElement('label');
+      lbl.style.fontSize = '9px';
+      lbl.textContent = label;
+      col.appendChild(lbl);
+      var inp = document.createElement('input');
+      inp.className = 'form-control form-control-sm';
+      inp.style.fontSize = '10px';
+      inp.value = v[field] || '';
+      inp.onchange = function(){ updateVideoField(v.id, field, this.value); };
+      col.appendChild(inp);
+      return col;
+    }
+
+    row.appendChild(addInputCol('名称',3,'name'));
+    row.appendChild(addInputCol('链接',4,'url'));
+    row.appendChild(addInputCol('封面',3,'cover_url'));
+
+    var col4 = document.createElement('div');
+    col4.className = 'col-2';
+    var fc = document.createElement('div');
+    fc.className = 'form-check form-switch';
+    var cb = document.createElement('input');
+    cb.className = 'form-check-input';
+    cb.type = 'checkbox';
+    cb.id = 'vchk_'+v.id;
+    if(v.selected !== false) cb.checked = true;
+    cb.onchange = function(){ updateVideoField(v.id,'selected',this.checked); };
+    fc.appendChild(cb);
+    var cbl = document.createElement('label');
+    cbl.className = 'form-check-label';
+    cbl.style.fontSize = '9px';
+    cbl.setAttribute('for','vchk_'+v.id);
+    cbl.textContent = '使用';
+    fc.appendChild(cbl);
+    col4.appendChild(fc);
+    row.appendChild(col4);
+    item.appendChild(row);
+
+    var ar = document.createElement('div');
+    ar.className = 'mt-1 d-flex gap-1';
+    if(v.url){
+      var previewBtn = document.createElement('button');
+      previewBtn.type = 'button';
+      previewBtn.className = 'btn btn-sm btn-outline-primary';
+      previewBtn.style.cssText = 'font-size:8px;padding:1px 4px';
+      previewBtn.textContent = '▶ 预览';
+      previewBtn.onclick = (function(vid){ return function(e){
+        e.preventDefault();
+        toggleVideoPreview(vid);
+      }; })(v.id);
+      ar.appendChild(previewBtn);
+
+      var openLink = document.createElement('a');
+      openLink.href = v.url;
+      openLink.target = '_blank';
+      openLink.rel = 'noopener noreferrer';
+      openLink.className = 'btn btn-sm btn-outline-info';
+      openLink.style.cssText = 'font-size:8px;padding:1px 4px';
+      openLink.textContent = '打开';
+      ar.appendChild(openLink);
+    }
+    var db = document.createElement('button');
+    db.type = 'button';
+    db.className = 'btn btn-sm btn-outline-danger';
+    db.style.cssText = 'font-size:8px;padding:1px 4px';
+    db.textContent = '删除';
+    db.onclick = function(){ deleteVideo(v.id); };
+    ar.appendChild(db);
+    var si = document.createElement('small');
+    si.className = 'text-muted ms-1';
+    si.textContent = '来源:'+(v.source||'unknown');
+    ar.appendChild(si);
+    item.appendChild(ar);
+
+    if(v.url){
+      var previewId = 'video_preview_' + safeDomId(v.id);
+      var preview = document.createElement('div');
+      preview.id = previewId;
+      preview.className = 'video-preview-panel mt-2';
+      preview.style.display = 'none';
+      if(v.cover_url){
+        var cover = document.createElement('img');
+        cover.src = v.cover_url;
+        cover.alt = v.name || '视频封面';
+        cover.className = 'video-preview-cover';
+        cover.onerror = function(){ this.style.display = 'none'; };
+        preview.appendChild(cover);
+      }
+      var videoEl = document.createElement('video');
+      videoEl.controls = true;
+      videoEl.preload = 'metadata';
+      videoEl.src = v.url;
+      videoEl.className = 'video-preview-player';
+      videoEl.textContent = '当前浏览器无法播放该视频，请使用下方链接打开。';
+      preview.appendChild(videoEl);
+      var fallback = document.createElement('div');
+      fallback.className = 'video-preview-fallback';
+      var fallbackLink = document.createElement('a');
+      fallbackLink.href = v.url;
+      fallbackLink.target = '_blank';
+      fallbackLink.rel = 'noopener noreferrer';
+      fallbackLink.textContent = '在新窗口打开视频';
+      fallback.appendChild(fallbackLink);
+      preview.appendChild(fallback);
+      item.appendChild(preview);
+    }
+    vpool.appendChild(item);
+  });
 }
 
 // ═══ 媒体操作 ═══
@@ -646,7 +1186,19 @@ function importMediaFromSource(){
   var btn = event.target; btn.disabled = true; btn.textContent = '导入中...';
   fetch('/ozon/api/draft/'+DRAFT_ID+'/media/import-from-source',{method:'POST'})
   .then(r=>r.json()).then(function(d){
-    if(d.ok){ MEDIA_POOL = d.media; renderMediaPool(); alert('已导入 '+d.images_imported+' 张图片, '+d.videos_imported+' 个视频'); }
+    if(d.ok){
+      MEDIA_POOL = d.media;
+      renderMediaPool();
+      var msg = '已导入 ' + d.images_imported + ' 张图片, ' + d.videos_imported + ' 个视频';
+      if (d.images_fixed_role) msg += '\n修正主图角色 ' + d.images_fixed_role + ' 张';
+      var skipped = [];
+      if (d.skipped_role) skipped.push('跳过无关图片 ' + d.skipped_role + ' 张');
+      if (d.skipped_duplicate) skipped.push('跳过重复图片 ' + d.skipped_duplicate + ' 张');
+      if (d.skipped_rejected) skipped.push('跳过不合规图片 ' + d.skipped_rejected + ' 张');
+      if (d.dirty_cleaned) skipped.push('清理历史脏数据 ' + d.dirty_cleaned + ' 张');
+      if (skipped.length) msg += '\n' + skipped.join('\n');
+      alert(msg);
+    }
     else alert(d.error||'失败');
   }).catch(e=>alert(e.message)).finally(function(){btn.disabled=false;btn.textContent='📥 从采集图片导入';});
 }
@@ -664,28 +1216,195 @@ function uploadDraftImages(files){
   }).catch(e=>alert(e.message));
 }
 
-function saveMediaPool(){
-  var btn = event.target; btn.disabled = true; btn.textContent = '保存中...';
-  fetch('/ozon/api/draft/'+DRAFT_ID+'/media/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({images:MEDIA_POOL.images,videos:MEDIA_POOL.videos})})
-  .then(r=>r.json()).then(function(d){if(d.ok){alert('媒体池已保存');MEDIA_POOL=d.media;}else alert(d.error);})
-  .catch(e=>alert(e.message)).finally(function(){btn.disabled=false;btn.textContent='💾 保存媒体池';});
+// ═══ 主图拖动排序 ═══
+var DRAGGING_IMG_ID = null;
+
+function onMainDragStart(e, imgId){
+  DRAGGING_IMG_ID = imgId;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', imgId);
 }
 
-function setMainImage(imgId){
-  MEDIA_POOL.images.forEach(function(i){ if(i.role==='main') i.role='gallery'; });
-  var img = findMediaImage(imgId);
-  if(img){ img.role='main'; img.selected=true; }
+function onMainDragOver(e){
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+}
+
+function onMainDrop(e, targetId){
+  e.preventDefault();
+  if(DRAGGING_IMG_ID && DRAGGING_IMG_ID !== targetId){
+    reorderMainImages(DRAGGING_IMG_ID, targetId);
+  }
+  DRAGGING_IMG_ID = null;
+}
+
+function reorderMainImages(fromId, toId){
+  if(!fromId || !toId || fromId === toId) return;
+
+  var mains = (MEDIA_POOL.images||[])
+    .filter(function(i){ return i.selected && i.role === 'main'; })
+    .sort(function(a,b){ return (a.sort_order||0) - (b.sort_order||0); });
+
+  var fromIdx = -1, toIdx = -1;
+  for(var i=0;i<mains.length;i++){
+    if(String(mains[i].id) === String(fromId)) fromIdx = i;
+    if(String(mains[i].id) === String(toId)) toIdx = i;
+  }
+  if(fromIdx < 0 || toIdx < 0) return;
+
+  var moved = mains.splice(fromIdx, 1)[0];
+  mains.splice(toIdx, 0, moved);
+
+  mains.forEach(function(img, idx){
+    img.sort_order = idx + 1;
+    img.is_cover = idx === 0;
+  });
+
   renderMediaPool();
 }
-function toggleImageSelect(imgId){
-  var img = findMediaImage(imgId);
-  if(img) img.selected = !img.selected;
+
+function normalizeMainImagesBeforeSave(){
+  var mains = (MEDIA_POOL.images||[])
+    .filter(function(i){ return i.selected && i.role === 'main'; })
+    .sort(function(a,b){ return (a.sort_order||0) - (b.sort_order||0); });
+
+  mains.forEach(function(img, idx){
+    img.sort_order = idx + 1;
+    img.is_cover = idx === 0;
+  });
+}
+
+function saveMediaPool(){
+  var btn = event.target; btn.disabled = true; btn.textContent = '保存中...';
+  normalizeMainImagesBeforeSave();
+  _doSaveMediaPool(btn, '💾 保存媒体池', true);
+}
+
+// 静默保存（视频/图片操作后自动触发，不弹 alert），返回 Promise 用于 await
+function saveMediaPoolQuiet(){
+  return _doSaveMediaPool(null, null, false);
+}
+
+function _doSaveMediaPool(btn, restoreText, showAlert){
+  normalizeMainImagesBeforeSave();
+  // 保存前暂存本地黑名单（避免服务器响应覆盖未同步的数据）
+  var localDeletedVid = MEDIA_POOL.deleted_video_urls || [];
+  var localDeletedImgIds = MEDIA_POOL.deleted_image_source_ids || [];
+  var localDeletedImgUrls = MEDIA_POOL.deleted_image_urls || [];
+  var payload = {
+    images: MEDIA_POOL.images,
+    videos: MEDIA_POOL.videos,
+    deleted_video_urls: localDeletedVid,
+    deleted_image_source_ids: localDeletedImgIds,
+    deleted_image_urls: localDeletedImgUrls
+  };
+  return fetch('/ozon/api/draft/'+DRAFT_ID+'/media/save',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(payload)
+  })
+  .then(r=>r.json())
+  .then(function(d){
+    if(d.ok){
+      MEDIA_POOL = d.media;
+      // 合并服务器黑名单与本地未同步黑名单
+      MEDIA_POOL.deleted_video_urls = MEDIA_POOL.deleted_video_urls || [];
+      MEDIA_POOL.deleted_image_source_ids = MEDIA_POOL.deleted_image_source_ids || [];
+      MEDIA_POOL.deleted_image_urls = MEDIA_POOL.deleted_image_urls || [];
+      if(showAlert) alert('媒体池已保存');
+      else { _flashVideoSaveStatus('✅ 已保存'); }
+    } else {
+      if(showAlert) alert(d.error);
+      else { _flashVideoSaveStatus('❌ ' + (d.error||'保存失败')); }
+    }
+  })
+  .catch(function(e){
+    if(showAlert) alert(e.message);
+    else { _flashVideoSaveStatus('❌ ' + (e.message||'网络错误')); }
+  })
+  .finally(function(){
+    if(btn){ btn.disabled = false; btn.textContent = restoreText; }
+  });
+}
+
+function _flashVideoSaveStatus(msg){
+  var el = document.getElementById('videoSaveStatus');
+  if(!el) return;
+  el.textContent = msg;
+  el.style.display = '';
+  clearTimeout(el._timeout);
+  el._timeout = setTimeout(function(){ el.style.display = 'none'; }, 2000);
+}
+
+function setCoverImage(imgId){
+  // 将目标图片移到主图第一位 → 自动成为封面
+  var mains = (MEDIA_POOL.images||[])
+    .filter(function(i){ return i.selected && i.role === 'main'; })
+    .sort(function(a,b){ return (a.sort_order||0) - (b.sort_order||0); });
+
+  var target = null, rest = [];
+  for(var i=0;i<mains.length;i++){
+    if(String(mains[i].id) === String(imgId)) target = mains[i];
+    else rest.push(mains[i]);
+  }
+  if(!target) return;
+
+  var reordered = [target].concat(rest);
+  reordered.forEach(function(img, idx){
+    img.sort_order = idx + 1;
+    img.is_cover = idx === 0;
+  });
+
   renderMediaPool();
+  saveMediaPoolQuiet();
 }
 function setImageRole(imgId,role){
   var img = findMediaImage(imgId);
-  if(img) img.role = role;
+  if(img){ img.role = role; img.selected = true; }
   renderMediaPool();
+  saveMediaPoolQuiet();
+}
+function disableImage(imgId){
+  var img = findMediaImage(imgId);
+  if(!img) return;
+  img.selected = false;
+  // 如果停用的是封面，自动将下一张 main 设为封面
+  if(img.is_cover && img.role === 'main'){
+    img.is_cover = false;
+    var mains = (MEDIA_POOL.images||[])
+      .filter(function(i){ return i.selected && i.role === 'main' && i.id !== imgId; })
+      .sort(function(a,b){ return (a.sort_order||0) - (b.sort_order||0); });
+    if(mains.length > 0) mains[0].is_cover = true;
+  }
+  renderMediaPool();
+  saveMediaPoolQuiet();
+}
+function deleteImage(imgId){
+  if(!confirm('确认从媒体池中删除此图片？')) return;
+  var wasCover = false;
+  var img = findMediaImage(imgId);
+  if(img && img.is_cover) wasCover = true;
+  if(img){
+    if(!MEDIA_POOL.deleted_image_source_ids) MEDIA_POOL.deleted_image_source_ids = [];
+    if(!MEDIA_POOL.deleted_image_urls) MEDIA_POOL.deleted_image_urls = [];
+    var smid = String(img.source_media_id||"");
+    if(smid && MEDIA_POOL.deleted_image_source_ids.indexOf(smid) < 0){
+      MEDIA_POOL.deleted_image_source_ids.push(smid);
+    }
+    var iurl = img.public_url || img.ozon_url || img.url || "";
+    if(iurl && MEDIA_POOL.deleted_image_urls.indexOf(iurl) < 0){
+      MEDIA_POOL.deleted_image_urls.push(iurl);
+    }
+  }
+  MEDIA_POOL.images = (MEDIA_POOL.images||[]).filter(function(i){return i.id!==imgId;});
+  if(wasCover){
+    var mains = (MEDIA_POOL.images||[])
+      .filter(function(i){ return i.selected && i.role === 'main'; })
+      .sort(function(a,b){ return (a.sort_order||0) - (b.sort_order||0); });
+    if(mains.length > 0) mains[0].is_cover = true;
+  }
+  renderMediaPool();
+  saveMediaPoolQuiet();
 }
 function previewMediaImage(imgId){
   var img = findMediaImage(imgId);
@@ -696,21 +1415,22 @@ function previewMediaImage(imgId){
 function findMediaImage(imgId){
   return (MEDIA_POOL.images||[]).find(function(i){return i.id===imgId;});
 }
+function hasMainImage(){
+  return (MEDIA_POOL.images||[]).some(function(i){return i.selected && i.role==='main';});
+}
 
-// 采集图片快捷选择
-function toggleSrcImageSelect(el,url,role){
-  el.classList.toggle('selected');
-  if(el.classList.contains('selected')){
-    var imgId = 'img_src_sel_'+Date.now()+'_'+Math.random().toString(36).slice(2,6);
-    MEDIA_POOL.images.push({
-      id:imgId, source:'collected', local_path:'', public_url:url, ozon_url:null,
-      thumb_url:url, filename:'', role:role||'gallery', selected:true,
-      sort_order:(MEDIA_POOL.images||[]).length+1, upload_status:'public_ready',
-      review_status:'pending', alt:'', width:null, height:null
-    });
-  } else {
-    MEDIA_POOL.images = (MEDIA_POOL.images||[]).filter(function(i){return i.public_url!==url;});
-  }
+function quickImportImage(url, role, sourceMediaId, isCover){
+  var imgId = 'img_src_'+sourceMediaId;
+  if(findMediaImage(imgId)) return;
+  // 如果设为首图，先取消其他 is_cover
+  if(isCover) MEDIA_POOL.images.forEach(function(i){ i.is_cover = false; });
+  MEDIA_POOL.images.push({
+    id: imgId, source: 'collected', source_media_id: sourceMediaId,
+    local_path: '', public_url: url, ozon_url: null,
+    thumb_url: url, filename: '', role: role, is_cover: !!isCover, selected: true,
+    sort_order: (MEDIA_POOL.images||[]).length+1, upload_status: 'public_ready',
+    review_status: 'pending', alt: '', width: null, height: null
+  });
   renderMediaPool();
 }
 
@@ -720,10 +1440,11 @@ function selectGeneratedImages(){
 function addImageUrl(){
   var url = prompt('请输入图片URL:');
   if(!url) return;
+  var hasCover = (MEDIA_POOL.images||[]).some(function(i){return i.selected && i.is_cover;});
   var imgId = 'img_url_'+Date.now();
   MEDIA_POOL.images.push({
     id:imgId, source:'external_url', local_path:'', public_url:url, ozon_url:null,
-    thumb_url:url, filename:'', role:'gallery', selected:true,
+    thumb_url:url, filename:'', role:'main', is_cover: !hasCover, selected:true,
     sort_order:(MEDIA_POOL.images||[]).length+1, upload_status:'public_ready',
     review_status:'pending', alt:'', width:null, height:null
   });
@@ -755,15 +1476,33 @@ function addVideo(){
   if(!MEDIA_POOL.videos) MEDIA_POOL.videos = [];
   MEDIA_POOL.videos.push(vid);
   renderMediaPool();
+  saveMediaPoolQuiet();
 }
 function updateVideoField(vidId, field, value){
   var v = (MEDIA_POOL.videos||[]).find(function(x){return x.id===vidId;});
-  if(v) v[field] = value;
+  if(v){ v[field] = value; saveMediaPoolQuiet(); }
 }
 function deleteVideo(vidId){
   if(!confirm('确认从草稿中移除此视频?')) return;
+  var deleted = (MEDIA_POOL.videos||[]).find(function(v){return v.id===vidId;});
+  if(deleted && deleted.url){
+    if(!MEDIA_POOL.deleted_video_urls) MEDIA_POOL.deleted_video_urls = [];
+    if(MEDIA_POOL.deleted_video_urls.indexOf(deleted.url) < 0){
+      MEDIA_POOL.deleted_video_urls.push(deleted.url);
+    }
+  }
   MEDIA_POOL.videos = (MEDIA_POOL.videos||[]).filter(function(v){return v.id!==vidId;});
   renderMediaPool();
+  saveMediaPoolQuiet();
+}
+function safeDomId(v){
+  return String(v || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+function toggleVideoPreview(vidId){
+  var panel = document.getElementById('video_preview_' + safeDomId(vidId));
+  if(!panel) return;
+  panel.style.display = panel.style.display === 'none' ? '' : 'none';
 }
 
 // ═══ 富文本块编辑器 ═══
@@ -1162,9 +1901,105 @@ function applySourceImgToBlock(blockId, url, role){
   if(b){b.image_id=imgId;b.url='';renderRichBlocks();}
 }
 
+// ═══ offer_id 随机生成 ═══
+function generateOfferId(prefix){
+  var d = new Date();
+  var date = d.getFullYear() + ('0'+(d.getMonth()+1)).slice(-2) + ('0'+d.getDate()).slice(-2);
+  var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  var code = '';
+  for(var i=0;i<6;i++){
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return (prefix||'OZON') + '-' + date + '-' + code;
+}
+
+function getOfferPrefix(){
+  // 尝试从源属性面板提取品牌
+  var srcItems = document.querySelectorAll('.lr-source-item');
+  for(var i=0;i<srcItems.length;i++){
+    var t = srcItems[i].textContent||'';
+    var m = t.match(/бренд|brand|brand_name|品牌|商标|марка|производитель/i);
+    if(m){
+      var parts = t.split('=');
+      if(parts.length>1){
+        var val = parts[parts.length-1].trim().toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,12);
+        if(val) return val;
+      }
+    }
+  }
+  // 从标题检测已知品牌
+  var titleEl = document.querySelector('[name="title_ru"]');
+  var title = titleEl ? titleEl.value.toUpperCase() : '';
+  if(title.indexOf('DJI')>=0) return 'DJI';
+  if(title.indexOf('APPLE')>=0) return 'APPLE';
+  if(title.indexOf('SAMSUNG')>=0) return 'SAMSUNG';
+  if(title.indexOf('XIAOMI')>=0) return 'XIAOMI';
+  return 'OZON';
+}
+
+function getExistingOfferIds(excludeInput){
+  var ids = [];
+  var inputs = document.querySelectorAll('.offer-id-input');
+  for(var i=0;i<inputs.length;i++){
+    if(inputs[i] === excludeInput) continue;
+    var v = inputs[i].value.trim();
+    if(v) ids.push(v);
+  }
+  return ids;
+}
+
+function generateUniqueOfferId(prefix, excludeInput){
+  var existing = getExistingOfferIds(excludeInput);
+  var existingSet = {};
+  for(var i=0;i<existing.length;i++) existingSet[existing[i]] = true;
+  var offerId;
+  for(var attempt=0;attempt<20;attempt++){
+    offerId = generateOfferId(prefix);
+    if(!existingSet[offerId]) return offerId;
+  }
+  return generateOfferId(prefix) + '-' + Date.now().toString().slice(-4);
+}
+
+// 单个随机生成（事件委托）
+document.addEventListener('click', function(e){
+  var btn = e.target.closest('.btn-generate-offer-id');
+  if(!btn) return;
+  e.preventDefault();
+  var row = btn.closest('tr');
+  if(!row) return;
+  var input = row.querySelector('.offer-id-input');
+  if(!input) return;
+  if(input.value.trim()){
+    if(!confirm('当前已有 offer_id「' + input.value + '」，是否覆盖？')) return;
+  }
+  input.value = generateUniqueOfferId(getOfferPrefix(), input);
+  input.dispatchEvent(new Event('input', {bubbles:true}));
+  input.dispatchEvent(new Event('change', {bubbles:true}));
+});
+
+// 批量生成
+var batchBtn = document.getElementById('btnBatchGenerateOfferId');
+if(batchBtn){
+  batchBtn.addEventListener('click', function(){
+    var inputs = document.querySelectorAll('.offer-id-input');
+    if(!inputs.length) return;
+    var prefix = getOfferPrefix();
+    var generated = 0;
+    for(var i=0;i<inputs.length;i++){
+      if(inputs[i].value.trim()) continue;
+      inputs[i].value = generateUniqueOfferId(prefix, inputs[i]);
+      inputs[i].dispatchEvent(new Event('input', {bubbles:true}));
+      inputs[i].dispatchEvent(new Event('change', {bubbles:true}));
+      generated++;
+    }
+    alert('已为 ' + generated + ' 个空 SKU 生成 offer_id');
+  });
+}
+
 // ═══ 初始化 ═══
 document.addEventListener('DOMContentLoaded', function () {
   loadRichBlocks();
+  renderMediaPool();
 
   // 如果当前 tab 是富文本，自动初始化编辑器
   if (document.getElementById('tab-rich') && !document.getElementById('tab-rich').classList.contains('d-none')) {
@@ -1172,6 +2007,7 @@ document.addEventListener('DOMContentLoaded', function () {
   }
 
   updateRichSummary();
+  showTemplateExportSection();
 });
 </script>
 {% endblock %}
