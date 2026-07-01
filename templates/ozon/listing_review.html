@@ -51,8 +51,8 @@
     </select>
   </div>
   <div class="d-flex gap-1 flex-wrap mt-1">
-    <button class="btn btn-sm btn-outline-secondary" onclick="saveDraftForm()">💾 保存草稿</button>
-    <button class="btn btn-sm btn-outline-primary" onclick="saveDraftAndReturn()">📋 保存并返回</button>
+    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="saveDraftForm()">💾 保存草稿</button>
+    <button type="button" class="btn btn-sm btn-outline-primary" onclick="saveDraftAndReturn()">📋 保存并返回</button>
     <button class="btn btn-sm btn-success" onclick="autoFillDraftAll()">🤖 根据采集资料自动填写</button>
     <button class="btn btn-sm btn-primary" onclick="approveDraft()" id="btnApproveTop">✅ 审核通过</button>
     <button class="btn btn-sm btn-danger" onclick="publishToOzon()" id="btnPublish" disabled>🚀 发布到OZON</button>
@@ -184,7 +184,22 @@
                 </td>
                 <td><input class="form-control form-control-sm sku-quantity-input" name="bundle_qty_{{ sku.id }}" value="{{ sku.bundle_quantity or 1 }}" type="number" style="font-size:10px;width:60px"></td>
                 <td><input class="form-control form-control-sm sku-barcode-input" name="barcode_{{ sku.id }}" value="{{ sku.barcode or '' }}" style="font-size:10px;width:100px" placeholder="条码"></td>
-                {% if color_attr %}<td><input class="form-control form-control-sm sku-color-input" name="color_ru_{{ sku.id }}" value="{{ sku.color_ru or '' }}" style="font-size:10px;width:80px"></td>{% endif %}
+                {% if color_attr %}
+                <td>
+                  {% if color_attr.is_dictionary and color_values %}
+                  <select class="form-select form-select-sm sku-color-input" name="color_ru_{{ sku.id }}" style="font-size:10px;width:90px">
+                    <option value="">—</option>
+                    {% for v in color_values %}
+                    <option value="{{ v.value }}" data-value-id="{{ v.value_id }}" {% if sku.color_ru == v.value %}selected{% endif %}>
+                      {{ v.value }} {{ ('(' + v.value_cn + ')' + ((' - ' + v.value_ru) if v.value_ru else '')) if v.value_cn or v.value_ru else '' }}
+                    </option>
+                    {% endfor %}
+                  </select>
+                  {% else %}
+                  <input class="form-control form-control-sm sku-color-input" name="color_ru_{{ sku.id }}" value="{{ sku.color_ru or '' }}" style="font-size:10px;width:80px">
+                  {% endif %}
+                </td>
+                {% endif %}
                 <td><input class="form-control form-control-sm sku-style-input" name="style_ru_{{ sku.id }}" value="{{ sku.style_ru or '' }}" style="font-size:10px;width:80px"></td>
               </tr>
             {% endfor %}
@@ -489,7 +504,7 @@ function collectSkuData(){
       offer_id: row.querySelector('.offer-id-input') ? row.querySelector('.offer-id-input').value.trim() : '',
       quantity: row.querySelector('.sku-quantity-input') ? row.querySelector('.sku-quantity-input').value : '',
       barcode: row.querySelector('.sku-barcode-input') ? row.querySelector('.sku-barcode-input').value : '',
-      color: row.querySelector('.sku-color-input') ? row.querySelector('.sku-color-input').value : '',
+      color: (function(el){ if(!el) return ''; var opt = el.selectedOptions ? el.selectedOptions[0] : null; return (opt && opt.dataset.valueId) ? el.value + '|' + opt.dataset.valueId : el.value; })(row.querySelector('.sku-color-input')),
       style: row.querySelector('.sku-style-input') ? row.querySelector('.sku-style-input').value : ''
     });
   });

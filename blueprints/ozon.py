@@ -3149,11 +3149,20 @@ def listing_review(draft_id):
 
     # 解析源商品 raw_json
     raw = {}
-    pricing = {}
+    source_pricing = {}
     if draft.source:
         try: raw = json.loads(draft.source.raw_json or '{}')
         except: raw = {}
-        pricing = raw.get('pricing') or {}
+        source_pricing = raw.get('pricing') or {}
+
+    # 用草稿保存的 pricing_json 覆盖采集源（用户编辑的价格持久化回显）
+    saved_pricing = {}
+    try:
+        saved_pricing = json.loads(draft.pricing_json or '{}')
+    except (json.JSONDecodeError, TypeError):
+        saved_pricing = {}
+    pricing = dict(source_pricing)
+    pricing.update(saved_pricing)
 
     # 解析已保存属性（使用归一化层）
     draft_attrs = _load_draft_attributes_map(draft)
@@ -3199,6 +3208,7 @@ def listing_review(draft_id):
     # 颜色属性（由当前 type 的 Schema 决定是否必填）
     COLOR_ALIASES = ["商品颜色", "颜色", "Цвет", "Цвет товара", "color", "colour"]
     color_attr = None
+    color_values = []
     if draft.ozon_category_id and draft.type_id:
         attrs = list(OzonCategoryAttribute.select().where(
             (OzonCategoryAttribute.user == current_user) &
@@ -3208,8 +3218,17 @@ def listing_review(draft_id):
         for a in attrs:
             name_lower = ((a.name_cn or '') + ' ' + (a.name or '')).lower()
             if any(alias.lower() in name_lower for alias in COLOR_ALIASES):
-                color_attr = {'attribute_id': a.attribute_id, 'name': a.name,
-                              'name_cn': a.name_cn, 'is_required': a.is_required}
+                color_attr = {
+                    'attribute_id': a.attribute_id, 'name': a.name,
+                    'name_cn': a.name_cn, 'is_required': a.is_required,
+                    'is_dictionary': a.is_dictionary, 'dictionary_id': a.dictionary_id,
+                }
+                # 字典属性：加载可选值
+                if a.is_dictionary:
+                    color_values = list(OzonAttributeValue.select().where(
+                        (OzonAttributeValue.user == current_user) &
+                        (OzonAttributeValue.attribute_id == a.attribute_id)
+                    ).order_by(OzonAttributeValue.value))
                 break
 
     # 解析媒体池
@@ -3323,6 +3342,7 @@ def listing_review(draft_id):
                            source_media_rich=source_media_rich,
                            source_media_other=source_media_other,
                            color_attr=color_attr,
+                           color_values=color_values,
                            media=media,
                            accounts=list(OzonAccount.select()
                                          .where((OzonAccount.user == current_user) &
@@ -7996,8 +8016,8 @@ def api_draft_save_all(draft_id):
         pass
     if pricing.get('currency'):
         existing_pricing['listing_currency'] = pricing['currency']
-    if pricing.get('ozon_price'):
-        existing_pricing['listing_price'] = pricing['ozon_price']
+    if 'ozon_price' in pricing:
+        existing_pricing['listing_price'] = str(pricing.get('ozon_price') or '').strip()
     if 'price_manual_confirmed' in pricing:
         draft.price_manual_confirmed = bool(pricing.get('price_manual_confirmed'))
     draft.pricing_json = json.dumps(existing_pricing, ensure_ascii=False)
@@ -8015,7 +8035,12 @@ def api_draft_save_all(draft_id):
         if sd.get('offer_id') is not None:
             sku.offer_id = sd['offer_id'] or None
         if sd.get('color') is not None:
-            sku.color_ru = sd['color'] or None
+            raw_color = sd['color'] or ''
+            # 前端 select 可能发 "черный|61574" 格式，解析出文本值
+            if '|' in raw_color:
+                sku.color_ru = raw_color.split('|')[0] or None
+            else:
+                sku.color_ru = raw_color or None
         if sd.get('style') is not None:
             sku.style_ru = sd['style'] or None
         if sd.get('barcode') is not None:
