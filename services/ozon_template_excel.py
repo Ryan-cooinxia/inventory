@@ -354,8 +354,10 @@ def build_field_mapping(draft):
     mapping['价格,CNY'] = listing_price
     mapping['价格，CNY'] = listing_price
 
-    # ── 主图链接 ──
-    mapping['主图链接'] = get_public_image_url(draft) or ''
+    # ── 主图链接 + 附加图片链接 ──
+    image_urls = get_public_image_urls(draft)
+    mapping['主图链接'] = image_urls[0] if image_urls else ''
+    mapping['附加图片链接'] = '\n'.join(image_urls[1:]) if len(image_urls) > 1 else ''
 
     # ── 品牌 ──
     mapping['品牌'] = _extract_attribute_value(draft, 'brand', '品牌', 'Бренд')
@@ -507,6 +509,24 @@ def get_public_image_url(draft):
         if url and (url.startswith('http://') or url.startswith('https://')):
             return url
     return None
+
+
+def get_public_image_urls(draft):
+    """
+    从草稿媒体池获取所有已选主图的公开 URL 列表（第1张是封面，其余是附加图）。
+    OZON 商品图集 = 主图链接 + 附加图片链接，不是富内容里的图片。
+    """
+    from blueprints.ozon import _load_media_json
+    media = _load_media_json(draft) if _load_media_json else {}
+    images = media.get('images', []) if isinstance(media, dict) else []
+    main_imgs = [i for i in images if i.get('selected') and i.get('role') == 'main']
+    main_imgs.sort(key=lambda i: i.get('sort_order', 0))
+    urls = []
+    for img in main_imgs:
+        url = img.get('ozon_url') or img.get('public_url') or img.get('url') or ''
+        if url and (url.startswith('http://') or url.startswith('https://')) and url not in urls:
+            urls.append(url)
+    return urls
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -696,6 +716,19 @@ def _validate_generated_excel(save_path, header_row, data_start_row):
                 errors.append('JSON富内容为空（请在草稿中先生成俄语富内容）')
             elif is_empty_rich_content(rich_val):
                 errors.append('JSON富内容为空(blocks=[])，请先生成俄语富内容再导出')
+
+        # 附加图片链接：有 >1 张主图时不应为空
+        main_col = col_map.get('主图链接')
+        extra_col = col_map.get('附加图片链接')
+        if main_col and extra_col:
+            main_val = str(ws.cell(row=row, column=main_col).value or '').strip()
+            extra_val = str(ws.cell(row=row, column=extra_col).value or '').strip()
+            if main_val and not extra_val:
+                main_count = main_val.count('http')
+                if main_count <= 1:
+                    pass  # 只有 1 张主图，附加图为空是正常的
+                else:
+                    errors.append('有多个主图链接但附加图片链接为空，可能只上传了封面图')
 
         wb.close()
     except Exception as e:
