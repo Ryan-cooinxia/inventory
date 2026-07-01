@@ -315,6 +315,13 @@ def account_edit(account_id):
         api_key = request.form.get('api_key', '').strip()
         if api_key:
             acc.api_key = api_key
+        # 店铺维度配置
+        acc.seller_ui_language = request.form.get('seller_ui_language', acc.seller_ui_language or 'zh')
+        acc.template_language = request.form.get('template_language', acc.template_language or 'zh')
+        acc.default_currency = request.form.get('default_currency', acc.default_currency or 'CNY')
+        acc.currency_confirmed = request.form.get('currency_confirmed') == '1'
+        if acc.currency_confirmed and not acc.locale_confirmed_at:
+            acc.locale_confirmed_at = datetime.datetime.now()
         acc.updated_at = datetime.datetime.now()
         acc.save()
         flash(f'店铺 "{acc.name}" 已更新', 'success')
@@ -4147,6 +4154,21 @@ def api_generate_template_excel(draft_id):
     if not draft.type_id or not draft.ozon_category_id:
         return jsonify({"ok": False, "error": "草稿未绑定 dcid/type_id，无法选择模板。请先在适配工作台选择类目和类型。"}), 400
 
+    # ── 店铺兼容性校验 ──
+    shop_warnings = []
+    account = draft.account
+    if not account:
+        return jsonify({"ok": False, "error": "草稿未选择目标店铺。请先在审核页顶部选择 OZON 店铺。"}), 400
+    if not account.currency_confirmed:
+        return jsonify({
+            "ok": False,
+            "error": f"店铺「{account.name}」尚未确认语言/货币设置。请前往「店铺编辑」确认 OZON 后台语言和价格货币。",
+            "action": "edit_account",
+            "account_id": account.id,
+        }), 400
+    if account.template_language != 'zh':
+        shop_warnings.append(f"店铺后台语言为「{account.template_language}」，Excel 枚举值将以该语言输出")
+
     # 查找活跃模板（仅精确匹配 dcid+type_id，不用同dcid回退）
     template = (OzonExcelTemplate
                 .select()
@@ -4199,22 +4221,23 @@ def api_generate_template_excel(draft_id):
         filled_rows_count=sku_count,
     )
 
-    if validation_errors:
-        return jsonify({
-            "ok": True,
-            "warning": "validation_failed",
-            "message": f"模板 Excel 已生成但校验发现问题（{sku_count} 行数据）",
-            "job_id": job.id,
-            "download_url": url_for('ozon.api_download_template_export', job_id=job.id),
-            "validation_errors": validation_errors,
-        })
-
-    return jsonify({
+    resp = {
         "ok": True,
-        "message": f"模板 Excel 已生成（{sku_count} 行数据），校验通过",
         "job_id": job.id,
         "download_url": url_for('ozon.api_download_template_export', job_id=job.id),
-    })
+        "shop_language": account.template_language or 'zh',
+        "shop_currency": account.default_currency or 'CNY',
+        "shop_warnings": shop_warnings,
+    }
+    if validation_errors:
+        resp.update({
+            "warning": "validation_failed",
+            "message": f"模板 Excel 已生成但校验发现问题（{sku_count} 行数据）",
+            "validation_errors": validation_errors,
+        })
+    else:
+        resp["message"] = f"模板 Excel 已生成（{sku_count} 行数据），校验通过"
+    return jsonify(resp)
 
 
 @ozon_bp.route('/api/template-exports/<int:job_id>/download')

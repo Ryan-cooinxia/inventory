@@ -7,9 +7,53 @@ import hashlib
 import json
 import datetime
 import io
+import re as _re
 
 import openpyxl
 from openpyxl.utils import get_column_letter
+
+
+# ═══════════════════════════════════════════════════════════════
+# 本地化：按店铺语言输出枚举值
+# ═══════════════════════════════════════════════════════════════
+
+def _get_account(draft):
+    """获取草稿关联的店铺，找不到返回 None"""
+    from models import OzonAccount
+    if draft.account:
+        return draft.account
+    return None
+
+
+def localized_attr_value(draft, attr_value_dict):
+    """
+    按店铺 template_language 返回枚举值。
+    zh 后台 → value_cn，ru 后台 → value。
+
+    attr_value_dict: OzonAttributeValue 实例或 {'value': ..., 'value_cn': ...}
+    """
+    account = _get_account(draft)
+    lang = (account.template_language or 'zh') if account else 'zh'
+
+    if hasattr(attr_value_dict, 'value_cn'):
+        v_cn = attr_value_dict.value_cn
+        v = attr_value_dict.value
+    else:
+        v_cn = attr_value_dict.get('value_cn')
+        v = attr_value_dict.get('value')
+
+    if lang == 'zh' and v_cn:
+        return str(v_cn).strip()
+    return str(v or '').strip()
+
+
+def localized_value(draft, russian_value, chinese_value):
+    """按店铺 template_language 返回俄语或中文值"""
+    account = _get_account(draft)
+    lang = (account.template_language or 'zh') if account else 'zh'
+    if lang == 'zh' and chinese_value:
+        return str(chinese_value).strip()
+    return str(russian_value or '').strip()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -374,8 +418,8 @@ def build_field_mapping(draft):
         model = (raw.get('model') or '').strip()
     mapping['型号名称'] = model
 
-    # ── 类型（优先俄语值）──
-    mapping['类型'] = (draft.type_name_ru or draft.type_name_cn or '').strip()
+    # ── 类型（按店铺语言：zh→中文，ru→俄语）──
+    mapping['类型'] = localized_value(draft, (draft.type_name_ru or ''), (draft.type_name_cn or ''))
 
     # ── 简介（纯文本俄语描述，禁止 HTML）──
     description_text = ''
@@ -421,15 +465,22 @@ def build_field_mapping(draft):
     if size_str and (not mapping['包装宽度'] or not mapping['包装高度']):
         parts = size_str.replace('*', 'x').replace('X', 'x').split('x')
         if len(parts) == 3:
+            # 去掉 mm/cm/毫米 等单位后缀，只保留数字
+            import re
+            nums = [re.sub(r'[^\d.]', '', p.strip()) for p in parts]
             if not mapping['包装宽度']:
-                mapping['包装宽度'] = parts[0].strip()
+                mapping['包装宽度'] = nums[0]
             if not mapping['包装高度']:
-                mapping['包装高度'] = parts[1].strip()
+                mapping['包装高度'] = nums[1]
             if not mapping['包装长度']:
-                mapping['包装长度'] = parts[2].strip()
-    # 原产国：优先俄语
-    country = _extract_attribute_value(draft, 'country', '原产国', '制造国', 'Страна', 'Китай')
-    mapping['原产国'] = country if country else 'Китай'
+                mapping['包装长度'] = nums[2]
+    # 原产国：按店铺语言（zh→中国，ru→Китай）
+    country_ru = _extract_attribute_value(draft, 'country', 'Страна')
+    country_cn = _extract_attribute_value(draft, '原产国', '制造国')
+    if country_ru or country_cn:
+        mapping['原产国'] = localized_value(draft, country_ru or 'Китай', country_cn or '中国')
+    else:
+        mapping['原产国'] = localized_value(draft, 'Китай', '中国')
 
     return mapping
 
@@ -472,7 +523,7 @@ def _extract_attribute_value(draft, *keywords):
         if not any(kw in combined for kw in keywords_lower):
             continue
 
-        # 字典属性：查 OzonAttributeValue 取俄语原值
+        # 字典属性：查 OzonAttributeValue，按店铺语言输出
         if cat_attr and cat_attr.is_dictionary:
             value_id = attr_data.get('value_id') or attr_data.get('dict_value_id') or ''
             if value_id:
@@ -482,8 +533,8 @@ def _extract_attribute_value(draft, *keywords):
                              (OzonAttributeValue.attribute_id == str(attr_id_str)) &
                              (OzonAttributeValue.value_id == str(value_id)))
                       .first())
-                if dv and dv.value:
-                    return dv.value.strip()
+                if dv:
+                    return localized_attr_value(draft, dv)
 
         # 非字典 / 字典值未找到：直接用 attributes_json 中的 value
         v = attr_data.get('value_ru') or attr_data.get('value') or ''
@@ -738,16 +789,38 @@ def _validate_generated_excel(save_path, header_row, data_start_row):
 
 
 def _fuzzy_find_column(col_map, header_text):
-    """模糊匹配列：关键词出现在表头中，或表头关键词出现在目标中"""
+    """
+    模糊匹配列。为避免错列（如 JSON富内容 写入 PDF文件），
+    仅允许明确对应的关键词，禁止跨语义类别匹配。
+    """
     ht_lower = header_text.lower()
-    for h, idx in col_map.items():
-        if ht_lower in h.lower() or h.lower() in ht_lower:
-            return idx
-    # 特殊处理：价格列有多种写法
+
+    # 精确匹配优先
+    if header_text in col_map:
+        return col_map[header_text]
+
+    # 允许的同义词映射（写死的，不开放模糊匹配）
+    ALLOWED_FUZZY = {
+        '毛重': ['毛重', '毛重，克', '毛重,克', '毛重/克'],
+        '价格': ['价格', '价格，cny', '价格,cny', '价格，rub', '价格,rub'],
+        '货号': ['货号', '货号（其他变体）'],
+        '型号名称': ['型号名称', '型号名称（针对合并为一张商品卡片）'],
+        '商品名称': ['商品名称', '商品名称（俄语）', '商品名称（英语）'],
+    }
+
+    for group, variations in ALLOWED_FUZZY.items():
+        if header_text in variations or any(v in ht_lower for v in variations):
+            for v in variations:
+                if v in col_map:
+                    return col_map[v]
+
+    # 价格列特殊处理
     if '价格' in ht_lower:
-        for h, idx in col_map.items():
+        for h in col_map:
             if '价格' in h:
-                return idx
+                return col_map[h]
+
+    # 不允许 JSON富内容 匹配到 PDF 或任何其他列
     return None
 
 

@@ -12,6 +12,39 @@
       </div>
       <div class="mb-3"><label class="form-label fw-bold">Client-Id</label><input type="text" name="client_id" class="form-control" value="{{ acc.client_id }}" required></div>
       <div class="mb-3"><label class="form-label fw-bold">Api-Key</label><input type="password" name="api_key" class="form-control" placeholder="留空则不修改"></div>
+      <hr>
+      <h6>🏪 店铺维度配置</h6>
+      <p class="text-muted small mb-2">以下配置决定 Excel 导出和 API 提交时使用的语言和货币，<strong>必须与你的 OZON Seller 后台实际设置一致</strong>。</p>
+      <div class="row mb-3">
+        <div class="col">
+          <label class="form-label fw-bold">OZON 后台语言</label>
+          <select name="seller_ui_language" class="form-select">
+            <option value="zh" {% if acc.seller_ui_language == 'zh' or not acc.seller_ui_language %}selected{% endif %}>中文 (CH)</option>
+            <option value="ru" {% if acc.seller_ui_language == 'ru' %}selected{% endif %}>俄文 (RU)</option>
+            <option value="en" {% if acc.seller_ui_language == 'en' %}selected{% endif %}>英文 (EN)</option>
+          </select>
+        </div>
+        <div class="col">
+          <label class="form-label fw-bold">模板字段值语言</label>
+          <select name="template_language" class="form-select">
+            <option value="zh" {% if acc.template_language == 'zh' or not acc.template_language %}selected{% endif %}>中文</option>
+            <option value="ru" {% if acc.template_language == 'ru' %}selected{% endif %}>俄文</option>
+          </select>
+        </div>
+        <div class="col">
+          <label class="form-label fw-bold">价格货币</label>
+          <select name="default_currency" class="form-select">
+            <option value="CNY" {% if acc.default_currency == 'CNY' or not acc.default_currency %}selected{% endif %}>¥ CNY（人民币）</option>
+            <option value="RUB" {% if acc.default_currency == 'RUB' %}selected{% endif %}>₽ RUB（卢布）</option>
+            <option value="USD" {% if acc.default_currency == 'USD' %}selected{% endif %}>$ USD（美元）</option>
+            <option value="EUR" {% if acc.default_currency == 'EUR' %}selected{% endif %}>€ EUR（欧元）</option>
+          </select>
+        </div>
+      </div>
+      <div class="mb-3 form-check">
+        <input type="checkbox" class="form-check-input" id="currencyConfirmed" name="currency_confirmed" value="1" {% if acc.currency_confirmed %}checked{% endif %}>
+        <label class="form-check-label fw-bold" for="currencyConfirmed">我已确认 OZON Seller 后台当前语言和模板货币单位与以上设置一致</label>
+      </div>
       <div class="d-flex gap-2">
         <button type="submit" class="btn btn-primary">保存</button>
         <a href="{{ url_for('ozon.accounts') }}" class="btn btn-outline-secondary">取消</a>

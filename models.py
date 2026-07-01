@@ -440,6 +440,12 @@ class OzonAccount(BaseModel):
     last_sync_at = DateTimeField(null=True)                       # 最近同步时间
     sync_status = CharField(max_length=20, null=True)             # ok / error
     sync_error = TextField(null=True)                             # 最近同步错误
+    # 店铺维度配置：语言/货币
+    seller_ui_language = CharField(max_length=10, default='zh')   # OZON 后台语言: zh / ru / en
+    template_language = CharField(max_length=10, default='zh')    # Excel/在线模板字段值语言
+    default_currency = CharField(max_length=10, default='CNY')    # 后台价格货币: CNY / RUB / USD / EUR
+    currency_confirmed = BooleanField(default=False)              # 用户已确认货币设置
+    locale_confirmed_at = DateTimeField(null=True)                # 确认时间
     created_at = DateTimeField(default=datetime.datetime.now)
     updated_at = DateTimeField(default=datetime.datetime.now)
 
