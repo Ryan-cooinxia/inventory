@@ -457,23 +457,37 @@ def build_field_mapping(draft):
     mapping['毛重,克'] = weight
     mapping['毛重/克'] = weight
     mapping['毛重，克'] = weight
-    mapping['包装宽度'] = _extract_attribute_value(draft, 'width', '宽度', 'Ширина', 'ширина')
-    mapping['包装高度'] = _extract_attribute_value(draft, 'height', '高度', 'Высота', 'высота')
-    mapping['包装长度'] = _extract_attribute_value(draft, 'length', '长度', 'Длина', 'длина')
-    # 尝试从尺寸字符串解析宽/高/长
+    mapping['毛重，克'] = weight
+    # 尺寸：支持中俄文模板列名
+    w = _extract_attribute_value(draft, 'width', '宽度', 'Ширина', 'ширина')
+    h = _extract_attribute_value(draft, 'height', '高度', 'Высота', 'высота')
+    l = _extract_attribute_value(draft, 'length', '长度', 'Длина', 'длина')
+    mapping['包装宽度'] = w
+    mapping['包装宽度，毫米'] = w
+    mapping['包装高度'] = h
+    mapping['包装高度，毫米'] = h
+    mapping['包装长度'] = l
+    mapping['包装长度，毫米'] = l
+
+    # 从尺寸字符串解析宽/高/长，补全缺失的维度
     size_str = _extract_attribute_value(draft, 'size', '尺寸', 'Размер')
-    if size_str and (not mapping['包装宽度'] or not mapping['包装高度']):
+    if size_str and (not w or not h or not l):
         parts = size_str.replace('*', 'x').replace('X', 'x').split('x')
         if len(parts) == 3:
-            # 去掉 mm/cm/毫米 等单位后缀，只保留数字
             import re
             nums = [re.sub(r'[^\d.]', '', p.strip()) for p in parts]
-            if not mapping['包装宽度']:
-                mapping['包装宽度'] = nums[0]
-            if not mapping['包装高度']:
-                mapping['包装高度'] = nums[1]
-            if not mapping['包装长度']:
-                mapping['包装长度'] = nums[2]
+            if not w:
+                w = nums[0]
+                mapping['包装宽度'] = w
+                mapping['包装宽度，毫米'] = w
+            if not h:
+                h = nums[1]
+                mapping['包装高度'] = h
+                mapping['包装高度，毫米'] = h
+            if not l:
+                l = nums[2]
+                mapping['包装长度'] = l
+                mapping['包装长度，毫米'] = l
     # 原产国：按店铺语言（zh→中国，ru→Китай）
     country_ru = _extract_attribute_value(draft, 'country', 'Страна')
     country_cn = _extract_attribute_value(draft, '原产国', '制造国')
@@ -702,7 +716,9 @@ def _validate_generated_excel(save_path, header_row, data_start_row):
         '主图链接': '主图链接为空或非http链接',
         '品牌': '品牌*为空',
         '型号名称': '型号名称*为空',
-        '类型': '类型*为空或包含中文',
+        '类型': '类型*为空',
+        '毛重，克': '毛重为空',
+        '包装长度，毫米': '包装长度为空（尺寸拆分可能失败）',
     }
 
     errors = []

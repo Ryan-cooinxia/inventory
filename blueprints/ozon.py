@@ -2373,11 +2373,17 @@ def processing_generate(source_id):
     # 标题：直接使用 OZON 原始俄语标题（截取前150字符符合 OZON 规范）
     draft.title_ru = (source.title_cn or '')[:150]
 
-    # 描述：直接使用采集的富文本 HTML（俄语原文）
+    # 描述：HTML转纯文本（简介用纯文本，富文本HTML放rich_content_json）
     rich_text = raw.get('rich_text') or {}
-    draft.description_ru = (rich_text.get('html') or rich_text.get('plain_text') or '')[:50000]
-    if not draft.description_ru:
-        draft.description_ru = (source.description_cn or '')[:50000]
+    raw_html = rich_text.get('html') or ''
+    if raw_html:
+        from services.ozon_template_excel import html_to_plain_text
+        draft.description_ru = html_to_plain_text(raw_html, max_length=50000)
+        # 同时生成 rich_content_json（保留原始HTML用于富文本tab）
+        if not draft.rich_content_json:
+            from services.ozon_template_excel import build_rich_content_from_draft
+    else:
+        draft.description_ru = (rich_text.get('plain_text') or source.description_cn or '')[:50000]
 
     # 卖点：从属性字典提取关键属性拼接
     source_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
@@ -3333,6 +3339,26 @@ def listing_review(draft_id):
         img['sort_order'] = idx + 1
         img['is_cover'] = idx == 0
 
+    # 汇率：用于显示人民币参考价
+    exchange_rate = None
+    try:
+        er = ExchangeRate.get_or_none(ExchangeRate.base == 'CNY')
+        if er:
+            exchange_rate = {'rub': er.rate_rub, 'usd': er.rate_usd, 'eur': er.rate_eur, 'updated': str(er.updated_at or '')}
+    except Exception:
+        pass
+    # 人民币参考价
+    reference_price_cny = None
+    if exchange_rate and pricing:
+        src_price = pricing.get('reference_price') or pricing.get('price') or pricing.get('original_price')
+        if src_price:
+            try:
+                ref_rub = float(str(src_price).replace(',', '.').replace(' ', ''))
+                if exchange_rate['rub'] and float(exchange_rate['rub']) > 0:
+                    reference_price_cny = round(ref_rub / float(exchange_rate['rub']), 2)
+            except (ValueError, TypeError):
+                pass
+
     return render_template('ozon/listing_review.html',
                            draft=draft,
                            validation=validation,
@@ -3351,6 +3377,8 @@ def listing_review(draft_id):
                            color_attr=color_attr,
                            color_values=color_values,
                            media=media,
+                           exchange_rate=exchange_rate,
+                           reference_price_cny=reference_price_cny,
                            accounts=list(OzonAccount.select()
                                          .where((OzonAccount.user == current_user) &
                                                 (OzonAccount.is_active == True))
@@ -7666,9 +7694,14 @@ def api_draft_fill_from_source(draft_id):
         return jsonify({"ok": True, "message": "标题已填充"})
     if tp == 'desc':
         rich = raw.get('rich_text') or {}
-        desc = rich.get('html') or rich.get('plain_text') or ''
-        if desc: draft.description_ru = desc[:50000]; draft.save()
-        return jsonify({"ok": True, "message": "描述已填充"})
+        raw_html = rich.get('html') or ''
+        if raw_html:
+            from services.ozon_template_excel import html_to_plain_text
+            draft.description_ru = html_to_plain_text(raw_html, max_length=50000)
+        else:
+            draft.description_ru = (rich.get('plain_text') or '')[:50000]
+        draft.save()
+        return jsonify({"ok": True, "message": "描述已填充（纯文本）"})
     if tp == 'bullets':
         src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
         bullets = ['• ' + (a.get('name','') + ': ' + str(a.get('value',''))) for a in src_attrs[:8] if a.get('name') and a.get('value')]

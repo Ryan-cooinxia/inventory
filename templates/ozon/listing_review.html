@@ -123,7 +123,7 @@
           </div>
           <div class="mb-2"><label class="form-label" style="font-size:11px"><b>俄语描述</b></label>
             <textarea name="description_ru" class="form-control form-control-sm" rows="6" style="font-size:11px">{{ draft.description_ru or '' }}</textarea>
-            <button type="button" class="btn btn-sm btn-outline-info mt-1" style="font-size:9px" onclick="fillFromSource('desc')">📋 从采集富文本填充</button>
+            <button type="button" class="btn btn-sm btn-outline-info mt-1" style="font-size:9px" onclick="fillFromSource('desc')">📋 生成纯文本简介（从采集HTML提取）</button>
           </div>
           </form>
         </div>
@@ -224,11 +224,15 @@
               </div>
               <div class="col-4">
                 <b>采集参考价:</b><br>
-                {% if pricing and pricing.reference_price_rub %}₽{{ '{:,.0f}'.format(pricing.reference_price_rub) }}{% else %}未识别{% endif %}
+                {% if pricing and pricing.reference_price_rub %}₽{{ '{:,.0f}'.format(pricing.reference_price_rub) }}
+                {% else %}未识别{% endif %}
+                {% if reference_price_cny %}<br><small class="text-muted">≈ ¥{{ '{:,.0f}'.format(reference_price_cny) }}</small>{% endif %}
+                {% if exchange_rate and exchange_rate.rub %}<br><small class="text-muted" style="font-size:9px">1 CNY = {{ '%.2f'|format(exchange_rate.rub|float) }} RUB</small>{% endif %}
               </div>
               <div class="col-4">
                 <b>OZON刊登价:</b><br>
                 <input class="form-control form-control-sm" id="ozonListingPrice" name="listing_price" value="{{ (pricing or {}).get('listing_price', '') if pricing else '' }}" placeholder="请输入刊登价" style="font-size:10px;width:100px">
+                <div id="priceHint" style="font-size:9px;color:#28a745;display:none"></div>
               </div>
             </div>
             <div class="form-check">
@@ -453,6 +457,34 @@
     document.addEventListener('DOMContentLoaded', initListingReviewTabs);
   } else {
     initListingReviewTabs();
+  }
+  // 刊登币种切换提示
+  var currencyEl = document.getElementById('ozonCurrency');
+  var hintEl = document.getElementById('priceHint');
+  {% if exchange_rate and exchange_rate.rub %}
+  var rateRub = {{ exchange_rate.rub or 0 }};
+  {% else %}
+  var rateRub = 0;
+  {% endif %}
+  var refRub = {{ (pricing.reference_price_rub or 0) if pricing else 0 }};
+  if (currencyEl && hintEl) {
+    function updatePriceHint() {
+      if (currencyEl.value === 'CNY' && rateRub > 0 && refRub > 0) {
+        var cnyPrice = Math.round(refRub / rateRub);
+        hintEl.style.display = '';
+        hintEl.textContent = '建议价 ≈ ¥' + cnyPrice.toLocaleString() + '（₽' + refRub.toLocaleString() + ' ÷ ' + rateRub.toFixed(2) + '）';
+      } else if (currencyEl.value === 'CNY' && refRub > 0) {
+        hintEl.style.display = '';
+        hintEl.textContent = '参考价 ₽' + refRub.toLocaleString() + '，汇率未获取，请自行换算';
+      } else if (currencyEl.value === 'RUB') {
+        hintEl.style.display = '';
+        hintEl.textContent = '参考价 ₽' + refRub.toLocaleString();
+      } else {
+        hintEl.style.display = 'none';
+      }
+    }
+    currencyEl.addEventListener('change', updatePriceHint);
+    updatePriceHint();
   }
 })();
 </script>
