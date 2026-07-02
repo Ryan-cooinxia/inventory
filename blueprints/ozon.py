@@ -7706,8 +7706,57 @@ def api_draft_recommend_category(draft_id):
 
 @ozon_bp.route('/api/draft/<int:draft_id>/auto-fill-apply', methods=['POST'])
 @login_required
+def _attr_name_match(s_attr, t_attr):
+    """复用适配工作台的成熟属性名匹配逻辑"""
+    import re as _re2
+    def _norm(s): return _re2.sub(r'\s+', ' ', str(s or '').strip().lower())
+    ALIASES = {
+        '颜色': ['цвет', '商品颜色'], '商品颜色': ['цвет', '颜色'],
+        '保修期': ['гарантия', '保修'], '包装数量': ['количество в упаковке', '每包数量'],
+        '产地': ['страна-изготовитель', '制造国'], '重量': ['вес товара', '商品重量'],
+        '品牌': ['бренд', 'brand', 'производитель'],
+        '型号': ['модель', 'название модели', '型号名称'],
+        '类型': ['тип', 'вид', 'тип товара'],
+        '用途': ['назначение', 'использование'],
+        '尺寸': ['размеры', 'размер'],
+        '材料': ['материал', 'состав'],
+    }
+    sn = {_norm(x) for x in [s_attr.get('name_cn'), s_attr.get('name_ru'), s_attr.get('name'), s_attr.get('key')] if x}
+    tn = {_norm(x) for x in [t_attr.name_cn, t_attr.name, (t_attr.description or '')] if x}
+    for s in sn:
+        for t in tn:
+            if s and t and (s == t or s in t or t in s):
+                return True
+    js = ' '.join(sn)
+    jt = ' '.join(tn)
+    for k, ws in ALIASES.items():
+        aw = [_norm(k)] + [_norm(w) for w in ws]
+        if any(w in js for w in aw) and any(w in jt for w in aw):
+            return True
+    return False
+
+
+def _match_dict_val(s_attr, t_vals):
+    """复用适配工作台的字典值匹配逻辑"""
+    import re as _re3
+    def _norm(s): return _re3.sub(r'\s+', ' ', str(s or '').strip().lower())
+    sv = set()
+    for v in [s_attr.get('value_cn'), s_attr.get('value_ru'), s_attr.get('value'), s_attr.get('text')]:
+        if v:
+            sv.add(_norm(str(v)))
+            for p in _re3.split(r'[,，、/;；]+', str(v)):
+                if p.strip():
+                    sv.add(_norm(p.strip()))
+    res = []
+    for tv in t_vals:
+        tn = {_norm(x) for x in [tv.value_cn, tv.value, tv.info] if x}
+        if any(s in t for s in sv for t in tn) or any(t in s for s in sv for t in tn if len(t) > 2):
+            res.append(tv)
+    return res
+
+
 def api_draft_auto_fill_apply(draft_id):
-    """Draft 级自动填写 — 从源商品数据填草稿"""
+    """Draft 级自动填写 — 复用适配工作台的成熟匹配逻辑"""
     draft = OzonDraft.get_or_none((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
     if not draft: return jsonify({"ok": False, "error": "草稿不存在"}), 404
     source = draft.source
@@ -7716,53 +7765,129 @@ def api_draft_auto_fill_apply(draft_id):
     try: raw = json.loads(source.raw_json or '{}')
     except: raw = {}
     filled = 0
+    diagnostics = []
     data = request.get_json(silent=True) or {}
+
     # 标题
     if not draft.title_ru and source.title_cn:
         draft.title_ru = source.title_cn[:150]; filled += 1
-    # 描述
+
+    # 描述（HTML→纯文本）
     rich = raw.get('rich_text') or {}
     if not draft.description_ru and (rich.get('html') or rich.get('plain_text')):
-        draft.description_ru = (rich.get('html') or rich.get('plain_text'))[:50000]; filled += 1
+        raw_html = rich.get('html') or ''
+        if raw_html:
+            from services.ozon_template_excel import html_to_plain_text
+            draft.description_ru = html_to_plain_text(raw_html, max_length=50000)
+        else:
+            draft.description_ru = (rich.get('plain_text') or '')[:50000]
+        filled += 1
+
     # 卖点
     if not draft.bullets_ru:
         src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
-        bullets = ['• ' + (a.get('name','') + ': ' + str(a.get('value',''))) for a in src_attrs[:8] if a.get('name') and a.get('value')]
+        bullets = ['• ' + (a.get('name', '') + ': ' + str(a.get('value', '')))
+                   for a in src_attrs[:8] if a.get('name') and a.get('value')]
         if bullets: draft.bullets_ru = json.dumps(bullets, ensure_ascii=False); filled += 1
-    # 属性（双语匹配+字典值匹配）— 统一扁平 map 格式
+
+    # ── 属性（复用适配工作台的双语+别名+字典值匹配）──
+    attr_filled = 0
+    attr_diagnostics = []
     if draft.ozon_category_id and draft.type_id:
         saved = _load_draft_attributes_map(draft)
         src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
-        tgt_attrs = list(OzonCategoryAttribute.select().where((OzonCategoryAttribute.user == current_user) & (OzonCategoryAttribute.ozon_category_id == draft.ozon_category_id) & (OzonCategoryAttribute.type_id == draft.type_id)))
+
+        # 使用翻译后的双语属性
+        loc = raw.get('localized') or {}
+        loc_attrs = loc.get('source_attributes') or {}
+        for sa in src_attrs:
+            nr = (sa.get('name') or sa.get('key') or '').strip()
+            vr = str(sa.get('value') or sa.get('text') or '')
+            ck = (nr + '=' + vr).lower()
+            lc = loc_attrs.get(ck, {}) if isinstance(loc_attrs, dict) else {}
+            if lc.get('name_cn'): sa['name_cn'] = lc['name_cn']
+            if lc.get('value_cn'): sa['value_cn'] = lc['value_cn']
+
+        tgt_attrs = list(OzonCategoryAttribute.select().where(
+            (OzonCategoryAttribute.user == current_user) &
+            (OzonCategoryAttribute.ozon_category_id == draft.ozon_category_id) &
+            (OzonCategoryAttribute.type_id == draft.type_id)))
+
         # 字典值缓存
-        dict_ids = [a.attribute_id for a in tgt_attrs if a.is_dictionary]
         tgt_vals = {}
+        dict_ids = [a.attribute_id for a in tgt_attrs if a.is_dictionary]
         if dict_ids:
-            for v in OzonAttributeValue.select().where((OzonAttributeValue.user == current_user) & (OzonAttributeValue.type_id == draft.type_id) & (OzonAttributeValue.attribute_id.in_(dict_ids))):
+            for v in OzonAttributeValue.select().where(
+                (OzonAttributeValue.user == current_user) &
+                (OzonAttributeValue.type_id == draft.type_id) &
+                (OzonAttributeValue.attribute_id.in_(dict_ids))):
                 tgt_vals.setdefault(v.attribute_id, []).append(v)
+
         for ta in tgt_attrs:
             aid = str(ta.attribute_id)
-            if aid in saved: continue
-            tname = (ta.name_cn + ' ' + ta.name).lower()
+            if aid in saved and saved[aid].get('value'):
+                continue  # 已有值，不覆盖
+
+            matched = False
+            match_reason = ''
             for sa in src_attrs:
-                sname = ((sa.get('name_cn') or '') + ' ' + (sa.get('name') or '') + ' ' + (sa.get('key') or '')).lower()
-                if sname in tname or tname in sname or any(w in sname for w in tname.split() if len(w)>2):
-                    val = str(sa.get('value_cn') or sa.get('value') or '')
-                    entry = {'value': val, 'source': 'auto_fill', 'attribute_name': ta.name_cn or ta.name}
-                    if ta.is_dictionary and ta.attribute_id in tgt_vals:
-                        for tv in tgt_vals[ta.attribute_id]:
-                            if (tv.value_cn or tv.value or '').lower() == val.lower():
-                                entry['value_id'] = tv.value_id
-                                entry['value_cn'] = tv.value_cn
-                                entry['value_ru'] = tv.value
-                                break
-                    saved[aid] = entry; filled += 1
-                    break
-        draft.attributes_json = json.dumps(saved, ensure_ascii=False)
+                if not _attr_name_match(sa, ta):
+                    continue
+
+                sv = sa.get('value_cn') or sa.get('value_ru') or sa.get('value') or sa.get('text') or ''
+                entry = {
+                    'value': sv, 'source': 'auto_fill',
+                    'source_attribute_name': sa.get('name_cn') or sa.get('name', ''),
+                    'attribute_name': ta.name_cn or ta.name,
+                }
+
+                # 字典值匹配
+                if ta.is_dictionary and ta.attribute_id in tgt_vals:
+                    dvs = _match_dict_val(sa, tgt_vals[ta.attribute_id])
+                    if dvs:
+                        dv = dvs[0]
+                        entry['value_id'] = dv.value_id
+                        entry['value'] = dv.value_cn or dv.value
+                        entry['value_cn'] = dv.value_cn
+                        entry['value_ru'] = dv.value
+                        match_reason = f'字典匹配: {dv.value_cn or dv.value}'
+                    else:
+                        match_reason = f'属性名匹配但字典值未命中: {sv}'
+                        attr_diagnostics.append({
+                            'attribute': ta.name_cn or ta.name,
+                            'reason': f'源值「{sv}」未在OZON字典中找到对应选项',
+                        })
+                        continue  # 字典属性但值不匹配 → 不填充
+                else:
+                    match_reason = '属性名匹配'
+
+                saved[aid] = entry
+                attr_filled += 1
+                matched = True
+                break
+
+            if not matched and ta.is_required:
+                attr_diagnostics.append({
+                    'attribute': ta.name_cn or ta.name,
+                    'reason': '未在采集源中找到匹配的属性名',
+                })
+
+        # 只有非零匹配时才写回
+        if attr_filled > 0:
+            draft.attributes_json = json.dumps(saved, ensure_ascii=False)
+            filled += attr_filled
+        else:
+            diagnostics.append('属性自动填写: 0 项匹配，已保留现有属性不覆盖')
+        diagnostics.extend([f'{d["attribute"]}: {d["reason"]}' for d in attr_diagnostics[:10]])
+
     draft.save()
-    return jsonify({"ok": True, "filled_count": filled, "saved_attributes": saved,
-                    "dcid": draft.ozon_category_id, "type_id": draft.type_id,
-                    "message": f"已应用 {filled} 项"})
+    return jsonify({
+        "ok": True,
+        "filled_count": filled,
+        "message": f"已应用 {filled} 项" + (f"，属性 {attr_filled} 项匹配" if attr_filled > 0 else ""),
+        "diagnostics": diagnostics[:15],
+        "attr_diagnostics": attr_diagnostics[:10] if not attr_filled else [],
+    })
 
 @ozon_bp.route('/api/draft/<int:draft_id>/save-attributes', methods=['POST'])
 @login_required

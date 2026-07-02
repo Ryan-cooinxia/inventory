@@ -919,7 +919,18 @@ function autoFillDraftAll(){
       fetch('/ozon/api/draft/'+DRAFT_ID+'/media/import-from-source',{method:'POST'})
       .then(r2=>r2.json()).then(function(md){
         if(md.ok){ MEDIA_POOL = md.media; }
-        alert('已应用 '+d.filled_count+' 项'+(md.ok?'，已导入 '+md.images_imported+' 张图片 + '+md.videos_imported+' 个视频':''));
+        var msg = '已应用 '+d.filled_count+' 项';
+        if(md.ok){
+          var skipInfo = [];
+          if(!md.images_imported && !md.images_fixed_role) skipInfo.push('图片: 已存在或被黑名单拦截');
+          if(!md.videos_imported) skipInfo.push('视频: 已存在或被黑名单拦截');
+          msg += '，' + (md.images_imported || 0) + ' 张图片 + ' + (md.videos_imported || 0) + ' 个视频';
+          if(skipInfo.length) msg += '\n\n' + skipInfo.join('\n');
+        }
+        if(d.diagnostics && d.diagnostics.length){
+          msg += '\n\n诊断:\n' + d.diagnostics.join('\n');
+        }
+        alert(msg);
         location.reload();
       }).catch(function(){ location.reload(); });
     }else alert(d.error||'失败');
