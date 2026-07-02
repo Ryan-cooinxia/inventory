@@ -721,13 +721,17 @@ def generate_export_excel(draft, template, field_mapping):
     save_path = os.path.join(save_dir, filename)
 
     # ── 视频导出到辅助 sheet ──
-    video_warnings = _export_video_sheets(wb, draft, field_mapping)
+    videos_written, covers_written, video_warnings = _export_video_sheets(wb, draft, field_mapping)
 
     wb.save(save_path)
     wb.close()
 
     # ── 生成后校验 ──
     validation_errors = _validate_generated_excel(save_path, header_row, data_start_row)
+    if videos_written:
+        validation_errors.append(f'视频: {videos_written} 条写入（OZON可能不支持外部链接，需手动上传）')
+    if covers_written:
+        validation_errors.append(f'视频封面: {covers_written} 条写入')
     if video_warnings:
         validation_errors.extend(video_warnings)
 
@@ -736,69 +740,93 @@ def generate_export_excel(draft, template, field_mapping):
 
 def _export_video_sheets(wb, draft, field_mapping):
     """
-    将草稿视频写入 OZON 模板的辅助 sheet（Ozon.视频 / Ozon视频封面）。
-    返回警告信息列表。
+    将草稿视频写入主表视频列 + 辅助 sheet。
+    返回 (videos_written, covers_written, warnings) 元组。
     """
     from blueprints.ozon import _load_media_json
     media = _load_media_json(draft) if _load_media_json else {}
     videos = media.get('videos', []) if isinstance(media, dict) else []
     if not videos:
-        return []
+        return 0, 0, ['当前草稿无视频']
 
     offer_id = field_mapping.get('货号', '')
+    valid_videos = [v for v in videos if v.get('url') and str(v.get('url', '')).startswith(('http://', 'https://'))]
+    if not valid_videos:
+        return 0, 0, ['视频URL为空或非http链接，无法导出']
+
     warnings = []
+    videos_written = 0
+    covers_written = 0
 
-    # ── Ozon.视频 sheet ──
-    video_sheet_name = None
-    for name in ['Ozon.视频', 'Озон.Видео', 'Ozon.Video']:
-        if name in wb.sheetnames:
-            video_sheet_name = name
-            break
+    def _fuzzy_find_header(col_map, *patterns):
+        """模糊匹配表头名"""
+        for h, idx in col_map.items():
+            hl = h.lower().rstrip('*＊')
+            for p in patterns:
+                if p.lower() in hl or hl in p.lower():
+                    return idx
+        return None
 
-    if video_sheet_name:
-        ws_v = wb[video_sheet_name]
-        # 找表头行和数据起始行
+    # ── 1. 主表视频列（模板 sheet 中的视频/视频封面列）──
+    if '模板' in wb.sheetnames:
+        ws_main = wb['模板']
+        main_header_row = 2
+        main_col_map = {}
+        for c in range(1, ws_main.max_column + 1):
+            h = str(ws_main.cell(row=main_header_row, column=c).value or '').strip()
+            if h:
+                main_col_map[h] = c
+
+        # 视频列
+        vid_col = _fuzzy_find_header(main_col_map, '视频', 'видео', 'video')
+        if vid_col:
+            ws_main.cell(row=5, column=vid_col).value = '\n'.join(v.get('url', '') for v in valid_videos[:5])
+            videos_written += len(valid_videos[:5])
+
+        # 视频封面列
+        cov_col = _fuzzy_find_header(main_col_map, '视频封面', 'обложка видео', 'video cover')
+        if cov_col:
+            covers = [v.get('cover_url', '') for v in valid_videos[:5] if v.get('cover_url')]
+            if covers:
+                ws_main.cell(row=5, column=cov_col).value = '\n'.join(covers)
+                covers_written += len(covers)
+
+    # ── 2. 辅助 sheet ──
+    video_sheet_names = [s for s in wb.sheetnames if any(k in s.lower() for k in ['ozon.视频', 'озон.видео', 'ozon.video', '视频'])]
+    for vs_name in video_sheet_names:
+        ws_v = wb[vs_name]
         v_header_row = 1
         for r in range(1, min(4, ws_v.max_row + 1)):
             if ws_v.cell(row=r, column=1).value:
                 v_header_row = r
                 break
         v_data_start = v_header_row + 1
-
-        # 找列：货号 / 视频名称 / 视频链接 / 视频中的商品
         v_col_map = {}
         for c in range(1, ws_v.max_column + 1):
             h = str(ws_v.cell(row=v_header_row, column=c).value or '').strip()
             if h:
                 v_col_map[h] = c
 
-        for vi, v in enumerate(videos):
-            if not v.get('url'):
-                continue
+        for vi, v in enumerate(valid_videos[:10]):
             row = v_data_start + vi
-            if v_col_map.get('货号'):
-                ws_v.cell(row=row, column=v_col_map['货号']).value = offer_id
-            if v_col_map.get('视频名称') or v_col_map.get('Название видео'):
-                c = v_col_map.get('视频名称') or v_col_map.get('Название видео')
-                ws_v.cell(row=row, column=c).value = v.get('name') or v.get('title') or f'Видео {vi+1}'
-            if v_col_map.get('视频链接') or v_col_map.get('Ссылка на видео'):
-                c = v_col_map.get('视频链接') or v_col_map.get('Ссылка на видео')
-                ws_v.cell(row=row, column=c).value = v.get('url', '')
-            if v_col_map.get('视频中的商品') or v_col_map.get('Товары на видео'):
-                c = v_col_map.get('视频中的商品') or v_col_map.get('Товары на видео')
-                ws_v.cell(row=row, column=c).value = offer_id
-    else:
-        warnings.append('当前模板不支持视频sheet，请Excel发布后到OZON后台更新视频')
+            c_oid = _fuzzy_find_header(v_col_map, '货号', 'sku', 'offer')
+            c_name = _fuzzy_find_header(v_col_map, '视频名称', 'название', 'name')
+            c_link = _fuzzy_find_header(v_col_map, '视频链接', 'ссылка', 'link', 'url')
+            c_goods = _fuzzy_find_header(v_col_map, '视频中的商品', 'товары на видео')
+            if c_oid:
+                ws_v.cell(row=row, column=c_oid).value = offer_id
+            if c_name:
+                ws_v.cell(row=row, column=c_name).value = v.get('name') or v.get('title') or f'Видео {vi+1}'
+            if c_link:
+                ws_v.cell(row=row, column=c_link).value = v.get('url', '')
+                videos_written += 1
+            if c_goods:
+                ws_v.cell(row=row, column=c_goods).value = offer_id
 
-    # ── Ozon视频封面 sheet ──
-    cover_sheet_name = None
-    for name in ['Ozon视频封面', 'Обложка видео', 'Ozon.Video.Cover']:
-        if name in wb.sheetnames:
-            cover_sheet_name = name
-            break
-
-    if cover_sheet_name:
-        ws_c = wb[cover_sheet_name]
+    # ── 3. 视频封面辅助 sheet ──
+    cover_sheet_names = [s for s in wb.sheetnames if any(k in s.lower() for k in ['ozon视频封面', 'обложка видео', 'video cover', '封面'])]
+    for cs_name in cover_sheet_names:
+        ws_c = wb[cs_name]
         c_header_row = 1
         for r in range(1, min(4, ws_c.max_row + 1)):
             if ws_c.cell(row=r, column=1).value:
@@ -811,17 +839,25 @@ def _export_video_sheets(wb, draft, field_mapping):
             if h:
                 c_col_map[h] = c
 
-        for vi, v in enumerate(videos):
+        for vi, v in enumerate(valid_videos[:10]):
             if not v.get('cover_url'):
                 continue
             row = c_data_start + vi
-            if c_col_map.get('货号'):
-                ws_c.cell(row=row, column=c_col_map['货号']).value = offer_id
-            if c_col_map.get('视频封面链接') or c_col_map.get('Ссылка на обложку'):
-                c = c_col_map.get('视频封面链接') or c_col_map.get('Ссылка на обложку')
-                ws_c.cell(row=row, column=c).value = v.get('cover_url', '')
+            c_oid = _fuzzy_find_header(c_col_map, '货号', 'sku')
+            c_cov = _fuzzy_find_header(c_col_map, '视频封面链接', 'ссылка на обложку', 'cover')
+            if c_oid:
+                ws_c.cell(row=row, column=c_oid).value = offer_id
+            if c_cov:
+                ws_c.cell(row=row, column=c_cov).value = v.get('cover_url', '')
+                covers_written += 1
 
-    return warnings
+    if not videos_written:
+        warnings.append('视频未写入：请检查模板列名或草稿视频数据')
+    if not covers_written:
+        warnings.append('视频封面未写入或草稿无封面URL')
+    warnings.append('OZON 可能不支持外部视频链接，如上传后视频列为空请手动上传视频文件')
+
+    return videos_written, covers_written, warnings
 
 
 def _validate_generated_excel(save_path, header_row, data_start_row):
