@@ -7924,7 +7924,7 @@ def api_draft_media_import_from_source(draft_id):
         # 图片删除黑名单：用户手动删除过的 source_media_id 不重新导入
         if source_media_id in deleted_image_source_ids:
             continue
-        img_url = sm.image_url or sm.public_url or ''
+        img_url = sm.source_url or ''
         if img_url and img_url in deleted_image_urls:
             continue
 
