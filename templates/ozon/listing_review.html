@@ -135,7 +135,7 @@
         <div id="tab-category" class="d-none">
           <div class="mb-2 p-2 bg-light rounded">
             <div class="d-flex justify-content-between align-items-center">
-              <div><b>已选类目:</b> <span id="catName">{% if draft.type_name_cn %}{{ draft.type_name_cn }}{% elif draft.ozon_category_id %}dcid={{ draft.ozon_category_id }}{% else %}未选择{% endif %}</span><br>
+              <div><b>已选类目:</b> <span id="catName">{% if draft.type_name_cn or draft.type_name_ru %}{{ draft.type_name_cn or draft.type_name_ru }}{% elif draft.category_path_ru %}{{ draft.category_path_ru.split('/')[-1] }}{% elif draft.ozon_category_id %}dcid={{ draft.ozon_category_id }}{% else %}未选择{% endif %}</span><br>
                 {% if draft.ozon_category_id %}<small class="text-muted">dcid={{ draft.ozon_category_id }} type_id={{ draft.type_id }}</small>{% endif %}</div>
               <div class="d-flex gap-1">
                 <button class="btn btn-sm btn-outline-success" onclick="recommendCategoryDraft()">🤖 推荐类目</button>

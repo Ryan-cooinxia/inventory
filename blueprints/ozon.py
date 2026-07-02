@@ -7270,23 +7270,20 @@ def api_get_category_attributes(cat_id):
             key = (v.attribute_id, v.value_id)
             if key in seen_val: continue
             seen_val.add(key)
-            # 自动补中文值
-            if not v.value_cn:
+            # 即时计算 display_value（不写 DB，避免 SQLite 锁）
+            display = v.value_cn
+            missing = False
+            if not display:
                 cn_val, _ = resolve_attribute_value_cn(
                     current_user, v.value, v.value_id, v.attribute_id)
-                if cn_val and not v.value_cn:
-                    # 异步：后台更新 DB（不阻塞响应）
-                    try:
-                        OzonAttributeValue.update(value_cn=cn_val).where(
-                            OzonAttributeValue.id == v.id
-                        ).execute()
-                        v.value_cn = cn_val
-                    except Exception:
-                        pass
+                if cn_val:
+                    display = cn_val
+                else:
+                    missing = True
             values_map.setdefault(v.attribute_id, []).append({
                 'value_id': v.value_id, 'value': v.value, 'value_cn': v.value_cn, 'info': v.info,
-                'display_value': v.value_cn or v.value,
-                'missing_translation': not bool(v.value_cn),
+                'display_value': display or v.value,
+                'missing_translation': missing,
             })
 
     attrs = [{
