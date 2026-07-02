@@ -1447,3 +1447,24 @@ class OzonTemplateExportJob(BaseModel):
             (('user', 'draft'), False),
             (('draft', 'created_at'), False),
         )
+
+
+class OzonAttributeTranslationCache(BaseModel):
+    """OZON 属性翻译缓存"""
+    user = ForeignKeyField(User, backref='ozon_attribute_translation_cache')
+    raw_name = CharField(max_length=200)
+    raw_value = TextField(null=True)
+    name_cn = CharField(max_length=200, null=True)
+    value_cn = TextField(null=True)
+    type_id = CharField(max_length=50, null=True)
+    attribute_id = CharField(max_length=50, null=True)
+    source = CharField(max_length=30, default='glossary')
+    confidence = FloatField(default=0.8)
+    review_status = CharField(max_length=20, default='confirmed')
+    created_at = DateTimeField(default=datetime.datetime.now)
+    updated_at = DateTimeField(default=datetime.datetime.now)
+
+    class Meta:
+        indexes = (
+            (('user', 'raw_name', 'raw_value'), False),
+        )

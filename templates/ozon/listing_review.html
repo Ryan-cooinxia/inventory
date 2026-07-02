@@ -138,6 +138,7 @@
               <div><b>已选类目:</b> <span id="catName">{% if draft.type_name_cn or draft.type_name_ru %}{{ draft.type_name_cn or draft.type_name_ru }}{% elif draft.category_path_ru %}{{ draft.category_path_ru.split('/')[-1] }}{% elif draft.ozon_category_id %}dcid={{ draft.ozon_category_id }}{% else %}未选择{% endif %}</span><br>
                 {% if draft.ozon_category_id %}<small class="text-muted">dcid={{ draft.ozon_category_id }} type_id={{ draft.type_id }}</small>{% endif %}</div>
               <div class="d-flex gap-1">
+                <button class="btn btn-sm btn-outline-info" onclick="translateAttrsDraft()">🌐 翻译/校准属性</button>
                 <button class="btn btn-sm btn-outline-success" onclick="recommendCategoryDraft()">🤖 推荐类目</button>
                 <button class="btn btn-sm btn-outline-primary" onclick="openCategoryForAdaptation()">📂 类目树选择</button>
                 <button class="btn btn-sm btn-outline-warning" onclick="syncAttributesDraft()">🔄 同步属性</button>
@@ -964,6 +965,26 @@ function fillFromSource(type){
 }
 
 // ═══ 类目/属性 ═══
+function translateAttrsDraft(){
+  var btn = event.target; btn.disabled = true; btn.textContent = '翻译中...';
+  fetch('/ozon/api/draft/' + DRAFT_ID + '/translate-attributes', {method: 'POST', headers: {'Content-Type': 'application/json'}})
+  .then(r => r.json()).then(function(d) {
+    if(d.ok){
+      var msg = d.message;
+      if(d.stats.needs_review > 0){
+        msg += '\n\n待确认项:';
+        d.items.filter(function(i){return i.status === 'needs_review';}).slice(0,5).forEach(function(i){
+          msg += '\n  ' + i.raw_name + ' = ' + i.raw_value + ' (建议:' + (i.value_cn || '?') + ')';
+        });
+      }
+      if(d.stats.warning) msg += '\n\n⚠ ' + d.stats.warning;
+      alert(msg);
+      if(d.stats.translated > 0 && typeof loadDraftAttrs === 'function') loadDraftAttrs();
+    } else { alert(d.error || '翻译失败'); }
+  }).catch(function(e){ alert(e.message); })
+  .finally(function(){ btn.disabled = false; btn.textContent = '🌐 翻译/校准属性'; });
+}
+
 function recommendCategoryDraft(){
   var btn=event.target;btn.disabled=true;btn.textContent='分析中...';
   fetch('/ozon/api/draft/'+DRAFT_ID+'/recommend-category',{method:'POST',headers:{'Accept':'application/json'}})

@@ -7673,6 +7673,39 @@ def _match_dict_val(s_attr, t_vals):
     return res
 
 
+@ozon_bp.route('/api/draft/<int:draft_id>/translate-attributes', methods=['POST'])
+@login_required
+def api_draft_translate_attributes(draft_id):
+    """翻译/校准采集源属性"""
+    draft = OzonDraft.get_or_none((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
+    if not draft or not draft.source:
+        return jsonify({"ok": False, "error": "草稿或源商品不存在"}), 404
+
+    raw = {}
+    try: raw = json.loads(draft.source.raw_json or '{}')
+    except: raw = {}
+
+    src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
+    if not src_attrs:
+        return jsonify({"ok": True, "message": "无源属性可翻译", "items": [], "stats": {}})
+
+    from services.ozon_attribute_translate import translate_source_attributes
+    items, stats = translate_source_attributes(src_attrs, current_user)
+
+    # 如果有 type_id，尝试校准到 OZON 字典
+    has_type = bool(draft.type_id and draft.ozon_category_id)
+    if not has_type:
+        stats['warning'] = '尚未选择OZON类目，无法校准模板下拉值'
+
+    return jsonify({
+        "ok": True,
+        "message": f"已翻译 {stats['translated']} 项，保留专有名词 {stats['proper_nouns']} 项，需确认 {stats['needs_review']} 项",
+        "items": items,
+        "stats": stats,
+        "has_type": has_type,
+    })
+
+
 @ozon_bp.route('/api/draft/<int:draft_id>/auto-fill-apply', methods=['POST'])
 @login_required
 def api_draft_auto_fill_apply(draft_id):
@@ -7717,6 +7750,18 @@ def api_draft_auto_fill_apply(draft_id):
     if draft.ozon_category_id and draft.type_id:
         saved = _load_draft_attributes_map(draft)
         src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
+
+        # 翻译源属性（本地词典 + OZON 字典 + 缓存）
+        from services.ozon_attribute_translate import translate_source_attributes as _translate_src
+        translated_items, _translate_stats = _translate_src(src_attrs, current_user)
+        for ti in translated_items:
+            for sa in src_attrs:
+                if (sa.get('name') or sa.get('key') or '') == ti['raw_name'] and str(sa.get('value') or '') == ti['raw_value']:
+                    if ti['name_cn'] and ti['name_cn'] != ti['raw_name']:
+                        sa['name_cn'] = ti['name_cn']
+                    if ti['value_cn'] and ti['source'] != 'needs_review':
+                        sa['value_cn'] = ti['value_cn']
+                    break
 
         # 使用翻译后的双语属性
         loc = raw.get('localized') or {}

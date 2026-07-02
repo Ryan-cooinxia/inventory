@@ -39,7 +39,7 @@ from models import (
     # OZON 视觉模型
     VisionModelConfig, ImageAnalysisJob, ImageFact,
     OzonOnlineProduct, OzonOnlineProductAction,
-    OzonExcelTemplate, OzonTemplateExportJob,
+    OzonExcelTemplate, OzonTemplateExportJob, OzonAttributeTranslationCache,
 )
 
 # 导入扩展
@@ -153,6 +153,7 @@ def inject_ozon_nav():
         'VisionModelConfig': VisionModelConfig,
         'OzonExcelTemplate': OzonExcelTemplate,
         'OzonTemplateExportJob': OzonTemplateExportJob,
+        'OzonAttributeTranslationCache': OzonAttributeTranslationCache,
     }
 
 def init_db():
@@ -176,7 +177,7 @@ def init_db():
                       OzonImageCandidate, OzonImagePlan, OzonImageReference,
                       OzonProductCutout, OzonProductSubjectDetection,
                       ProductFactRevision, ProductFactSchema,
-                      OzonExcelTemplate, OzonTemplateExportJob],
+                      OzonExcelTemplate, OzonTemplateExportJob, OzonAttributeTranslationCache],
                      safe=True)
     migrate_ozon_source_quality_schema()
     migrate_product_bundle_schema()
