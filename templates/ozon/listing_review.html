@@ -194,7 +194,7 @@
                     <option value="">—</option>
                     {% for v in color_values %}
                     <option value="{{ v.value }}" data-value-id="{{ v.value_id }}" {% if sku.color_ru == v.value %}selected{% endif %}>
-                      {{ v.value }} {{ ('(' + v.value_cn + ')' + ((' - ' + v.value_ru) if v.value_ru else '')) if v.value_cn or v.value_ru else '' }}
+                      {{ v.value_cn or v.value }}{% if not v.value_cn %} ⚠️{% endif %}
                     </option>
                     {% endfor %}
                   </select>
@@ -972,8 +972,16 @@ function loadDraftAttrs(){
       var aid=String(a.attribute_id),sv=saved[aid]||{},sVal=typeof sv==='object'?sv.value||'':sv,sVid=typeof sv==='object'?sv.value_id||'':'';
       h+='<div class="mb-1"><label style="font-size:10px">'+(a.name_cn||a.name)+(a.is_required?' <span class="text-danger">*</span>':'')+'</label>';
       if(a.is_dictionary&&a.values&&a.values.length){h+='<select class="form-select form-select-sm draft-attr" data-aid="'+aid+'" style="font-size:10px"><option value="">--</option>';
-        a.values.forEach(function(v){h+='<option value="'+v.value_id+'"'+(v.value_id==sVid?' selected':'')+'>'+(v.value_cn||v.value)+'</option>';});
+        a.values.forEach(function(v){
+          var disp = v.display_value || (v.value_cn || v.value);
+          var missing = v.missing_translation ? ' ⚠️' : '';
+          var style = v.missing_translation ? ' style=\"color:#dc3545\"' : '';
+          h+='<option value=\"'+v.value_id+'\"'+(v.value_id==sVid?' selected':'')+style+'>'+disp+missing+'</option>';
+        });
         h+='</select>';
+        // 如果有未翻译的，提示
+        var hasMissing = a.values.some(function(v){return v.missing_translation;});
+        if(hasMissing){h+=' <button type=\"button\" class=\"btn btn-sm btn-outline-warning\" style=\"font-size:8px;padding:0 3px\" onclick=\"translateDictValues()\" title=\"翻译当前类目字典值\">🌐 翻译</button>';}
       }else{h+='<input class="form-control form-control-sm draft-attr" data-aid="'+aid+'" value="'+(sVal||'').replace(/"/g,'&quot;')+'" style="font-size:10px">';}
       h+='</div>';
     });
@@ -986,6 +994,29 @@ function saveAttrsDraft(){
   var attrs={};document.querySelectorAll('.draft-attr').forEach(function(e){attrs[e.dataset.aid]=e.value;});
   fetch('/ozon/api/draft/'+DRAFT_ID+'/save-attributes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({attributes:attrs})})
   .then(r=>r.json()).then(d=>{alert(d.message||'已保存');}).catch(e=>alert(e.message));
+}
+
+function translateDictValues(){
+  var btn = event.target; btn.disabled = true; btn.textContent = '翻译中...';
+  var dcid = '{{ draft.ozon_category_id or "" }}';
+  var typeId = '{{ draft.type_id or "" }}';
+  if(!dcid){ alert('请先选择类目'); btn.disabled = false; return; }
+  fetch('/ozon/api/category/' + dcid + '/translate-attribute-values', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({type_id: typeId})
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if(d.ok){
+      alert(d.message);
+      if(d.translated > 0){ loadDraftAttrs(); }
+    } else {
+      alert(d.error || '翻译失败');
+    }
+  })
+  .catch(function(e){ alert(e.message); })
+  .finally(function(){ btn.disabled = false; btn.textContent = '🌐 翻译'; });
 }
 
 function autoFillAttrsDraft(){

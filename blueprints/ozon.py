@@ -5085,7 +5085,9 @@ def adaptation_workspace(source_id):
                     .order_by(OzonAttributeValue.attribute_id, OzonAttributeValue.value_id))
                 for v in val_records:
                     adaptation_attr_values.setdefault(v.attribute_id, []).append({
-                        'value_id': v.value_id, 'value': v.value, 'value_cn': v.value_cn, 'info': v.info
+                        'value_id': v.value_id, 'value': v.value, 'value_cn': v.value_cn, 'info': v.info,
+                        'display_value': v.value_cn or v.value,
+                        'missing_translation': not bool(v.value_cn),
                     })
 
         # 解析已保存的属性值
@@ -7209,7 +7211,9 @@ def api_get_category_attributes(cat_id):
             if key in seen_val: continue
             seen_val.add(key)
             values_map.setdefault(v.attribute_id, []).append({
-                'value_id': v.value_id, 'value': v.value, 'value_cn': v.value_cn, 'info': v.info
+                'value_id': v.value_id, 'value': v.value, 'value_cn': v.value_cn, 'info': v.info,
+                'display_value': v.value_cn or v.value,
+                'missing_translation': not bool(v.value_cn),
             })
 
     attrs = [{
@@ -9193,6 +9197,62 @@ def api_sync_attribute_values(cat_id):
 
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)[:300]}), 500
+
+
+@ozon_bp.route('/api/category/<cat_id>/translate-attribute-values', methods=['POST'])
+@login_required
+def api_translate_attribute_values(cat_id):
+    """翻译当前类目下所有缺少 value_cn 的字典值"""
+    data = request.get_json(silent=True) or {}
+    type_id = data.get('type_id', '').strip()
+
+    # 找到需要翻译的字典值
+    query = (OzonAttributeValue
+             .select()
+             .join(OzonCategoryAttribute, on=(
+                 (OzonAttributeValue.attribute_id == OzonCategoryAttribute.attribute_id) &
+                 (OzonAttributeValue.user == OzonCategoryAttribute.user)))
+             .where(
+                 (OzonAttributeValue.user == current_user) &
+                 (OzonCategoryAttribute.ozon_category_id == cat_id) &
+                 (OzonCategoryAttribute.is_dictionary == True) &
+                 ((OzonAttributeValue.value_cn.is_null(True)) |
+                  (OzonAttributeValue.value_cn == '') |
+                  (OzonAttributeValue.value_cn == OzonAttributeValue.value)))
+             )
+    if type_id:
+        query = query.where(OzonCategoryAttribute.type_id == type_id)
+
+    untranslated = list(query.dicts().limit(500))
+    if not untranslated:
+        return jsonify({'ok': True, 'message': '所有字典值已有中文翻译', 'translated': 0})
+
+    # 收集俄语 value 去翻译
+    ru_values = list(set(
+        v['value'] for v in untranslated if v.get('value') and v['value'].strip()
+    ))
+    if not ru_values:
+        return jsonify({'ok': True, 'message': '无需翻译的值', 'translated': 0})
+
+    result = _batch_translate(ru_values, current_user)
+    translated_count = 0
+    for row in untranslated:
+        ru_val = row.get('value', '')
+        cn_val = result.get(ru_val, '') if isinstance(result, dict) else ''
+        if cn_val and cn_val != ru_val:
+            OzonAttributeValue.update(value_cn=cn_val).where(
+                (OzonAttributeValue.id == row['id'])
+            ).execute()
+            translated_count += 1
+
+    errors = result.get('_errors', []) if isinstance(result, dict) else []
+    return jsonify({
+        'ok': True,
+        'message': f'已翻译 {translated_count} 个字典值（共 {len(untranslated)} 个待翻译）',
+        'translated': translated_count,
+        'total': len(untranslated),
+        'errors': errors[:5] if errors else [],
+    })
 
 
 @ozon_bp.route('/api/category/<cat_id>/expand-tree', methods=['POST'])
