@@ -7704,8 +7704,6 @@ def api_draft_recommend_category(draft_id):
     # 复用 adaptation 推荐逻辑
     return api_recommend_category(group.id)
 
-@ozon_bp.route('/api/draft/<int:draft_id>/auto-fill-apply', methods=['POST'])
-@login_required
 def _attr_name_match(s_attr, t_attr):
     """复用适配工作台的成熟属性名匹配逻辑"""
     import re as _re2
@@ -7755,6 +7753,8 @@ def _match_dict_val(s_attr, t_vals):
     return res
 
 
+@ozon_bp.route('/api/draft/<int:draft_id>/auto-fill-apply', methods=['POST'])
+@login_required
 def api_draft_auto_fill_apply(draft_id):
     """Draft 级自动填写 — 复用适配工作台的成熟匹配逻辑"""
     draft = OzonDraft.get_or_none((OzonDraft.id == draft_id) & (OzonDraft.user == current_user))
