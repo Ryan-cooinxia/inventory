@@ -7831,6 +7831,14 @@ def api_draft_auto_fill_apply(draft_id):
     # ── 属性（复用适配工作台的双语+别名+字典值匹配）──
     attr_filled = 0
     attr_diagnostics = []
+
+    # 不应从采集属性自动填充的特殊属性（需从草稿视频/hashtags 等专门数据源填充）
+    _SKIP_AUTO_FILL_PATTERNS = [
+        'озон.видео', 'ozon.video', 'озон.видеообложка', 'видео',
+        'pdf', 'инструкция',
+        'код продавца', 'seller code',
+    ]
+
     if draft.ozon_category_id and draft.type_id:
         saved = _load_draft_attributes_map(draft)
         src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
@@ -7863,8 +7871,18 @@ def api_draft_auto_fill_apply(draft_id):
 
         for ta in tgt_attrs:
             aid = str(ta.attribute_id)
-            # 与老代码一致：saved 中已存在的 key 跳过（不论 value 是否为空）
+            # 与老代码一致：saved 中已存在的 key 跳过
             if aid in saved:
+                continue
+
+            # 跳过视频/PDF 等特殊属性（不自动从采集属性匹配）
+            ta_name_lower = ((ta.name_cn or '') + ' ' + (ta.name or '')).lower()
+            if any(p in ta_name_lower for p in _SKIP_AUTO_FILL_PATTERNS):
+                continue
+
+            # 品牌/型号/卖家代码等专有名词：不自动填充，保留用户手动输入
+            if ta.name_cn in ('品牌', '型号名称', '卖家代码'):
+                continue
                 continue
 
             matched = False
@@ -7911,6 +7929,52 @@ def api_draft_auto_fill_apply(draft_id):
                     'reason': '未在采集源中找到匹配的属性名',
                 })
         # 只有非零匹配时才写回
+        # ── 特殊属性：从草稿自身数据填充 ──
+        # 1. #主题标签 → 从 draft.hashtags_ru
+        for ta in tgt_attrs:
+            aid = str(ta.attribute_id)
+            if aid in saved:
+                continue
+            if ta.name_cn in ('#标签', '#主题标签') or '#хештег' in (ta.name or '').lower():
+                if draft.hashtags_ru:
+                    saved[aid] = {'value': draft.hashtags_ru, 'source': 'draft_hashtags',
+                                  'attribute_name': ta.name_cn or ta.name}
+                    attr_filled += 1
+
+        # 2. 视频属性 → 从草稿视频
+        media = _load_media_json(draft)
+        draft_videos = media.get('videos', []) if isinstance(media, dict) else []
+        for ta in tgt_attrs:
+            aid = str(ta.attribute_id)
+            if aid in saved:
+                continue
+            ta_lower = ((ta.name_cn or '') + ' ' + (ta.name or '')).lower()
+            if 'озон.видео: название' in ta_lower or 'ozon视频' in ta_lower:
+                if 'название' in ta_lower or '名称' in ta_lower:
+                    names = [v.get('name') or v.get('title') or '' for v in draft_videos[:5] if v.get('url')]
+                    if names:
+                        saved[aid] = {'value': ', '.join(names), 'source': 'draft_videos',
+                                      'attribute_name': ta.name_cn or ta.name}
+                        attr_filled += 1
+                elif 'ссылка' in ta_lower or '链接' in ta_lower:
+                    urls = [v.get('url', '') for v in draft_videos[:5] if v.get('url')]
+                    if urls:
+                        saved[aid] = {'value': '\n'.join(urls), 'source': 'draft_videos',
+                                      'attribute_name': ta.name_cn or ta.name}
+                        attr_filled += 1
+                elif 'обложка' in ta_lower or '封面' in ta_lower:
+                    covers = [v.get('cover_url', '') for v in draft_videos[:5] if v.get('cover_url')]
+                    if covers:
+                        saved[aid] = {'value': '\n'.join(covers), 'source': 'draft_videos',
+                                      'attribute_name': ta.name_cn or ta.name}
+                        attr_filled += 1
+                elif 'товары на видео' in ta_lower or '视频中的商品' in ta_lower:
+                    if draft_videos:
+                        offer_id = (draft.draft_skus.first().offer_id or '') if draft.draft_skus.first() else ''
+                        saved[aid] = {'value': offer_id, 'source': 'draft_videos',
+                                      'attribute_name': ta.name_cn or ta.name}
+                        attr_filled += 1
+
         if attr_filled > 0:
             draft.attributes_json = json.dumps(saved, ensure_ascii=False)
             filled += attr_filled
