@@ -563,8 +563,8 @@ def _extract_attribute_value(draft, *keywords):
                 if dv:
                     return localized_attr_value(draft, dv)
 
-        # 非字典 / 字典值未找到：直接用 attributes_json 中的 value
-        v = attr_data.get('value_ru') or attr_data.get('value') or ''
+        # 非字典 / 字典值未找到：中文后台优先 value_cn
+        v = attr_data.get('value_cn') or attr_data.get('value_ru') or attr_data.get('value') or ''
         if v:
             return str(v).strip()
 
@@ -674,10 +674,22 @@ def generate_export_excel(draft, template, field_mapping):
         if sku:
             row_data['货号'] = (sku.offer_id or '').strip()
             row_data['SKU'] = (sku.offer_id or '').strip()
-            # SKU 颜色：有值才覆盖（不覆盖属性提取的俄语值）
-            sku_color = (getattr(sku, 'color_ru', None) or '').strip()
-            if sku_color:
-                row_data['商品颜色'] = sku_color
+            # SKU 颜色：有值才覆盖，且按店铺语言输出
+            sku_color_ru = (getattr(sku, 'color_ru', None) or '').strip()
+            if sku_color_ru and not row_data.get('商品颜色'):
+                # 尝试从 OzonAttributeValue 查中文值
+                from models import OzonAttributeValue
+                dv = (OzonAttributeValue
+                      .select()
+                      .where((OzonAttributeValue.user == draft.user) &
+                             (OzonAttributeValue.value == sku_color_ru) &
+                             (OzonAttributeValue.value_cn.is_null(False)) &
+                             (OzonAttributeValue.value_cn != ''))
+                      .first())
+                if dv:
+                    row_data['商品颜色'] = localized_attr_value(draft, dv)
+                else:
+                    row_data['商品颜色'] = sku_color_ru
             if len(skus) > 1 and sku.offer_id:
                 row_data['货号'] = (sku.offer_id or '').strip()
 

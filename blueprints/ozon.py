@@ -8050,10 +8050,11 @@ def api_draft_save_attributes(draft_id):
                              (OzonAttributeValue.value_id == str(val['value_id'])))
                       .first())
                 if dv:
+                    # DB 字典值优先（准确的中文/俄语值），前端传值仅兜底
                     entry['value'] = dv.value_cn or dv.value
                     entry['value_cn'] = dv.value_cn
                     entry['value_ru'] = dv.value
-                if val.get('value'):
+                elif val.get('value'):
                     entry['value'] = val['value']
             else:
                 entry['value'] = val.get('value', '')
