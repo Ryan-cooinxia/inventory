@@ -7929,9 +7929,17 @@ def api_draft_auto_fill_apply(draft_id):
 
         for ta in tgt_attrs:
             aid = str(ta.attribute_id)
-            # 与老代码一致：saved 中已存在的 key 跳过
+            # 已存在且是手动值 → 不覆盖；已存在但为空/自动填充 → 允许重填
             if aid in saved:
-                continue
+                existing = saved[aid]
+                if isinstance(existing, dict):
+                    src = existing.get('source', '')
+                    if src == 'manual':
+                        continue  # 手动输入，保护不覆盖
+                    if existing.get('value') and existing.get('value') not in ('', '（于富文本中调整）'):
+                        continue  # 有值且不是占位，保留
+                else:
+                    continue  # 旧格式有值，保留
 
             # 按字段策略分类决定处理方式
             strategy = _get_attr_strategy(ta)
@@ -8027,13 +8035,36 @@ def api_draft_save_attributes(draft_id):
     if not draft: return jsonify({"ok": False, "error": "草稿不存在"}), 404
     data = request.get_json(silent=True) or {}
     attrs = data.get('attributes', {})
-    # 统一使用扁平 map 格式: {"aid": {"value": "..."}}
     saved = _load_draft_attributes_map(draft)
     for aid, val in attrs.items():
+        aid_str = str(aid)
         if isinstance(val, dict):
-            saved[str(aid)] = val
-        else:
-            saved[str(aid)] = {'value': str(val)}
+            entry = {'source': val.get('source', 'manual')}
+            # 字典值：有 value_id 时从 DB 补全值
+            if val.get('value_id') and draft.type_id:
+                entry['value_id'] = str(val['value_id'])
+                dv = (OzonAttributeValue
+                      .select()
+                      .where((OzonAttributeValue.user == current_user) &
+                             (OzonAttributeValue.attribute_id == aid_str) &
+                             (OzonAttributeValue.value_id == str(val['value_id'])))
+                      .first())
+                if dv:
+                    entry['value'] = dv.value_cn or dv.value
+                    entry['value_cn'] = dv.value_cn
+                    entry['value_ru'] = dv.value
+                if val.get('value'):
+                    entry['value'] = val['value']
+            else:
+                entry['value'] = val.get('value', '')
+            if val.get('value_cn'):
+                entry['value_cn'] = val['value_cn']
+            if val.get('value_ru'):
+                entry['value_ru'] = val['value_ru']
+            saved[aid_str] = entry
+        elif val:
+            # 字符串：可能是旧格式的 value_id，字典属性尝试从 DB 查
+            saved[aid_str] = {'value': str(val), 'source': 'manual'}
     draft.attributes_json = json.dumps(saved, ensure_ascii=False)
     draft.save()
     return jsonify({"ok": True, "message": f"已保存 {len(attrs)} 个属性"})
@@ -8488,6 +8519,40 @@ def api_draft_save_all(draft_id):
     if rich is not None:
         blocks = rich if isinstance(rich, list) else rich.get('blocks', [])
         draft.rich_content_json = json.dumps({'version': '1.0', 'blocks': blocks}, ensure_ascii=False)
+
+    # 属性字典
+    attrs = data.get('attributes')
+    if attrs and isinstance(attrs, dict):
+        saved = _load_draft_attributes_map(draft)
+        for aid, val in attrs.items():
+            if isinstance(val, dict):
+                entry = {'source': val.get('source', 'manual')}
+                if 'value_id' in val and val['value_id']:
+                    entry['value_id'] = val['value_id']
+                # 字典值：从 OzonAttributeValue 补全
+                if val.get('value_id') and draft.type_id:
+                    dv = (OzonAttributeValue
+                          .select()
+                          .where((OzonAttributeValue.user == current_user) &
+                                 (OzonAttributeValue.attribute_id == str(aid)) &
+                                 (OzonAttributeValue.value_id == str(val['value_id'])))
+                          .first())
+                    if dv:
+                        entry['value'] = dv.value_cn or dv.value
+                        entry['value_cn'] = dv.value_cn
+                        entry['value_ru'] = dv.value
+                    else:
+                        entry['value'] = val.get('value', '')
+                else:
+                    entry['value'] = val.get('value', '')
+                if val.get('value_cn'):
+                    entry['value_cn'] = val['value_cn']
+                if val.get('value_ru'):
+                    entry['value_ru'] = val['value_ru']
+                saved[str(aid)] = entry
+            elif val:  # 字符串
+                saved[str(aid)] = {'value': str(val), 'source': 'manual'}
+        draft.attributes_json = json.dumps(saved, ensure_ascii=False)
 
     draft.updated_at = datetime.datetime.now()
     draft.save()
