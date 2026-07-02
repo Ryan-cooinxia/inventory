@@ -7829,8 +7829,9 @@ def api_draft_auto_fill_apply(draft_id):
 
         for ta in tgt_attrs:
             aid = str(ta.attribute_id)
-            if aid in saved and saved[aid].get('value'):
-                continue  # 已有值，不覆盖
+            # 与老代码一致：saved 中已存在的 key 跳过（不论 value 是否为空）
+            if aid in saved:
+                continue
 
             matched = False
             match_reason = ''
@@ -7875,7 +7876,6 @@ def api_draft_auto_fill_apply(draft_id):
                     'attribute': ta.name_cn or ta.name,
                     'reason': '未在采集源中找到匹配的属性名',
                 })
-
         # 只有非零匹配时才写回
         if attr_filled > 0:
             draft.attributes_json = json.dumps(saved, ensure_ascii=False)
