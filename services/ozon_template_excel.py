@@ -439,6 +439,9 @@ def build_field_mapping(draft):
             pass
     mapping['简介'] = description_text
 
+    # ── 主题标签 ──
+    mapping['#主题标签'] = (draft.hashtags_ru or '').strip()
+
     # ── JSON 富内容（优先 draft.rich_content_json，空则从 HTML+图片兜底生成）──
     rich = draft.rich_content_json or ''
     if is_empty_rich_content(rich):
@@ -451,17 +454,28 @@ def build_field_mapping(draft):
         color = (first_sku.color_ru or '').strip()
     mapping['商品颜色'] = color
 
-    # ── 毛重、包装尺寸（从属性中提取）──
-    weight = _extract_attribute_value(draft, 'weight', '毛重', '重量', 'Вес', 'вес')
+    # ── 毛重、包装尺寸（从属性中提取，统一清洗为纯数字）──
+    import re as _re2
+
+    def _clean_number(val):
+        """去掉 mm/cm/g/克/毫米 等单位后缀，提取纯数字"""
+        if not val:
+            return ''
+        v = str(val).strip()
+        v = _re2.sub(r'[^\d.]', '', v)
+        if v.count('.') > 1:
+            v = v.replace('.', '', 1)
+        return v
+
+    weight = _clean_number(_extract_attribute_value(draft, 'weight', '毛重', '重量', 'Вес', 'вес'))
     mapping['毛重'] = weight
     mapping['毛重,克'] = weight
     mapping['毛重/克'] = weight
     mapping['毛重，克'] = weight
-    mapping['毛重，克'] = weight
-    # 尺寸：支持中俄文模板列名
-    w = _extract_attribute_value(draft, 'width', '宽度', 'Ширина', 'ширина')
-    h = _extract_attribute_value(draft, 'height', '高度', 'Высота', 'высота')
-    l = _extract_attribute_value(draft, 'length', '长度', 'Длина', 'длина')
+    # 尺寸：支持中俄文模板列名，清洗后只留数字
+    w = _clean_number(_extract_attribute_value(draft, 'width', '宽度', 'Ширина', 'ширина'))
+    h = _clean_number(_extract_attribute_value(draft, 'height', '高度', 'Высота', 'высота'))
+    l = _clean_number(_extract_attribute_value(draft, 'length', '长度', 'Длина', 'длина'))
     mapping['包装宽度'] = w
     mapping['包装宽度，毫米'] = w
     mapping['包装高度'] = h
@@ -472,10 +486,9 @@ def build_field_mapping(draft):
     # 从尺寸字符串解析宽/高/长，补全缺失的维度
     size_str = _extract_attribute_value(draft, 'size', '尺寸', 'Размер')
     if size_str and (not w or not h or not l):
-        parts = size_str.replace('*', 'x').replace('X', 'x').split('x')
+        parts = str(size_str).replace('*', 'x').replace('X', 'x').split('x')
         if len(parts) == 3:
-            import re
-            nums = [re.sub(r'[^\d.]', '', p.strip()) for p in parts]
+            nums = [_clean_number(p) for p in parts]
             if not w:
                 w = nums[0]
                 mapping['包装宽度'] = w
@@ -695,13 +708,108 @@ def generate_export_excel(draft, template, field_mapping):
     filename = f'{ts}_{offer_id_slug}.xlsx'
     save_path = os.path.join(save_dir, filename)
 
+    # ── 视频导出到辅助 sheet ──
+    video_warnings = _export_video_sheets(wb, draft, field_mapping)
+
     wb.save(save_path)
     wb.close()
 
     # ── 生成后校验 ──
     validation_errors = _validate_generated_excel(save_path, header_row, data_start_row)
+    if video_warnings:
+        validation_errors.extend(video_warnings)
 
     return save_path, validation_errors
+
+
+def _export_video_sheets(wb, draft, field_mapping):
+    """
+    将草稿视频写入 OZON 模板的辅助 sheet（Ozon.视频 / Ozon视频封面）。
+    返回警告信息列表。
+    """
+    from blueprints.ozon import _load_media_json
+    media = _load_media_json(draft) if _load_media_json else {}
+    videos = media.get('videos', []) if isinstance(media, dict) else []
+    if not videos:
+        return []
+
+    offer_id = field_mapping.get('货号', '')
+    warnings = []
+
+    # ── Ozon.视频 sheet ──
+    video_sheet_name = None
+    for name in ['Ozon.视频', 'Озон.Видео', 'Ozon.Video']:
+        if name in wb.sheetnames:
+            video_sheet_name = name
+            break
+
+    if video_sheet_name:
+        ws_v = wb[video_sheet_name]
+        # 找表头行和数据起始行
+        v_header_row = 1
+        for r in range(1, min(4, ws_v.max_row + 1)):
+            if ws_v.cell(row=r, column=1).value:
+                v_header_row = r
+                break
+        v_data_start = v_header_row + 1
+
+        # 找列：货号 / 视频名称 / 视频链接 / 视频中的商品
+        v_col_map = {}
+        for c in range(1, ws_v.max_column + 1):
+            h = str(ws_v.cell(row=v_header_row, column=c).value or '').strip()
+            if h:
+                v_col_map[h] = c
+
+        for vi, v in enumerate(videos):
+            if not v.get('url'):
+                continue
+            row = v_data_start + vi
+            if v_col_map.get('货号'):
+                ws_v.cell(row=row, column=v_col_map['货号']).value = offer_id
+            if v_col_map.get('视频名称') or v_col_map.get('Название видео'):
+                c = v_col_map.get('视频名称') or v_col_map.get('Название видео')
+                ws_v.cell(row=row, column=c).value = v.get('name') or v.get('title') or f'Видео {vi+1}'
+            if v_col_map.get('视频链接') or v_col_map.get('Ссылка на видео'):
+                c = v_col_map.get('视频链接') or v_col_map.get('Ссылка на видео')
+                ws_v.cell(row=row, column=c).value = v.get('url', '')
+            if v_col_map.get('视频中的商品') or v_col_map.get('Товары на видео'):
+                c = v_col_map.get('视频中的商品') or v_col_map.get('Товары на видео')
+                ws_v.cell(row=row, column=c).value = offer_id
+    else:
+        warnings.append('当前模板不支持视频sheet，请Excel发布后到OZON后台更新视频')
+
+    # ── Ozon视频封面 sheet ──
+    cover_sheet_name = None
+    for name in ['Ozon视频封面', 'Обложка видео', 'Ozon.Video.Cover']:
+        if name in wb.sheetnames:
+            cover_sheet_name = name
+            break
+
+    if cover_sheet_name:
+        ws_c = wb[cover_sheet_name]
+        c_header_row = 1
+        for r in range(1, min(4, ws_c.max_row + 1)):
+            if ws_c.cell(row=r, column=1).value:
+                c_header_row = r
+                break
+        c_data_start = c_header_row + 1
+        c_col_map = {}
+        for c in range(1, ws_c.max_column + 1):
+            h = str(ws_c.cell(row=c_header_row, column=c).value or '').strip()
+            if h:
+                c_col_map[h] = c
+
+        for vi, v in enumerate(videos):
+            if not v.get('cover_url'):
+                continue
+            row = c_data_start + vi
+            if c_col_map.get('货号'):
+                ws_c.cell(row=row, column=c_col_map['货号']).value = offer_id
+            if c_col_map.get('视频封面链接') or c_col_map.get('Ссылка на обложку'):
+                c = c_col_map.get('视频封面链接') or c_col_map.get('Ссылка на обложку')
+                ws_c.cell(row=row, column=c).value = v.get('cover_url', '')
+
+    return warnings
 
 
 def _validate_generated_excel(save_path, header_row, data_start_row):

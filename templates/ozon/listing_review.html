@@ -121,6 +121,9 @@
             <textarea name="bullets_ru" class="form-control form-control-sm" rows="3" style="font-size:11px">{{ draft.bullets_ru or '' }}</textarea>
             <button type="button" class="btn btn-sm btn-outline-info mt-1" style="font-size:9px" onclick="fillFromSource('bullets')">📋 从属性字典生成卖点</button>
           </div>
+          <div class="mb-2"><label class="form-label" style="font-size:11px"><b># 主题标签</b> <small>(俄语搜索关键词，用空格分隔)</small></label>
+            <input name="hashtags_ru" class="form-control form-control-sm" style="font-size:11px" value="{{ draft.hashtags_ru or '' }}" placeholder="#экшнкамера #DJI #OsmoAction">📋 从属性字典生成卖点</button>
+          </div>
           <div class="mb-2"><label class="form-label" style="font-size:11px"><b>俄语描述</b></label>
             <textarea name="description_ru" class="form-control form-control-sm" rows="6" style="font-size:11px">{{ draft.description_ru or '' }}</textarea>
             <button type="button" class="btn btn-sm btn-outline-info mt-1" style="font-size:9px" onclick="fillFromSource('desc')">📋 生成纯文本简介（从采集HTML提取）</button>

@@ -3340,24 +3340,36 @@ def listing_review(draft_id):
         img['is_cover'] = idx == 0
 
     # 汇率：用于显示人民币参考价
+    from services import get_rate as get_exchange_rate
     exchange_rate = None
     try:
-        er = ExchangeRate.get_or_none(ExchangeRate.base == 'CNY')
-        if er:
-            exchange_rate = {'rub': er.rate_rub, 'usd': er.rate_usd, 'eur': er.rate_eur, 'updated': str(er.updated_at or '')}
+        rate_rub = get_exchange_rate('CNY', 'RUB')
+        rate_usd = get_exchange_rate('CNY', 'USD')
+        rate_eur = get_exchange_rate('CNY', 'EUR')
+        er_updated = (ExchangeRate
+                      .select()
+                      .where(ExchangeRate.base_currency == 'CNY')
+                      .order_by(ExchangeRate.updated_at.desc())
+                      .first())
+        exchange_rate = {
+            'rub': rate_rub, 'usd': rate_usd, 'eur': rate_eur,
+            'updated': str(er_updated.updated_at)[:19] if er_updated else ''
+        }
     except Exception:
         pass
     # 人民币参考价
     reference_price_cny = None
-    if exchange_rate and pricing:
-        src_price = pricing.get('reference_price') or pricing.get('price') or pricing.get('original_price')
-        if src_price:
-            try:
-                ref_rub = float(str(src_price).replace(',', '.').replace(' ', ''))
-                if exchange_rate['rub'] and float(exchange_rate['rub']) > 0:
-                    reference_price_cny = round(ref_rub / float(exchange_rate['rub']), 2)
-            except (ValueError, TypeError):
-                pass
+    src_price = None
+    if pricing:
+        src_price = (pricing.get('reference_price_rub') or pricing.get('reference_price')
+                     or pricing.get('price') or pricing.get('original_price'))
+    if exchange_rate and exchange_rate.get('rub') and src_price:
+        try:
+            ref_rub = float(str(src_price).replace(',', '.').replace(' ', ''))
+            if float(exchange_rate['rub']) > 0:
+                reference_price_cny = round(ref_rub / float(exchange_rate['rub']), 2)
+        except (ValueError, TypeError):
+            pass
 
     return render_template('ozon/listing_review.html',
                            draft=draft,
@@ -8060,6 +8072,8 @@ def api_draft_save_all(draft_id):
         draft.description_ru = content.get('description_ru', draft.description_ru)
     if content.get('bullets_ru') is not None:
         draft.bullets_ru = content.get('bullets_ru', draft.bullets_ru)
+    if content.get('hashtags_ru') is not None:
+        draft.hashtags_ru = content.get('hashtags_ru', draft.hashtags_ru) or None
     if content.get('ozon_category_path') is not None:
         draft.category_path_ru = content.get('ozon_category_path') or draft.category_path_ru
 

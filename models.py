@@ -551,6 +551,7 @@ class OzonDraft(BaseModel):
     title_ru = CharField(max_length=300, null=True)               # 俄语标题
     description_ru = TextField(null=True)                         # 俄语描述
     bullets_ru = TextField(null=True)                             # 俄语卖点 JSON 数组
+    hashtags_ru = TextField(null=True)                            # 主题标签（#экшнкамера #DJI）
     attributes_json = TextField(null=True)                        # 类目属性 JSON
     skus_json = TextField(null=True)                              # SKU 数据 JSON（快照）
     pricing_json = TextField(null=True)                           # 定价数据 JSON
