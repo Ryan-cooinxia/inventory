@@ -256,7 +256,15 @@ def is_empty_rich_content(raw):
     if not isinstance(data, dict):
         return True
     blocks = data.get('blocks', [])
-    return len(blocks) == 0
+    if not blocks:
+        return True
+    # 校验：每个 image block 必须有 url（http/https），不能有 HTML
+    for b in blocks:
+        if b.get('type') == 'image':
+            u = b.get('url') or b.get('source') or ''
+            if not u.startswith(('http://', 'https://')):
+                return True  # 无效
+    return False
 
 
 def build_rich_content_from_draft(draft):
@@ -347,7 +355,7 @@ def build_rich_content_from_draft(draft):
                 blocks.append({
                     'id': block_id,
                     'type': 'image',
-                    'source': url,
+                    'url': url,
                 })
 
         for url in html_img_urls:
@@ -357,7 +365,7 @@ def build_rich_content_from_draft(draft):
                 blocks.append({
                     'id': block_id,
                     'type': 'image',
-                    'source': url,
+                    'url': url,
                 })
 
         if blocks:
@@ -438,6 +446,9 @@ def build_field_mapping(draft):
         except (json.JSONDecodeError, TypeError):
             pass
     mapping['简介'] = description_text
+
+    # ── 注释（默认不自动填写，限6000字符，禁止HTML）──
+    mapping['注释'] = ''
 
     # ── 主题标签 ──
     mapping['#主题标签'] = (draft.hashtags_ru or '').strip()
@@ -962,8 +973,7 @@ def _validate_generated_excel(save_path, header_row, data_start_row):
 
 def _fuzzy_find_column(col_map, header_text):
     """
-    模糊匹配列。为避免错列（如 JSON富内容 写入 PDF文件），
-    仅允许明确对应的关键词，禁止跨语义类别匹配。
+    模糊匹配列。严格限定：长文本字段（简介/JSON富内容/注释/PDF）必须精确匹配，禁止跨列误写。
     """
     ht_lower = header_text.lower()
 
@@ -971,7 +981,12 @@ def _fuzzy_find_column(col_map, header_text):
     if header_text in col_map:
         return col_map[header_text]
 
-    # 允许的同义词映射（写死的，不开放模糊匹配）
+    # 长文本字段：禁止模糊匹配（防止 html 写入 注释，json 写入 pdf）
+    LONG_TEXT_FIELDS = ['简介', '注释', 'json富内容', 'pdf', 'pdf文件', 'pdf文件名', 'инструкция']
+    if any(f in ht_lower for f in LONG_TEXT_FIELDS):
+        return None
+
+    # 允许的同义词映射
     ALLOWED_FUZZY = {
         '毛重': ['毛重', '毛重，克', '毛重,克', '毛重/克'],
         '价格': ['价格', '价格，cny', '价格,cny', '价格，rub', '价格,rub'],
@@ -979,20 +994,17 @@ def _fuzzy_find_column(col_map, header_text):
         '型号名称': ['型号名称', '型号名称（针对合并为一张商品卡片）'],
         '商品名称': ['商品名称', '商品名称（俄语）', '商品名称（英语）'],
     }
-
     for group, variations in ALLOWED_FUZZY.items():
         if header_text in variations or any(v in ht_lower for v in variations):
             for v in variations:
                 if v in col_map:
                     return col_map[v]
 
-    # 价格列特殊处理
     if '价格' in ht_lower:
         for h in col_map:
             if '价格' in h:
                 return col_map[h]
 
-    # 不允许 JSON富内容 匹配到 PDF 或任何其他列
     return None
 
 
