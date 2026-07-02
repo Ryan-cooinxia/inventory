@@ -77,6 +77,64 @@ def _parse_batch_ids(ids_str):
         return []
 
 
+# ── 内置常用俄语→中文映射（字典值翻译兜底）──
+_BUILTIN_VALUE_CN_MAP = {
+    'Китай': '中国', 'Россия': '俄罗斯', 'Черный': '黑色', 'черный': '黑色',
+    'Белый': '白色', 'белый': '白色', 'Красный': '红色', 'красный': '红色',
+    'Синий': '蓝色', 'синий': '蓝色', 'Зеленый': '绿色', 'зеленый': '绿色',
+    'Желтый': '黄色', 'желтый': '黄色', 'Серый': '灰色', 'серый': '灰色',
+    'Коричневый': '棕色', 'коричневый': '棕色', 'Оранжевый': '橙色', 'оранжевый': '橙色',
+    'Фиолетовый': '紫色', 'фиолетовый': '紫色', 'Розовый': '粉色', 'розовый': '粉色',
+    'Бежевый': '米色', 'бежевый': '米色', 'Золотой': '金色', 'золотой': '金色',
+    'Серебряный': '银色', 'серебряный': '银色', 'Прозрачный': '透明', 'прозрачный': '透明',
+    '1 год': '1年', '1 месяц': '1个月', '1 неделя': '1周', 'Да': '是', 'Нет': '否',
+    'Для экшн-камеры': '适用于运动相机', 'Для фотокамеры': '适用于相机',
+}
+
+
+def resolve_attribute_value_cn(user, ru_value, value_id=None, attribute_id=None):
+    """
+    自动解析字典值的中文翻译。查找顺序：
+      1. 当前记录的 value_cn
+      2. 同用户其他记录相同 value 的 value_cn
+      3. 内置常用映射
+    返回 (cn_value, source) 或 (None, None)
+    """
+    if not ru_value or not ru_value.strip():
+        return None, None
+    ru_value = ru_value.strip()
+
+    # 1. 查当前具体记录
+    if value_id and attribute_id:
+        rec = (OzonAttributeValue
+               .select(OzonAttributeValue.value_cn)
+               .where((OzonAttributeValue.user == user) &
+                      (OzonAttributeValue.attribute_id == str(attribute_id)) &
+                      (OzonAttributeValue.value_id == str(value_id)))
+               .first())
+        if rec and rec.value_cn and rec.value_cn.strip():
+            return rec.value_cn.strip(), 'existing'
+
+    # 2. 查同用户其他记录相同 value（跨 type/category 复用翻译）
+    cn_rec = (OzonAttributeValue
+              .select(OzonAttributeValue.value_cn)
+              .where((OzonAttributeValue.user == user) &
+                     (OzonAttributeValue.value == ru_value) &
+                     (OzonAttributeValue.value_cn.is_null(False)) &
+                     (OzonAttributeValue.value_cn != '') &
+                     (OzonAttributeValue.value_cn != ru_value))
+              .first())
+    if cn_rec:
+        return cn_rec.value_cn.strip(), 'reused'
+
+    # 3. 内置映射
+    for key, cn in _BUILTIN_VALUE_CN_MAP.items():
+        if key.lower() == ru_value.lower():
+            return cn, 'builtin'
+
+    return None, None
+
+
 def _batch_translate(ru_names, user):
     """批量翻译俄语类目/属性名为中文（分批 + 重试）。
     返回 dict: {"ru_name": "zh_name", ..., "_errors": ["err1", ...]}"""
@@ -7210,6 +7268,19 @@ def api_get_category_attributes(cat_id):
             key = (v.attribute_id, v.value_id)
             if key in seen_val: continue
             seen_val.add(key)
+            # 自动补中文值
+            if not v.value_cn:
+                cn_val, _ = resolve_attribute_value_cn(
+                    current_user, v.value, v.value_id, v.attribute_id)
+                if cn_val and not v.value_cn:
+                    # 异步：后台更新 DB（不阻塞响应）
+                    try:
+                        OzonAttributeValue.update(value_cn=cn_val).where(
+                            OzonAttributeValue.id == v.id
+                        ).execute()
+                        v.value_cn = cn_val
+                    except Exception:
+                        pass
             values_map.setdefault(v.attribute_id, []).append({
                 'value_id': v.value_id, 'value': v.value, 'value_cn': v.value_cn, 'info': v.info,
                 'display_value': v.value_cn or v.value,
@@ -7329,32 +7400,47 @@ def api_sync_category_attributes(cat_id):
 @ozon_bp.route('/api/category/root')
 @login_required
 def api_category_root():
-    """获取一级类目（仅返回 OzonCategory，过滤历史误写入的 type 节点）"""
-    cats = (OzonCategory
+    """获取一级类目（批量查询，避免 N+1）"""
+    cats = list(OzonCategory
             .select()
             .where((OzonCategory.user == current_user) &
                    (OzonCategory.parent_id.is_null()))
             .order_by(OzonCategory.name))
+
+    # 过滤 type 节点
+    valid_cats = [c for c in cats if c.ozon_category_id and not (c.raw_json and '"type_id"' in c.raw_json)]
+    valid_ids = [c.ozon_category_id for c in valid_cats]
+
+    # 批量查 type 计数
+    from peewee import fn as peewee_fn
+    type_counts = {}
+    if valid_ids:
+        rows = (OzonCategoryType
+                .select(OzonCategoryType.description_category_id,
+                        peewee_fn.COUNT(OzonCategoryType.id).alias('cnt'))
+                .where((OzonCategoryType.user == current_user) &
+                       (OzonCategoryType.description_category_id.in_(valid_ids)))
+                .group_by(OzonCategoryType.description_category_id)
+                .tuples())
+        for dcid, cnt in rows:
+            type_counts[dcid] = cnt
+
+    # 批量查子类目
+    child_dcids = set()
+    if valid_ids:
+        children = (OzonCategory
+                    .select(OzonCategory.parent_id)
+                    .where((OzonCategory.user == current_user) &
+                           (OzonCategory.parent_id.in_(valid_ids)) &
+                           ~(OzonCategory.raw_json.contains('"type_id"')) &
+                           (OzonCategory.ozon_category_id != ''))
+                    .distinct())
+        child_dcids = {c.parent_id for c in children}
+
     items = []
-    for c in cats:
-        if not c.ozon_category_id:
-            continue
-        # 过滤：raw_json 包含 type_id → 跳过（历史 type 节点误存为 category）
-        if c.raw_json and '"type_id"' in c.raw_json:
-            continue
-        type_cnt = (OzonCategoryType
-                    .select()
-                    .where((OzonCategoryType.user == current_user) &
-                           (OzonCategoryType.description_category_id == c.ozon_category_id))
-                    .count())
-        # 动态计算 has_children：查是否有真实子类目（排除 type 节点）
-        real_child = (OzonCategory
-                      .select()
-                      .where((OzonCategory.user == current_user) &
-                             (OzonCategory.parent_id == c.ozon_category_id) &
-                             ~(OzonCategory.raw_json.contains('"type_id"')) &
-                             (OzonCategory.ozon_category_id != ''))
-                      .exists())
+    for c in valid_cats:
+        type_cnt = type_counts.get(c.ozon_category_id, 0)
+        real_child = c.ozon_category_id in child_dcids
         items.append({
             'id': c.ozon_category_id, 'name': c.name, 'name_cn': c.name_cn,
             'has_children': real_child,
@@ -7363,7 +7449,7 @@ def api_category_root():
 
         # 若无子类目但有 type，在 items 中追加 type 节点供模态框选择
         if not real_child and type_cnt > 0:
-            type_records = (OzonCategoryType
+            type_records = list(OzonCategoryType
                            .select()
                            .where((OzonCategoryType.user == current_user) &
                                   (OzonCategoryType.description_category_id == c.ozon_category_id))
@@ -9162,24 +9248,40 @@ def api_sync_attribute_values(cat_id):
                     vid = str(v.get('id', ''))
                     if not vid:
                         continue
+                    ru_val = v.get('value', '')
+                    # 自动补中文：先查内置映射/复用已有翻译
+                    cn_val, cn_src = resolve_attribute_value_cn(current_user, ru_val, vid, attr.attribute_id)
+                    defaults = {
+                        'value': ru_val,
+                        'value_cn': cn_val,
+                        'info': v.get('info', '') or None,
+                        'last_synced_at': datetime.datetime.now(),
+                    }
+                    # 如果有中文但 create 不支持 value_cn，先 create 再 update
                     _, created = OzonAttributeValue.get_or_create(
                         user=current_user,
                         account=account,
                         attribute_id=attr.attribute_id,
                         value_id=vid,
-                        defaults={
-                            'value': v.get('value', ''),
-                            'info': v.get('info', '') or None,
-                            'last_synced_at': datetime.datetime.now(),
-                        },
+                        defaults=defaults,
                     )
-                    if not created:
+                    if created:
+                        if cn_val:
+                            OzonAttributeValue.update(value_cn=cn_val).where(
+                                (OzonAttributeValue.user == current_user) &
+                                (OzonAttributeValue.attribute_id == attr.attribute_id) &
+                                (OzonAttributeValue.value_id == vid)
+                            ).execute()
+                    else:
                         rec = OzonAttributeValue.get(
                             (OzonAttributeValue.user == current_user) &
                             (OzonAttributeValue.attribute_id == attr.attribute_id) &
                             (OzonAttributeValue.value_id == vid))
-                        rec.value = v.get('value', '')
+                        rec.value = ru_val
                         rec.info = v.get('info', '') or None
+                        # 如果已有 value_cn 为空，尝试补
+                        if not rec.value_cn:
+                            rec.value_cn = cn_val
                         rec.last_synced_at = datetime.datetime.now()
                         rec.save()
                     saved += 1
