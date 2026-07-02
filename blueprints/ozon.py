@@ -5830,25 +5830,44 @@ def api_recommend_category(group_id):
     import re as _re
     def _norm(s): return _re.sub(r'\s+',' ',str(s or '').lower().replace('ё','е').replace('-',' ')).strip()
 
-    CATEGORY_RULES = {
-        'action_camera': {'label_cn':'运动相机','signals':['экшн камер','action camera','osmo action','dji action','运动相机','运动摄像','гоупро','gopro'],'target_kw':['экшн','action camera','运动相机','运动摄像','спортивн камер'],'strong_kw':['экшн камер','action camera','运动相机'],'conflicts':['микрофон','наушник','штатив','вспышк','объектив','адаптер','переходник','кольцо','линз','lens','adapter','镜头','转接','转接环','配件','креплен','защит','чехол','держател','кронштейн','пленк','фильтр']},
-        'microphone': {'label_cn':'麦克风','signals':['микрофон','microphone','mic','麦克风','话筒','dji mic'],'target_kw':['микрофон','microphon','麦克风','аудио'],'conflicts':['вспышк','синхронизатор','штатив','наушник','экшн камер']},
-        'camera': {'label_cn':'相机/摄像机','signals':['камера','видеокамера','видеоскопател','相机','摄像机','видеорегистратор'],'target_kw':['камер','видеокамер','相机','摄像'],'conflicts':['микрофон','наушник']},
-        'headphones': {'label_cn':'耳机','signals':['наушник','headphon','耳机','гарнитур','earbud'],'target_kw':['наушник','headphon','耳机'],'conflicts':['микрофон','камер','вспышк']},
-        'drone': {'label_cn':'无人机','signals':['квадрокоптер','дрон','drone','无人机','коптер'],'target_kw':['квадрокоптер','дрон','drone','无人机'],'conflicts':['микрофон','наушник']},
-    }
-
     def _infer_product_kind():
+        """通用：从标题提取单词/词组，在 OzonCategoryType 中搜索匹配"""
+        import re as _re_kw
         src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
         attrs_text = ' '.join([_norm((a.get('name') or '') + ' ' + str(a.get('value') or '')) for a in src_attrs])
-        search = _norm(((fact.product_type if fact else '') + ' ' + (fact.standard_name_cn if fact else '') + ' ' + (source.title_cn if source else '') + ' ' + attrs_text))
-        best, best_score, best_ev = '', 0, []
-        for cat, rule in CATEGORY_RULES.items():
-            hits = [s for s in rule['signals'] if _norm(s) in search]
-            if len(hits) > best_score:
-                best, best_score = cat, len(hits)
-                best_ev = ['命中: '+h for h in hits[:5]]
-        return {'kind':best,'kind_cn':CATEGORY_RULES[best]['label_cn'],'confidence':min(0.7+best_score*0.1,0.99),'evidence':best_ev} if best_score > 0 else None
+        title = _norm((fact.title_ru if fact else '') or (source.title_cn if source else '') or '')
+        search_text = title + ' ' + attrs_text
+
+        # 提取有意义单词：>=4字符俄语/拉丁词，>=2字符中文
+        words = set()
+        words.update(_re_kw.findall(r'[a-zа-яё]{4,}', search_text))
+        for n in [2, 3]:
+            words.update(_re_kw.findall(r'[一-鿿]{' + str(n) + '}', search_text))
+        keywords = words - {'это', 'для', 'что', 'как'}
+
+        if not keywords:
+            return None
+
+        all_types = list(OzonCategoryType.select().where(OzonCategoryType.user == current_user).limit(300))
+        scored = []
+        for t in all_types:
+            tn = _norm((t.type_name_cn or '') + ' ' + (t.type_name or ''))
+            hits = sum(1 for kw in keywords if kw in tn)
+            if hits > 0:
+                scored.append((t, hits, tn))
+        scored.sort(key=lambda x: -x[1])
+
+        if scored:
+            best_t, best_hits, best_tn = scored[0]
+            matched = [kw for kw in keywords if kw in best_tn][:5]
+            return {
+                'kind': best_t.type_name or '',
+                'kind_cn': best_t.type_name_cn or best_t.type_name or '',
+                'confidence': min(0.5 + best_hits * 0.1, 0.85),
+                'evidence': [f'匹配: {", ".join(matched)}'],
+                'type_id': best_t.type_id, 'dcid': best_t.description_category_id,
+            }
+        return None
 
     def _make_rec(dcid,tid,tru,tcn,path,conf,src,reason,ev=None):
         return {'description_category_id':dcid,'type_id':tid,'type_name_ru':tru,'type_name_cn':tcn,'path':path or '','confidence':conf,'source':src,'reason':reason,'evidence':ev or []}
@@ -5866,261 +5885,59 @@ def api_recommend_category(group_id):
         if trec: recommendations.append(_make_rec(src_dcid,src_tid,trec.type_name or '',trec.type_name_cn or '',trec.path or '',1.0,'source_collected','源采集类目'))
     else: diagnostics.append('采集数据无type_id')
 
-    # P1: 系统识别 → 本地类目树路径映射 → 路径下推荐type
-    if not recommendations and pk:
-        rule = CATEGORY_RULES.get(pk, {})
-        tkw, confs = rule.get('target_kw',[]), rule.get('conflicts',[])
-        skw = rule.get('strong_kw', tkw)
-        # 按产品类型动态冲突词：当前品类自己不能是冲突词
-        CONFLICTS_BY_KIND = {
-            'action_camera': ['микрофон','microphon','麦克风','话筒','наушник','耳机','вспышк','闪光','синхронизатор','同步器'],
-            'microphone': ['экшн камер','action camera','运动相机','вспышк','闪光','синхронизатор','объектив','镜头','адаптер','наушник','耳机'],
-            'camera': ['микрофон','麦克风','наушник','耳机'],
-            'headphones': ['экшн камер','运动相机','микрофон','麦克风','вспышк','闪光'],
-            'drone': ['микрофон','麦克风','наушник','耳机'],
-        }
-        all_confs = list(set(CONFLICTS_BY_KIND.get(pk, []) + ['adult','成人']))
+    # P1: 通用关键词搜索 OzonCategoryType
+    if not recommendations and product_info:
+        import re as _re_p1
+        src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
+        attrs_text = ' '.join([_norm((a.get('name') or '') + ' ' + str(a.get('value') or '')) for a in src_attrs])
+        search_all = _norm(((fact.title_ru if fact else '') or (source.title_cn if source else '') or '') + ' ' + attrs_text)
 
-        # ★ P1.1: 精确type匹配（品类自带的关键词直接找type）
-        EXACT_KW = {'microphone': ['микрофон','микрофоны','microphon','麦克风','话筒'],
-                    'action_camera': ['экшн камер','экшн-камер','action camera','运动相机','运动摄像'],
-                    'headphones': ['наушник','headphon','耳机'],
-                    'camera': ['камера','видеокамера','相机'],'drone': ['квадрокоптер','дрон','drone','无人机']}
-        exact_kws = EXACT_KW.get(pk, tkw[:3])
-        exact_matched = []
-        all_types = list(OzonCategoryType.select().where(OzonCategoryType.user == current_user).order_by(OzonCategoryType.last_synced_at.desc()).limit(500))
+        # 提取单词（同 _infer_product_kind）
+        words = set()
+        words.update(_re_p1.findall(r'[a-zа-яё]{4,}', search_all))
+        for n in [2, 3]:
+            words.update(_re_p1.findall(r'[一-鿿]{' + str(n) + '}', search_all))
+        keywords = words - {'это', 'для', 'что', 'как'}
+        max_kw_len = max((len(kw) for kw in keywords), default=0)
+
+        top_types = []
+        all_types = list(OzonCategoryType.select().where(OzonCategoryType.user == current_user).limit(300))
         for t in all_types:
-            tn = _norm((t.type_name_cn or '') + ' ' + (t.type_name or ''))
-            if any(kw in tn for kw in all_confs): continue
-            score = sum(1 for k in exact_kws if _norm(k) in tn)
-            if score > 0: exact_matched.append((t, score))
-        exact_matched.sort(key=lambda x: -x[1])
-        for t, s in exact_matched[:3]:
-            rec_name = t.type_name_cn or t.type_name
+            tn = _norm((t.type_name_cn or '') + ' ' + (t.type_name or '') + ' ' + (t.path or ''))
+            # 用单词匹配（非 n-gram）
+            hits = sum(1 for kw in keywords if kw in tn)
+            # 长词权重更高
+            weighted = sum((len(kw) / max_kw_len) for kw in keywords if kw in tn) if max_kw_len > 0 else 0
+            if weighted > 0:
+                top_types.append((t, round(weighted, 2)))
+        top_types.sort(key=lambda x: -x[1])
+
+        # 去重：相同 type_name_cn 只保留最高分
+        seen_cn = set()
+        unique = []
+        for t, score in top_types:
+            cn = t.type_name_cn or t.type_name
+            if cn not in seen_cn:
+                seen_cn.add(cn)
+                unique.append((t, score))
+                if len(unique) >= 8: break
+
+        for t, score in unique[:5]:
+            conf = 0.85 if score >= 3 else (0.65 if score >= 2 else 0.5)
             path = t.path or ''
             cat_node = OzonCategory.get_or_none((OzonCategory.user == current_user) & (OzonCategory.ozon_category_id == t.description_category_id))
-            if cat_node and cat_node.path: path = cat_node.path + ' > ' + rec_name
-            recommendations.append(_make_rec(t.description_category_id,t.type_id,t.type_name or '',t.type_name_cn or '',path,0.95,'exact_type_match',f'系统识别为{product_info["kind_cn"]},精确匹配type: {rec_name}',product_info.get('evidence',[])))
+            if cat_node and cat_node.path: path = cat_node.path + ' > ' + (t.type_name_cn or t.type_name)
+            rec = _make_rec(t.description_category_id, t.type_id, t.type_name or '', t.type_name_cn or '',
+                          path, conf, 'keyword_match',
+                          f'标题/属性关键词匹配: {t.type_name_cn or t.type_name} (评分{score})',
+                          [f'匹配{score}个关键词片段'])
+            recommendations.append(rec)
 
-        # 本地类目树路径映射：识别结果→从哪里找type（精确匹配没结果时用）
+        # 如果没有匹配结果，提示用户
         if not recommendations:
-            TREE_PATH_MAP = {
-            'action_camera': {
-                'preferred_paths': [['электроник','фото','видео'],['электроник','камер'],['электроник','фотоаппарат'],['фото','видео'],['камер','аксессуар']],
-                'fallback_note': '本地无运动相机类目,按最接近的摄影摄像配件路径推荐'
-            },
-            'microphone': {
-                'preferred_paths': [['электроник','аудио'],['электроник','микрофон'],['аудио','микрофон'],['аудиотехник']],
-                'fallback_note': '本地无麦克风类目,按最接近的音频设备路径推荐'
-            },
-            'camera': {
-                'preferred_paths': [['электроник','фото','видео'],['электроник','камер'],['фото','видео']],
-            },
-            'headphones': {
-                'preferred_paths': [['электроник','аудио'],['аудио','наушник'],['электроник','наушник']],
-            },
-            'drone': {
-                'preferred_paths': [['электроник','квадрокоптер'],['электроник','дрон'],['электроник','игрушк']],
-            },
-        }
+            diagnostics.append("未找到匹配的 OZON 类目，请手动选择或确认商品标题/属性是否准确")
+            diagnostics.append("提示: 可以在标题中加入更明确的俄语品类关键词（如 джойстик, геймпад 等）")
 
-        path_map = TREE_PATH_MAP.get(pk, {})
-        preferred = path_map.get('preferred_paths', [[tkw[0]]]) if tkw else []
-        fallback_note = path_map.get('fallback_note', '')
-
-        # 1. 在类目树中按preferred_paths逐层匹配
-        cat_dcids = []
-        matched_path = ''
-        for path_words in preferred:
-            query = OzonCategory.select().where(OzonCategory.user == current_user)
-            first = True
-            for w in path_words:
-                p = '%' + w + '%'
-                if first:
-                    query = query.where((OzonCategory.name_cn ** p) | (OzonCategory.name ** p) | (OzonCategory.path ** p))
-                    first = False
-                else:
-                    query = query.where((OzonCategory.name_cn ** p) | (OzonCategory.name ** p) | (OzonCategory.path ** p))
-            cats = list(query.limit(30))
-            dcids = [c.ozon_category_id for c in cats if c.ozon_category_id]
-            if dcids:
-                cat_dcids = dcids[:50]
-                # 找最佳路径名
-                for c in cats:
-                    if c.path and (_norm(pk) in _norm(c.path) or any(_norm(k) in _norm(c.name_cn or '')+_norm(c.name or '') for k in skw)):
-                        matched_path = c.path or ''
-                        break
-                if not matched_path and cats:
-                    matched_path = cats[0].path or ' > '.join(path_words)
-                break
-
-        # 2. 在匹配的类目下找type
-        if cat_dcids:
-            types = list(OzonCategoryType.select().where(
-                (OzonCategoryType.user == current_user) &
-                (OzonCategoryType.description_category_id.in_(cat_dcids))
-            ).order_by(OzonCategoryType.last_synced_at.desc()))
-        else:
-            types = []
-            if fallback_note: diagnostics.append(fallback_note)
-            else: diagnostics.append(f'识别为{pk}({product_info.get("kind_cn","")}),本地类目树无匹配路径')
-
-        # 3. 匹配type+冲突过滤+评分
-        matched = []
-        for t in types:
-            tn = _norm((t.type_name_cn or '') + ' ' + (t.type_name or '') + ' ' + (t.path or ''))
-            if any(kw in tn for kw in all_confs): continue
-            strong = sum(1 for k in skw if _norm(k) in tn)
-            score = sum(1 for k in tkw if _norm(k) in tn) + strong * 3
-            if strong > 0 or score >= 2:
-                matched.append((t, score, strong > 0))
-
-        matched.sort(key=lambda x: -x[1])
-        for t, s, is_strong in matched[:5]:
-            rec_name = t.type_name_cn or t.type_name
-            path = t.path or matched_path or ''
-            cat_node = OzonCategory.get_or_none((OzonCategory.user == current_user) & (OzonCategory.ozon_category_id == t.description_category_id))
-            if cat_node and cat_node.path: path = cat_node.path + ' > ' + rec_name
-            conf = 0.85 if is_strong else 0.65
-            reason = f'识别为{product_info["kind_cn"]},在类目路径{matched_path or "匹配路径"}下匹配到{rec_name}'
-            if fallback_note and not is_strong: reason = fallback_note + ': ' + rec_name
-            recommendations.append(_make_rec(t.description_category_id,t.type_id,t.type_name or '',t.type_name_cn or '',path,conf,'system_inference' if is_strong else 'tree_fallback',reason,product_info.get('evidence',[])))
-
-        if not recommendations:
-            if cat_dcids: diagnostics.append(f'识别为{pk},在{matched_path}下未找到匹配type(配件词已过滤)')
-            elif not diagnostics or not any('无匹配' in d for d in diagnostics):
-                diagnostics.append(f'识别为{pk}({product_info.get("kind_cn","")}),请同步对应类目树')
-
-    # P2: 关键词兜底（只在匹配路径下）
-    if not recommendations and pk:
-        rule = CATEGORY_RULES.get(pk, {})
-        tkw, confs = rule.get('target_kw',[]), rule.get('conflicts',[])
-        skw = rule.get('strong_kw', tkw)
-
-        # 新增配件冲突词 — 运动相机绝不推荐相机配件
-        # 按产品类型动态冲突词：当前品类自己不能是冲突词
-        CONFLICTS_BY_KIND = {
-            'action_camera': ['микрофон','microphon','麦克风','话筒','наушник','耳机','вспышк','闪光','синхронизатор','同步器'],
-            'microphone': ['экшн камер','action camera','运动相机','вспышк','闪光','синхронизатор','объектив','镜头','адаптер','наушник','耳机'],
-            'camera': ['микрофон','麦克风','наушник','耳机'],
-            'headphones': ['экшн камер','运动相机','микрофон','麦克风','вспышк','闪光'],
-            'drone': ['микрофон','麦克风','наушник','耳机'],
-        }
-        all_confs = list(set(CONFLICTS_BY_KIND.get(pk, []) + ['adult','成人']))
-
-        # 1. 先在类目树中找匹配路径（Peewee用 ** 或 % 做LIKE）
-        cat_candidates = []
-        for kw in tkw[:5]:
-            if not kw: continue
-            pattern = '%' + kw + '%'
-            cats = list(OzonCategory.select().where(
-                (OzonCategory.user == current_user) &
-                ((OzonCategory.name_cn ** pattern) | (OzonCategory.name ** pattern) | (OzonCategory.path ** pattern))
-            ).limit(30))
-            for c in cats:
-                if c not in cat_candidates: cat_candidates.append(c)
-            if len(cat_candidates) >= 5: break
-
-        # 2. 优先在匹配类目下找type；找不到类目→不推荐(不fallback全局搜索)
-        cat_dcids = [c.ozon_category_id for c in cat_candidates if c.ozon_category_id]
-        if cat_dcids:
-            types = list(OzonCategoryType.select().where(
-                (OzonCategoryType.user == current_user) &
-                (OzonCategoryType.description_category_id.in_(cat_dcids[:50]))
-            ).order_by(OzonCategoryType.last_synced_at.desc()))
-        else:
-            # 无匹配类目树→不推荐(让用户手动选择或同步类目)
-            types = []
-            if not recommendations:
-                diagnostics.append(f'识别为{pk}({product_info.get("kind_cn","")}),本地类目树无匹配节点(请先同步对应类目树)')
-
-        # 3. 匹配+冲突过滤
-        matched = []
-        for t in types:
-            tn = _norm((t.type_name_cn or '') + ' ' + (t.type_name or '') + ' ' + (t.path or ''))
-            if any(kw in tn for kw in all_confs): continue  # 配件/冲突过滤
-            strong_score = sum(1 for k in skw if _norm(k) in tn)
-            score = sum(1 for k in tkw if _norm(k) in tn)
-            if strong_score > 0:
-                matched.append((t, score + 2, True))  # strong match boost
-            elif score > 0:
-                matched.append((t, score, False))
-        matched.sort(key=lambda x: (-x[1], -(x[0].last_synced_at.timestamp() if x[0].last_synced_at else 0)))
-
-        # 4. 生成推荐
-        if matched:
-            for t, s, is_strong in matched[:5]:
-                rec_name = t.type_name_cn or t.type_name
-                path = t.path or ''
-                # 查对应类目节点补路径
-                cat_node = OzonCategory.get_or_none((OzonCategory.user == current_user) & (OzonCategory.ozon_category_id == t.description_category_id))
-                if cat_node and cat_node.path: path = cat_node.path + ' > ' + rec_name
-                conf = 0.9 if is_strong else 0.65
-                reason = f'系统识别为{product_info["kind_cn"]},类目路径含运动相机相关词'
-                if not is_strong: reason = f'弱匹配(非{product_info["kind_cn"]}强关键词),建议确认'
-                recommendations.append(_make_rec(t.description_category_id,t.type_id,t.type_name or '',t.type_name_cn or '',path,conf,'system_inference' if is_strong else 'weak_match',reason,product_info.get('evidence',[])))
-        else:
-            diagnostics.append(f'识别为{pk}({product_info.get("kind_cn","")}),本地类目树无匹配(请同步{product_info.get("kind_cn","")}类目树)')
-
-    # P2: 当前已选不参与推荐
-
-    # P3: 关键词兜底（禁用：无类目树时不再推荐配件）
-    if not recommendations:
-        search = _norm(((fact.product_type if fact else '') + ' ' + (fact.standard_name_cn if fact else '') + ' ' + (source.title_cn if source else '')))
-        # 只在已匹配类目下兜底，不全局搜索
-        if pk: diagnostics.append(f'本地类目树未同步{product_info.get("kind_cn","")}类目,请先同步后再推荐')
-
-    if not recommendations and pk:
-        rule = CATEGORY_RULES.get(pk, {})
-        tkw, confs = rule.get('target_kw',[]), rule.get('conflicts',[])
-        types = list(OzonCategoryType.select().where(OzonCategoryType.user == current_user).order_by(OzonCategoryType.last_synced_at.desc()).limit(500))
-        matched = []
-        for t in types:
-            tn = _norm((t.type_name_cn or '') + ' ' + (t.type_name or ''))
-            if any(kw in tn for kw in confs): continue
-            score = sum(1 for kw in tkw if _norm(kw) in tn)
-            if score > 0: matched.append((t, score))
-        # strong_kw: 必须命中才算高置信推荐
-        skw = rule.get('strong_kw', tkw)
-        strong_matched = [(t,s) for t,s in matched if any(_norm(k) in _norm((t.type_name_cn or '') + ' ' + (t.type_name or '')) for k in skw)]
-        candidates = strong_matched if strong_matched else matched[:3]
-        for t, s in candidates[:5]:
-            is_strong = (t,s) in (strong_matched if strong_matched else [])
-            conf = 0.9 if is_strong else 0.6
-            rec_name = t.type_name_cn or t.type_name
-            reason = f'系统识别为{product_info["kind_cn"]},匹配OZON type: {rec_name}'
-            if not is_strong: reason = f'弱匹配(非{product_info["kind_cn"]}强关键词),建议确认: {rec_name}'
-            recommendations.append(_make_rec(t.description_category_id,t.type_id,t.type_name or '',t.type_name_cn or '',t.path or '',conf,'system_inference' if is_strong else 'weak_match',reason,product_info.get('evidence',[])))
-        if not matched: diagnostics.append(f'识别为{pk}({product_info.get("kind_cn","")}),但本地OZON type无匹配(需同步类目type)')
-
-    # P2: 当前已选不参与推荐（避免错误强化）
-
-    # P3: 关键词兜底
-    if not recommendations:
-        search = _norm(((fact.product_type if fact else '') + ' ' + (fact.standard_name_cn if fact else '') + ' ' + (source.title_cn if source else '')))
-        types = list(OzonCategoryType.select().where(OzonCategoryType.user == current_user).order_by(OzonCategoryType.last_synced_at.desc()).limit(300))
-        seen = set()
-        for t in types:
-            tn = _norm((t.type_name_cn or '') + ' ' + (t.type_name or ''))
-            if tn in seen: continue
-            if pk and any(kw in tn for kw in CATEGORY_RULES.get(pk,{}).get('conflicts',[])): continue
-            words = set(search.split())
-            score = sum(1 for w in words if len(w)>2 and w in tn)
-            if score > 0: seen.add(tn); recommendations.append(_make_rec(t.description_category_id,t.type_id,t.type_name or '',t.type_name_cn or '',t.path or '',min(score/max(len(words),1),0.4),'keyword_fallback','关键词兜底,建议确认'))
-
-    recommendations.sort(key=lambda x: -x['confidence'])
-    # 强制兜底: 少于3个推荐时从匹配路径补足
-    if len(recommendations) < 3 and cat_dcids:
-        existing_tids = {r['type_id'] for r in recommendations if r.get('type_id')}
-        for t in types:
-            if t.type_id in existing_tids: continue
-            tn = _norm((t.type_name_cn or '') + ' ' + (t.type_name or ''))
-            if any(kw in tn for kw in HARD_CONFLICTS): continue
-            rec_name = t.type_name_cn or t.type_name
-            path = t.path or matched_path or ''
-            recommendations.append(_make_rec(t.description_category_id,t.type_id,t.type_name or '',t.type_name_cn or '',path,0.35,'path_fallback',f'兜底推荐(本地无精确类目): {rec_name}'))
-            existing_tids.add(t.type_id)
-            if len(recommendations) >= 3: break
     return jsonify({"ok":True,"categories":recommendations[:5],"count":len(recommendations),"diagnostics":diagnostics,"product_info":product_info})
 
 
