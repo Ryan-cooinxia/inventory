@@ -3182,6 +3182,22 @@ def listing_review(draft_id):
         flash('草稿不存在', 'danger')
         return redirect(url_for('ozon.listings'))
 
+    # 补中文类目名（如果 type_name_cn 为空，从 OzonCategoryType 查）
+    if not draft.type_name_cn and draft.type_id:
+        ct = (OzonCategoryType
+              .select(OzonCategoryType.type_name_cn)
+              .where((OzonCategoryType.user == current_user) &
+                     (OzonCategoryType.type_id == draft.type_id))
+              .first())
+        if ct and ct.type_name_cn:
+            draft.type_name_cn = ct.type_name_cn
+            # 顺手回写，下次直接有
+            try:
+                OzonDraft.update(type_name_cn=ct.type_name_cn).where(
+                    OzonDraft.id == draft.id).execute()
+            except Exception:
+                pass
+
     # 解析校验结果
     validation = None
     if draft.validation_result:
@@ -7265,19 +7281,40 @@ def api_get_category_attributes(cat_id):
                        .select()
                        .where(where_val)
                        .order_by(OzonAttributeValue.attribute_id, OzonAttributeValue.value_id))
+        # 预加载跨 type 翻译缓存（批量，避免逐条查 DB）
+        ru_to_cn = {}
+        for v in val_records:
+            if v.value_cn and v.value_cn != v.value:
+                ru_to_cn[v.value.lower()] = v.value_cn
+        if not ru_to_cn:
+            # 补查：可能有其他 type 已翻译的值
+            extra = (OzonAttributeValue
+                     .select(OzonAttributeValue.value, OzonAttributeValue.value_cn)
+                     .where((OzonAttributeValue.user == current_user) &
+                            (OzonAttributeValue.value_cn.is_null(False)) &
+                            (OzonAttributeValue.value_cn != '') &
+                            (OzonAttributeValue.value_cn != OzonAttributeValue.value))
+                     .limit(2000))
+            for ev in extra:
+                if ev.value and ev.value_cn and ev.value not in ru_to_cn:
+                    ru_to_cn[ev.value.lower()] = ev.value_cn
+
         seen_val = set()
         for v in val_records:
             key = (v.attribute_id, v.value_id)
             if key in seen_val: continue
             seen_val.add(key)
-            # 即时计算 display_value（不写 DB，避免 SQLite 锁）
             display = v.value_cn
             missing = False
             if not display:
-                cn_val, _ = resolve_attribute_value_cn(
-                    current_user, v.value, v.value_id, v.attribute_id)
-                if cn_val:
-                    display = cn_val
+                # 内存匹配（不查 DB）
+                cn = ru_to_cn.get((v.value or '').lower())
+                if not cn:
+                    for k, vcn in _BUILTIN_VALUE_CN_MAP.items():
+                        if k.lower() == (v.value or '').lower():
+                            cn = vcn; break
+                if cn:
+                    display = cn
                 else:
                     missing = True
             values_map.setdefault(v.attribute_id, []).append({
