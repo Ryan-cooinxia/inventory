@@ -179,6 +179,145 @@ def translate_source_attributes(src_attrs, user=None):
     return items, stats
 
 
+def normalize_source_attributes(source, user, force=False):
+    """
+    对 source.raw_json 中的 source_attributes 做双语标准化，
+    写入 raw_json.localized.source_attributes，保存 source。
+    返回 stats。
+    """
+    import json
+    raw = {}
+    try: raw = json.loads(source.raw_json or '{}')
+    except: raw = {}
+
+    src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
+    if not src_attrs:
+        return {'translated': 0, 'message': '无源属性'}
+
+    # 已有 localized 且非强制 → 跳过
+    loc = raw.get('localized', {})
+    existing = loc.get('source_attributes', [])
+    if existing and not force:
+        return {'translated': len(existing), 'message': '已有双语数据', 'skipped': True}
+
+    items, stats = translate_source_attributes(src_attrs, user)
+
+    localized_attrs = []
+    for item in items:
+        localized_attrs.append({
+            'raw_name': item['raw_name'],
+            'raw_value': item['raw_value'],
+            'name_cn': item['name_cn'],
+            'value_cn': item['value_cn'],
+            'status': item['status'],
+            'source': item['source'],
+            'confidence': 0.95 if item['source'] == 'glossary' else (0.85 if item['source'] == 'ozon_dict' else 0.6),
+        })
+
+    loc['source_attributes'] = localized_attrs
+    from datetime import datetime
+    loc['translated_at'] = datetime.now().isoformat()
+    raw['localized'] = loc
+    source.raw_json = json.dumps(raw, ensure_ascii=False)
+    try:
+        source.save()
+    except Exception:
+        pass
+
+    return stats
+
+
+def get_localized_source_attributes(source):
+    """
+    优先读取 localized.source_attributes，
+    不存时 fallback 为原始 source_attributes 的简单包装。
+    """
+    import json
+    raw = {}
+    try: raw = json.loads(source.raw_json or '{}')
+    except: raw = {}
+
+    loc = raw.get('localized', {})
+    loc_attrs = loc.get('source_attributes', [])
+    if loc_attrs:
+        return loc_attrs
+
+    # fallback：简单包装原始属性
+    src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
+    wrapped = []
+    for sa in src_attrs:
+        wrapped.append({
+            'raw_name': sa.get('name') or sa.get('key') or '',
+            'raw_value': str(sa.get('value') or sa.get('text') or ''),
+            'name_cn': sa.get('name_cn') or sa.get('name') or '',
+            'value_cn': sa.get('value_cn') or str(sa.get('value') or ''),
+            'status': 'needs_review',
+            'source': 'fallback',
+            'confidence': 0.5,
+        })
+    return wrapped
+
+
+# ── 商品意图识别（用于类目推荐）──
+CATEGORY_INTENT_RULES = [
+    {
+        'intent': 'gamepad', 'cn': '游戏手柄/游戏机配件',
+        'keywords': ['джойстик', 'геймпад', 'gamepad', 'joystick', 'controller',
+                     'ps4', 'ps5', 'playstation', 'xbox', 'nintendo'],
+        'preferred_kw': ['игров', 'аксессуар', 'контроллер', '游戏', '手柄', '配件'],
+        'conflicts': ['микрофон', 'наушник', 'камер', 'экшн'],
+    },
+    {
+        'intent': 'action_camera', 'cn': '运动相机',
+        'keywords': ['экшн камер', 'action camera', 'osmo action', 'gopro', '运动相机'],
+        'preferred_kw': ['камер', 'экшн', 'спорт'],
+        'conflicts': ['микрофон', 'наушник', 'джойстик', 'геймпад'],
+    },
+    {
+        'intent': 'microphone', 'cn': '麦克风',
+        'keywords': ['микрофон', 'microphone', 'mic', 'dji mic', '麦克风', '话筒'],
+        'preferred_kw': ['микрофон', 'аудио', 'звук'],
+        'conflicts': ['камер', 'джойстик', 'геймпад', 'наушник'],
+    },
+    {
+        'intent': 'camera_accessory', 'cn': '相机配件',
+        'keywords': ['видоискател', 'фильтр', 'адаптер', 'переходник', 'крышка',
+                     '取景器', '遮光罩', '转接环'],
+        'preferred_kw': ['аксессуар', 'фото', 'камер', '配件'],
+    },
+    {
+        'intent': 'headphones', 'cn': '耳机',
+        'keywords': ['наушник', 'headphon', '耳机', 'гарнитур', 'earbud'],
+        'preferred_kw': ['наушник', 'аудио', 'звук'],
+        'conflicts': ['микрофон', 'камер', 'джойстик'],
+    },
+    {
+        'intent': 'drone', 'cn': '无人机',
+        'keywords': ['квадрокоптер', 'дрон', 'drone', '无人机'],
+        'preferred_kw': ['дрон', 'квадрокоптер', 'летател'],
+        'conflicts': ['микрофон', 'наушник', 'джойстик'],
+    },
+]
+
+
+def infer_product_intent(title, attr_names='', attr_values=''):
+    """从标题+属性推断商品意图（用于类目推荐的前置步骤）"""
+    import re as _re_intent
+    text = _re_intent.sub(r'\s+', ' ', str(title or '') + ' ' + str(attr_names or '') + ' ' + str(attr_values or '')).lower()
+    scores = []
+    for rule in CATEGORY_INTENT_RULES:
+        hits = sum(1 for kw in rule['keywords'] if kw.lower() in text)
+        conflict_hits = sum(1 for kw in rule.get('conflicts', []) if kw.lower() in text)
+        if hits > 0 and conflict_hits == 0:
+            scores.append((rule, hits))
+        elif hits > conflict_hits:
+            scores.append((rule, hits - conflict_hits))
+    scores.sort(key=lambda x: -x[1])
+    if scores:
+        return scores[0][0]  # 返回最佳匹配规则
+    return None
+
+
 def align_to_ozon_dict_by_text(value_ru, user, source_attr=None):
     """尝试将俄语值匹配到 OZON 字典值，返回匹配的 value_cn 或 None"""
     if not value_ru or not user:

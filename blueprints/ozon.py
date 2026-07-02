@@ -5848,7 +5848,7 @@ def api_recommend_category(group_id):
         if not keywords:
             return None
 
-        all_types = list(OzonCategoryType.select().where(OzonCategoryType.user == current_user).limit(300))
+        all_types = list(OzonCategoryType.select().where(OzonCategoryType.user == current_user).limit(1000))
         scored = []
         for t in all_types:
             tn = _norm((t.type_name_cn or '') + ' ' + (t.type_name or ''))
@@ -5900,14 +5900,32 @@ def api_recommend_category(group_id):
         keywords = words - {'это', 'для', 'что', 'как'}
         max_kw_len = max((len(kw) for kw in keywords), default=0)
 
+        # 意图预筛选：缩小候选范围
+        from services.ozon_attribute_translate import get_localized_source_attributes, infer_product_intent
+        localized = get_localized_source_attributes(source)
+        loc_names = ' '.join([la.get('name_cn', '') + ' ' + la.get('raw_name', '') for la in localized])
+        loc_vals = ' '.join([la.get('value_cn', '') + ' ' + la.get('raw_value', '') for la in localized])
+        product_intent = infer_product_intent(
+            getattr(fact, 'standard_name_ru', '') or (source.title_cn or ''),
+            loc_names, loc_vals
+        )
+        preferred_kw = set(product_intent.get('preferred_kw', []) if product_intent else [])
+        conflict_kw = set(product_intent.get('conflicts', []) if product_intent else [])
+
         top_types = []
-        all_types = list(OzonCategoryType.select().where(OzonCategoryType.user == current_user).limit(300))
+        all_types = list(OzonCategoryType.select().where(OzonCategoryType.user == current_user).limit(1000))
         for t in all_types:
             tn = _norm((t.type_name_cn or '') + ' ' + (t.type_name or '') + ' ' + (t.path or ''))
             # 用单词匹配（非 n-gram）
             hits = sum(1 for kw in keywords if kw in tn)
             # 长词权重更高
+            # 冲突词惩罚
+            if conflict_kw and any(cf in tn for cf in conflict_kw):
+                continue
+            # 偏好词加分
+            pref_boost = 0.5 if preferred_kw and any(pf in tn for pf in preferred_kw) else 0
             weighted = sum((len(kw) / max_kw_len) for kw in keywords if kw in tn) if max_kw_len > 0 else 0
+            weighted += pref_boost
             if weighted > 0:
                 top_types.append((t, round(weighted, 2)))
         top_types.sort(key=lambda x: -x[1])
@@ -7805,28 +7823,27 @@ def api_draft_auto_fill_apply(draft_id):
         saved = _load_draft_attributes_map(draft)
         src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
 
-        # 翻译源属性（本地词典 + OZON 字典 + 缓存）
-        from services.ozon_attribute_translate import translate_source_attributes as _translate_src
-        translated_items, _translate_stats = _translate_src(src_attrs, current_user)
-        for ti in translated_items:
-            for sa in src_attrs:
-                if (sa.get('name') or sa.get('key') or '') == ti['raw_name'] and str(sa.get('value') or '') == ti['raw_value']:
-                    if ti['name_cn'] and ti['name_cn'] != ti['raw_name']:
-                        sa['name_cn'] = ti['name_cn']
-                    if ti['value_cn'] and ti['source'] != 'needs_review':
-                        sa['value_cn'] = ti['value_cn']
-                    break
+        # 优先读双语句柄
+        from services.ozon_attribute_translate import get_localized_source_attributes, normalize_source_attributes
+        localized_attrs = get_localized_source_attributes(source)
+        if not localized_attrs or localized_attrs[0].get('status') == 'needs_review':
+            normalize_source_attributes(source, current_user)
+            localized_attrs = get_localized_source_attributes(source)
 
-        # 使用翻译后的双语属性
-        loc = raw.get('localized') or {}
-        loc_attrs = loc.get('source_attributes') or {}
+        # 以双语层为准：覆盖 src_attrs 的 name_cn/value_cn
+        loc_by_key = {}
+        for la in localized_attrs:
+            key = (la['raw_name'] + '=' + la['raw_value']).lower()
+            loc_by_key[key] = la
         for sa in src_attrs:
             nr = (sa.get('name') or sa.get('key') or '').strip()
             vr = str(sa.get('value') or sa.get('text') or '')
             ck = (nr + '=' + vr).lower()
-            lc = loc_attrs.get(ck, {}) if isinstance(loc_attrs, dict) else {}
-            if lc.get('name_cn'): sa['name_cn'] = lc['name_cn']
-            if lc.get('value_cn'): sa['value_cn'] = lc['value_cn']
+            lc = loc_by_key.get(ck, {})
+            if lc.get('name_cn') and lc['name_cn'] != nr:
+                sa['name_cn'] = lc['name_cn']
+            if lc.get('value_cn') and lc.get('status') == 'confirmed':
+                sa['value_cn'] = lc['value_cn']
 
         tgt_attrs = list(OzonCategoryAttribute.select().where(
             (OzonCategoryAttribute.user == current_user) &
@@ -7889,7 +7906,12 @@ def api_draft_auto_fill_apply(draft_id):
                 if not _attr_name_match(sa, ta):
                     continue
 
-                sv = sa.get('value_cn') or sa.get('value_ru') or sa.get('value') or sa.get('text') or ''
+                sv_cn = sa.get('value_cn') or ''
+                sv_ru = sa.get('value_ru') or sa.get('value') or sa.get('text') or ''
+                sv = sv_cn or sv_ru
+                # 字典字段且只有俄语值 → 跳过（不填俄语到中文模板）
+                if ta.is_dictionary and not sv_cn:
+                    continue
                 entry = {
                     'value': sv, 'source': 'auto_fill',
                     'source_attribute_name': sa.get('name_cn') or sa.get('name', ''),
