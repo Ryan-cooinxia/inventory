@@ -5654,7 +5654,9 @@ def api_adaptation_auto_fill_preview(group_id):
         js=' '.join(sn); jt=' '.join(tn)
         for k,ws in ALIASES.items():
             aw=[_norm(k)]+[_norm(w) for w in ws]
-            if any(w in js for w in aw) and any(w in jt for w in aw): return True
+            # 别名匹配只允许长度>=4的词（避免短词误匹配）
+            long_aw = [w for w in aw if len(w) >= 4]
+            if long_aw and any(w in js for w in long_aw) and any(w in jt for w in long_aw): return True
         return False
     def _match_dict_val(s_attr, t_vals):
         sv=set()
@@ -7729,7 +7731,9 @@ def _attr_name_match(s_attr, t_attr):
     jt = ' '.join(tn)
     for k, ws in ALIASES.items():
         aw = [_norm(k)] + [_norm(w) for w in ws]
-        if any(w in js for w in aw) and any(w in jt for w in aw):
+        # 只有长度>=4的词才做别名匹配（避免短词如"тип"误匹配）
+        long_aw = [w for w in aw if len(w) >= 4]
+        if long_aw and any(w in js for w in long_aw) and any(w in jt for w in long_aw):
             return True
     return False
 
