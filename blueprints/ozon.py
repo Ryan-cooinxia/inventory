@@ -7315,12 +7315,14 @@ def api_get_category_attributes(cat_id):
                             cn = vcn; break
                 if cn:
                     display = cn
+                elif _is_proper_noun(v.value):
+                    display = v.value  # 专有名词不翻译，不标红
                 else:
                     missing = True
             values_map.setdefault(v.attribute_id, []).append({
                 'value_id': v.value_id, 'value': v.value, 'value_cn': v.value_cn, 'info': v.info,
                 'display_value': display or v.value,
-                'missing_translation': missing,
+                'missing_translation': missing and not _is_proper_noun(v.value),
             })
 
     attrs = [{
@@ -7740,6 +7742,69 @@ def api_draft_recommend_category(draft_id):
     # 复用 adaptation 推荐逻辑
     return api_recommend_category(group.id)
 
+
+# ── OZON 属性字段策略分类 ──
+_ATTR_STRATEGY = {
+    '品牌': 'proper_noun', '型号名称': 'proper_noun', '卖家代码': 'proper_noun',
+    '与相机兼容性': 'proper_noun', '相机兼容性': 'proper_noun', '零件号': 'proper_noun',
+    '视频': 'media_video', 'видео': 'media_video', 'video': 'media_video',
+    '富内容': 'rich_content', 'rich-контент': 'rich_content',
+    '#标签': 'hashtags', '#主题标签': 'hashtags', '#хештеги': 'hashtags',
+    '计量单位中的商品数量': 'unit_quantity', 'количество товара в уеи': 'unit_quantity',
+    'pdf': 'skip', 'инструкция': 'skip',
+    '重量': 'weight', 'вес товара': 'weight',
+}
+_PROPER_NOUNS = {'DJI', 'Canon', 'Nikon', 'Sony', 'GoPro', 'Samsung', 'Apple',
+                  'Xiaomi', 'Huawei', 'Bose', 'JBL', 'Sennheiser', 'Shure',
+                  'Rode', 'Zoom', 'SmallRig', 'Adobe'}
+
+
+def _get_attr_strategy(ta):
+    cn = (ta.name_cn or '').lower(); ru = (ta.name or '').lower()
+    for k, s in _ATTR_STRATEGY.items():
+        if k.lower() in cn or k.lower() in ru:
+            return s
+    return 'matchable'
+
+
+def _is_proper_noun(val):
+    if not val: return False
+    v = str(val).strip()
+    if all(c.isascii() for c in v): return True
+    for pn in _PROPER_NOUNS:
+        if pn.lower() in v.lower(): return True
+    return False
+
+
+def _fill_video_attr(draft, ta, saved, aid):
+    """从草稿视频媒体池填充 OZON 视频属性"""
+    media = _load_media_json(draft)
+    draft_videos = media.get('videos', []) if isinstance(media, dict) else []
+    if not draft_videos:
+        return
+    ta_lower = ((ta.name_cn or '') + ' ' + (ta.name or '')).lower()
+    if 'название' in ta_lower or '名称' in ta_lower:
+        names = [v.get('name') or v.get('title') or '' for v in draft_videos[:5] if v.get('url')]
+        if names:
+            saved[aid] = {'value': ', '.join(names), 'source': 'draft_videos',
+                          'attribute_name': ta.name_cn or ta.name}
+    elif 'ссылка' in ta_lower or '链接' in ta_lower:
+        urls = [v.get('url', '') for v in draft_videos[:5] if v.get('url')]
+        if urls:
+            saved[aid] = {'value': '\n'.join(urls), 'source': 'draft_videos',
+                          'attribute_name': ta.name_cn or ta.name}
+    elif 'обложка' in ta_lower or '封面' in ta_lower:
+        covers = [v.get('cover_url', '') for v in draft_videos[:5] if v.get('cover_url')]
+        if covers:
+            saved[aid] = {'value': '\n'.join(covers), 'source': 'draft_videos',
+                          'attribute_name': ta.name_cn or ta.name}
+    elif 'товары на видео' in ta_lower or '视频中的商品' in ta_lower:
+        first_sku = draft.draft_skus.first()
+        offer_id = (first_sku.offer_id or '') if first_sku else ''
+        saved[aid] = {'value': offer_id, 'source': 'draft_videos',
+                      'attribute_name': ta.name_cn or ta.name}
+
+
 def _attr_name_match(s_attr, t_attr):
     """复用适配工作台的成熟属性名匹配逻辑"""
     import re as _re2
@@ -7832,13 +7897,6 @@ def api_draft_auto_fill_apply(draft_id):
     attr_filled = 0
     attr_diagnostics = []
 
-    # 不应从采集属性自动填充的特殊属性（需从草稿视频/hashtags 等专门数据源填充）
-    _SKIP_AUTO_FILL_PATTERNS = [
-        'озон.видео', 'ozon.video', 'озон.видеообложка', 'видео',
-        'pdf', 'инструкция',
-        'код продавца', 'seller code',
-    ]
-
     if draft.ozon_category_id and draft.type_id:
         saved = _load_draft_attributes_map(draft)
         src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
@@ -7875,14 +7933,30 @@ def api_draft_auto_fill_apply(draft_id):
             if aid in saved:
                 continue
 
-            # 跳过视频/PDF 等特殊属性（不自动从采集属性匹配）
-            ta_name_lower = ((ta.name_cn or '') + ' ' + (ta.name or '')).lower()
-            if any(p in ta_name_lower for p in _SKIP_AUTO_FILL_PATTERNS):
+            # 按字段策略分类决定处理方式
+            strategy = _get_attr_strategy(ta)
+            if strategy == 'skip':
                 continue
-
-            # 品牌/型号/卖家代码等专有名词：不自动填充，保留用户手动输入
-            if ta.name_cn in ('品牌', '型号名称', '卖家代码'):
+            if strategy == 'rich_content':
+                saved[aid] = {'value': '（于富文本中调整）', 'source': 'readonly',
+                              'attribute_name': ta.name_cn or ta.name}
+                attr_filled += 1
                 continue
+            if strategy == 'media_video':
+                _fill_video_attr(draft, ta, saved, aid)
+                if aid in saved:
+                    attr_filled += 1
+                continue
+            if strategy == 'unit_quantity':
+                saved[aid] = {'value': '1', 'source': 'default',
+                              'attribute_name': ta.name_cn or ta.name}
+                attr_filled += 1
+                continue
+            if strategy == 'hashtags':
+                if draft.hashtags_ru:
+                    saved[aid] = {'value': draft.hashtags_ru, 'source': 'draft_hashtags',
+                                  'attribute_name': ta.name_cn or ta.name}
+                    attr_filled += 1
                 continue
 
             matched = False
@@ -7898,8 +7972,10 @@ def api_draft_auto_fill_apply(draft_id):
                     'attribute_name': ta.name_cn or ta.name,
                 }
 
-                # 字典值匹配
-                if ta.is_dictionary and ta.attribute_id in tgt_vals:
+                # 专有名词：不查字典，直接用源值；其他：字典值匹配
+                if strategy == 'proper_noun' or _is_proper_noun(sv):
+                    match_reason = f'专有名词: {sv}'
+                elif ta.is_dictionary and ta.attribute_id in tgt_vals:
                     dvs = _match_dict_val(sa, tgt_vals[ta.attribute_id])
                     if dvs:
                         dv = dvs[0]
@@ -7914,7 +7990,7 @@ def api_draft_auto_fill_apply(draft_id):
                             'attribute': ta.name_cn or ta.name,
                             'reason': f'源值「{sv}」未在OZON字典中找到对应选项',
                         })
-                        continue  # 字典属性但值不匹配 → 不填充
+                        continue
                 else:
                     match_reason = '属性名匹配'
 
@@ -7928,53 +8004,6 @@ def api_draft_auto_fill_apply(draft_id):
                     'attribute': ta.name_cn or ta.name,
                     'reason': '未在采集源中找到匹配的属性名',
                 })
-        # 只有非零匹配时才写回
-        # ── 特殊属性：从草稿自身数据填充 ──
-        # 1. #主题标签 → 从 draft.hashtags_ru
-        for ta in tgt_attrs:
-            aid = str(ta.attribute_id)
-            if aid in saved:
-                continue
-            if ta.name_cn in ('#标签', '#主题标签') or '#хештег' in (ta.name or '').lower():
-                if draft.hashtags_ru:
-                    saved[aid] = {'value': draft.hashtags_ru, 'source': 'draft_hashtags',
-                                  'attribute_name': ta.name_cn or ta.name}
-                    attr_filled += 1
-
-        # 2. 视频属性 → 从草稿视频
-        media = _load_media_json(draft)
-        draft_videos = media.get('videos', []) if isinstance(media, dict) else []
-        for ta in tgt_attrs:
-            aid = str(ta.attribute_id)
-            if aid in saved:
-                continue
-            ta_lower = ((ta.name_cn or '') + ' ' + (ta.name or '')).lower()
-            if 'озон.видео: название' in ta_lower or 'ozon视频' in ta_lower:
-                if 'название' in ta_lower or '名称' in ta_lower:
-                    names = [v.get('name') or v.get('title') or '' for v in draft_videos[:5] if v.get('url')]
-                    if names:
-                        saved[aid] = {'value': ', '.join(names), 'source': 'draft_videos',
-                                      'attribute_name': ta.name_cn or ta.name}
-                        attr_filled += 1
-                elif 'ссылка' in ta_lower or '链接' in ta_lower:
-                    urls = [v.get('url', '') for v in draft_videos[:5] if v.get('url')]
-                    if urls:
-                        saved[aid] = {'value': '\n'.join(urls), 'source': 'draft_videos',
-                                      'attribute_name': ta.name_cn or ta.name}
-                        attr_filled += 1
-                elif 'обложка' in ta_lower or '封面' in ta_lower:
-                    covers = [v.get('cover_url', '') for v in draft_videos[:5] if v.get('cover_url')]
-                    if covers:
-                        saved[aid] = {'value': '\n'.join(covers), 'source': 'draft_videos',
-                                      'attribute_name': ta.name_cn or ta.name}
-                        attr_filled += 1
-                elif 'товары на видео' in ta_lower or '视频中的商品' in ta_lower:
-                    if draft_videos:
-                        offer_id = (draft.draft_skus.first().offer_id or '') if draft.draft_skus.first() else ''
-                        saved[aid] = {'value': offer_id, 'source': 'draft_videos',
-                                      'attribute_name': ta.name_cn or ta.name}
-                        attr_filled += 1
-
         if attr_filled > 0:
             draft.attributes_json = json.dumps(saved, ensure_ascii=False)
             filled += attr_filled
