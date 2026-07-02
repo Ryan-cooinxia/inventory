@@ -5835,7 +5835,7 @@ def api_recommend_category(group_id):
         import re as _re_kw
         src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
         attrs_text = ' '.join([_norm((a.get('name') or '') + ' ' + str(a.get('value') or '')) for a in src_attrs])
-        title = _norm((fact.title_ru if fact else '') or (source.title_cn if source else '') or '')
+        title = _norm(getattr(fact, 'standard_name_ru', '') or getattr(fact, 'standard_name_cn', '') or (source.title_cn if source else '') or '')
         search_text = title + ' ' + attrs_text
 
         # 提取有意义单词：>=4字符俄语/拉丁词，>=2字符中文
@@ -5890,7 +5890,7 @@ def api_recommend_category(group_id):
         import re as _re_p1
         src_attrs = raw.get('source_attributes') or raw.get('specs_json') or []
         attrs_text = ' '.join([_norm((a.get('name') or '') + ' ' + str(a.get('value') or '')) for a in src_attrs])
-        search_all = _norm(((fact.title_ru if fact else '') or (source.title_cn if source else '') or '') + ' ' + attrs_text)
+        search_all = _norm((getattr(fact, 'standard_name_ru', '') or getattr(fact, 'standard_name_cn', '') or (source.title_cn if source else '') or '') + ' ' + attrs_text)
 
         # 提取单词（同 _infer_product_kind）
         words = set()
@@ -7673,6 +7673,31 @@ def _match_dict_val(s_attr, t_vals):
     return res
 
 
+def _match_dict_value_id(ta, value_cn, value_ru):
+    """根据中文/俄语值查找 OZON 字典 value_id"""
+    if not value_cn and not value_ru:
+        return ''
+    # 优先中文匹配
+    if value_cn:
+        dv = (OzonAttributeValue
+              .select()
+              .where((OzonAttributeValue.attribute_id == ta.attribute_id) &
+                     ((OzonAttributeValue.value_cn == value_cn) |
+                      (OzonAttributeValue.value == value_cn)))
+              .first())
+        if dv:
+            return dv.value_id
+    if value_ru:
+        dv = (OzonAttributeValue
+              .select()
+              .where((OzonAttributeValue.attribute_id == ta.attribute_id) &
+                     (OzonAttributeValue.value == value_ru))
+              .first())
+        if dv:
+            return dv.value_id
+    return ''
+
+
 @ozon_bp.route('/api/draft/<int:draft_id>/translate-attributes', methods=['POST'])
 @login_required
 def api_draft_translate_attributes(draft_id):
@@ -7697,9 +7722,38 @@ def api_draft_translate_attributes(draft_id):
     if not has_type:
         stats['warning'] = '尚未选择OZON类目，无法校准模板下拉值'
 
+    # apply=true: 写回 draft.attributes_json
+    data = request.get_json(silent=True) or {}
+    if data.get('apply') and has_type:
+        saved = _load_draft_attributes_map(draft)
+        applied = 0
+        for item in items:
+            if item['status'] != 'confirmed' or item['source'] == 'proper_noun':
+                continue
+            # 找到对应的目标属性
+            for ta in OzonCategoryAttribute.select().where(
+                (OzonCategoryAttribute.user == current_user) &
+                (OzonCategoryAttribute.ozon_category_id == draft.ozon_category_id) &
+                (OzonCategoryAttribute.type_id == draft.type_id)):
+                ta_lower = ((ta.name_cn or '') + ' ' + (ta.name or '')).lower()
+                item_name_lower = (item['name_cn'] + ' ' + item['raw_name']).lower()
+                if item['name_cn'] in ta_lower or item['raw_name'] in ta_lower or any(
+                    w in ta_lower for w in item_name_lower.split() if len(w) > 3):
+                    aid = str(ta.attribute_id)
+                    entry = {'value': item['value_cn'], 'source': 'translated'}
+                    if ta.is_dictionary:
+                        entry['value_id'] = _match_dict_value_id(ta, item['value_cn'], item['raw_value'])
+                    saved[aid] = entry
+                    applied += 1
+                    break
+        if applied > 0:
+            draft.attributes_json = json.dumps(saved, ensure_ascii=False)
+            draft.save()
+            stats['applied'] = applied
+
     return jsonify({
         "ok": True,
-        "message": f"已翻译 {stats['translated']} 项，保留专有名词 {stats['proper_nouns']} 项，需确认 {stats['needs_review']} 项",
+        "message": f"已翻译 {stats['translated']} 项，保留专有名词 {stats['proper_nouns']} 项，需确认 {stats['needs_review']} 项" + (f"，已应用 {stats.get('applied', 0)} 项到草稿" if stats.get('applied') else ""),
         "items": items,
         "stats": stats,
         "has_type": has_type,

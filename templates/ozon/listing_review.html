@@ -967,8 +967,16 @@ function fillFromSource(type){
 // ═══ 类目/属性 ═══
 function translateAttrsDraft(){
   var btn = event.target; btn.disabled = true; btn.textContent = '翻译中...';
-  fetch('/ozon/api/draft/' + DRAFT_ID + '/translate-attributes', {method: 'POST', headers: {'Content-Type': 'application/json'}})
-  .then(r => r.json()).then(function(d) {
+  fetch('/ozon/api/draft/' + DRAFT_ID + '/translate-attributes', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({apply: true})
+  })
+  .then(function(r) {
+    if(!r.ok) throw new Error('后端接口异常 (HTTP ' + r.status + ')');
+    return r.json();
+  })
+  .then(function(d) {
     if(d.ok){
       var msg = d.message;
       if(d.stats.needs_review > 0){
@@ -979,7 +987,8 @@ function translateAttrsDraft(){
       }
       if(d.stats.warning) msg += '\n\n⚠ ' + d.stats.warning;
       alert(msg);
-      if(d.stats.translated > 0 && typeof loadDraftAttrs === 'function') loadDraftAttrs();
+      if(d.stats.applied > 0){ location.reload(); }
+      else if(typeof loadDraftAttrs === 'function') loadDraftAttrs();
     } else { alert(d.error || '翻译失败'); }
   }).catch(function(e){ alert(e.message); })
   .finally(function(){ btn.disabled = false; btn.textContent = '🌐 翻译/校准属性'; });
